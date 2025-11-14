@@ -273,7 +273,7 @@ if all_models_predictions is not None:
         y=monthly_comparison['actual'],
         mode='lines+markers',
         name='Real',
-        line=dict(color='black', width=3),
+        line=dict(color='white', width=3),
         marker=dict(size=8)
     ))
 
