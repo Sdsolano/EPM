@@ -1,0 +1,9 @@
+{
+  "pipeline_name": "automated_data_pipeline",
+  "start_time": "2025-11-14T06:41:35.434059",
+  "end_time": "2025-11-14T06:41:59.855867",
+  "total_duration": 24.421808,
+  "stages": [
+    {
+      "name": "data_loading",
+      "start_time": 

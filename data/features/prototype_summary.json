@@ -1,0 +1,13 @@
+{
+  "best_model": "Linear Regression",
+  "test_mape": 0.45418502180757997,
+  "test_mae": 134.00149285582685,
+  "test_rmse": 615.0035214930342,
+  "test_r2": 0.9382777271139058,
+  "cumple_objetivo_5pct": true,
+  "cv_mape_mean": 0.7658558575783659,
+  "cv_mape_std": 0.39602424940727715,
+  "total_features": 63,
+  "train_size": 2572,
+  "test_size": 644
+}

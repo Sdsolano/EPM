@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python pipeline/orchestrator.py:*)",
+      "Bash(dir:*)",
+      "Bash(python prototype_model.py:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

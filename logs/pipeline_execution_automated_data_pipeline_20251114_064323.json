@@ -1,0 +1,89 @@
+{
+  "pipeline_name": "automated_data_pipeline",
+  "start_time": "2025-11-14T06:42:59.332816",
+  "end_time": "2025-11-14T06:43:23.443600",
+  "total_duration": 24.110784,
+  "stages": [
+    {
+      "name": "data_loading",
+      "start_time": "2025-11-14 06:42:59.332816",
+      "end_time": "2025-11-14 06:43:21.647009",
+      "status": "SUCCESS",
+      "errors": [],
+      "duration": 22.314193,
+      "metadata": {
+        "power_records": 3226,
+        "power_date_range": "2017-01-01 00:00:00 to 2025-11-01 00:00:00",
+        "weather_records": 0
+      }
+    },
+    {
+      "name": "data_cleaning",
+      "start_time": "2025-11-14 06:43:21.647009",
+      "end_time": "2025-11-14 06:43:21.713303",
+      "status": "SUCCESS",
+      "errors": [],
+      "duration": 0.066294,
+      "metadata": {
+        "power_records_after_cleaning": 3226,
+        "power_quality_passed": true,
+        "power_issues_found": 0,
+        "weather_records_after_cleaning": 0,
+        "weather_quality_passed": true
+      }
+    },
+    {
+      "name": "feature_engineering",
+      "start_time": "2025-11-14 06:43:21.713303",
+      "end_time": "2025-11-14 06:43:21.818671",
+      "status": "SUCCESS",
+      "errors": [],
+      "duration": 0.105368,
+      "metadata": {
+        "total_features": 63,
+        "calendar_features": 30,
+        "demand_features": 25,
+        "weather_features": 12,
+        "final_records": 3226
+      }
+    },
+    {
+      "name": "saving_outputs",
+      "start_time": "2025-11-14 06:43:21.818671",
+      "end_time": "2025-11-14 06:43:23.443600",
+      "status": "SUCCESS",
+      "errors": [],
+      "duration": 1.624929,
+      "metadata": {
+        "power_clean_path": "C:\\Users\\samue\\OneDrive\\Documentos\\GitHub\\EPM\\data\\processed\\power_clean_20251114_064321.csv",
+        "features_path": "C:\\Users\\samue\\OneDrive\\Documentos\\GitHub\\EPM\\data\\features\\data_with_features_20251114_064321.csv",
+        "latest_features_path": "C:\\Users\\samue\\OneDrive\\Documentos\\GitHub\\EPM\\data\\features\\data_with_features_latest.csv"
+      }
+    }
+  ],
+  "logger_summary": {
+    "total_events": 12,
+    "events_by_level": {
+      "DEBUG": 0,
+      "INFO": 12,
+      "WARNING": 0,
+      "ERROR": 0,
+      "CRITICAL": 0
+    },
+    "total_alerts": 0,
+    "alerts_by_type": {
+      "DATA_QUALITY": 0,
+      "MISSING_DATA": 0,
+      "OUTLIER_DETECTED": 0,
+      "SCHEMA_VIOLATION": 0,
+      "PROCESSING_ERROR": 0,
+      "PERFORMANCE_DEGRADATION": 0
+    },
+    "alerts_by_severity": {
+      "LOW": 0,
+      "MEDIUM": 0,
+      "HIGH": 0,
+      "CRITICAL": 0
+    }
+  }
+}
