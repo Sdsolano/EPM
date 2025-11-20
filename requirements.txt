@@ -3,10 +3,14 @@
 
 # Core dependencies
 pandas>=2.0.0
-numpy>=1.24.0
+numpy>=1.24.0,<2.0.0  # NumPy 2.x tiene incompatibilidades con numexpr/bottleneck
 
-# Machine Learning (para Fase 2)
+# Machine Learning (Fase 2)
 scikit-learn>=1.3.0
+xgboost>=2.0.0
+lightgbm>=4.0.0
+scikit-optimize>=0.9.0  # Para optimización Bayesiana
+scipy>=1.11.0
 
 # Visualization (opcional, para análisis)
 plotly>=5.14.0

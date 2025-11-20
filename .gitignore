@@ -1,0 +1,66 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Models - NO SUBIR MODELOS ENTRENADOS
+models/trained/*.joblib
+models/registry/*.joblib
+models/trained/
+models/registry/
+
+# Data - Archivos grandes de datos
+data/raw/*.csv
+data/processed/*.csv
+data/features/*.csv
+*.csv
+!requirements.txt
+
+# Logs
+logs/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporal files
+*.tmp
+*.bak
+*.swp
+
+# Environment variables
+.env
+.env.local
+
+# Streamlit
+.streamlit/
+
+# Excel files
+*.xlsx
+*.xls
+*.xltx
