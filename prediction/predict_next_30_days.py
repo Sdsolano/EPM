@@ -1,0 +1,548 @@
+"""
+Pipeline de Predicción para los Próximos 30 Días
+================================================
+
+Este script genera predicciones automáticas para los próximos 30 días usando:
+1. Datos históricos hasta ayer
+2. Pronóstico del clima (30 días)
+3. Calendario de festivos
+4. Feature engineering automático (reutiliza pipeline Semana 1)
+5. Predicción recursiva día por día
+
+Uso:
+    python predict_next_30_days.py
+
+Output:
+    - predictions/predictions_next_30_days.csv
+    - predictions/predictions_summary.json
+"""
+
+import pandas as pd
+import numpy as np
+import joblib
+import json
+from pathlib import Path
+from datetime import datetime, timedelta
+import logging
+import sys
+
+# Importar pipeline de feature engineering de Semana 1
+sys.path.append(str(Path(__file__).parent))
+from pipeline.feature_engineering import FeatureEngineer
+
+# Configurar logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+
+class ForecastPipeline:
+    """Pipeline completo para predicción de próximos 30 días"""
+
+    def __init__(self,
+                 model_path: str = 'models/registry/champion_model.joblib',
+                 historical_data_path: str = 'data/features/data_with_features_latest.csv',
+                 festivos_path: str = 'data/calendario_festivos.json'):
+        """
+        Inicializa el pipeline
+
+        Args:
+            model_path: Ruta al modelo entrenado
+            historical_data_path: Ruta a datos históricos con features
+            festivos_path: Ruta al calendario de festivos
+        """
+        self.model_path = model_path
+        self.historical_data_path = historical_data_path
+        self.festivos_path = festivos_path
+
+        # Cargar modelo
+        logger.info(f"Cargando modelo desde {model_path}")
+        model_dict = joblib.load(model_path)
+        self.model = model_dict['model'] if isinstance(model_dict, dict) else model_dict
+        self.feature_names = model_dict.get('feature_names', None)
+
+        # Cargar datos históricos
+        logger.info(f"Cargando datos históricos desde {historical_data_path}")
+        self.df_historico = pd.read_csv(historical_data_path)
+        self.df_historico['fecha'] = pd.to_datetime(self.df_historico['fecha'])
+
+        # Normalizar nombres de columnas (FECHA -> fecha, TOTAL -> demanda_total)
+        if 'FECHA' in self.df_historico.columns:
+            self.df_historico.rename(columns={'FECHA': 'fecha'}, inplace=True)
+        if 'TOTAL' in self.df_historico.columns:
+            self.df_historico.rename(columns={'TOTAL': 'demanda_total'}, inplace=True)
+
+        # Cargar festivos
+        self.festivos = self._load_festivos()
+
+        # Feature engineer
+        self.feature_engineer = FeatureEngineer()
+
+        logger.info("✓ Pipeline inicializado correctamente")
+
+    def _load_festivos(self) -> list:
+        """Carga calendario de festivos"""
+        if Path(self.festivos_path).exists():
+            with open(self.festivos_path, 'r', encoding='utf-8') as f:
+                festivos_dict = json.load(f)
+                return festivos_dict.get('festivos', [])
+        else:
+            logger.warning(f"Archivo de festivos no encontrado: {self.festivos_path}")
+            logger.warning("Usando festivos por defecto de Colombia 2024-2025")
+            return self._get_default_festivos()
+
+    def _get_default_festivos(self) -> list:
+        """Festivos por defecto de Colombia"""
+        return [
+            '2024-01-01', '2024-01-08', '2024-03-25', '2024-03-28', '2024-03-29',
+            '2024-05-01', '2024-05-13', '2024-06-03', '2024-06-10', '2024-07-01',
+            '2024-07-20', '2024-08-07', '2024-08-19', '2024-10-14', '2024-11-04',
+            '2024-11-11', '2024-12-08', '2024-12-25',
+            '2025-01-01', '2025-01-06', '2025-03-24', '2025-04-17', '2025-04-18',
+            '2025-05-01', '2025-06-02', '2025-06-23', '2025-06-30', '2025-07-20',
+            '2025-08-07', '2025-08-18', '2025-10-13', '2025-11-03', '2025-11-17',
+            '2025-12-08', '2025-12-25'
+        ]
+
+    def is_festivo(self, fecha: datetime) -> bool:
+        """Verifica si una fecha es festivo"""
+        fecha_str = fecha.strftime('%Y-%m-%d')
+        return fecha_str in self.festivos
+
+    def generate_climate_forecast(self, start_date: datetime, days: int = 30) -> pd.DataFrame:
+        """
+        Genera pronóstico del clima para los próximos N días
+
+        NOTA: Esta versión usa PROMEDIOS HISTÓRICOS como fallback.
+        Para producción, integrar con API de clima (OpenWeatherMap, IDEAM, etc.)
+
+        Args:
+            start_date: Fecha inicial
+            days: Número de días a pronosticar
+
+        Returns:
+            DataFrame con pronóstico del clima
+        """
+        logger.info(f"Generando pronóstico del clima para {days} días...")
+        logger.warning("⚠️  Usando promedios históricos (fallback). Integrar API de clima para producción.")
+
+        # Calcular promedios históricos por mes/día del año
+        climate_stats = self._calculate_historical_climate_stats()
+
+        forecasts = []
+        for day in range(days):
+            fecha = start_date + timedelta(days=day)
+            month = fecha.month
+            dayofyear = fecha.timetuple().tm_yday
+
+            # Usar estadísticas del mismo mes
+            stats = climate_stats[month]
+
+            # Añadir variación estocástica pequeña
+            np.random.seed(int(fecha.timestamp()))
+
+            forecasts.append({
+                'fecha': fecha,
+                'temp_mean': stats['temp_mean'] + np.random.normal(0, 1),
+                'temp_min': stats['temp_min'] + np.random.normal(0, 0.5),
+                'temp_max': stats['temp_max'] + np.random.normal(0, 0.5),
+                'temp_std': stats['temp_std'],
+                'humidity_mean': stats['humidity_mean'] + np.random.normal(0, 2),
+                'humidity_min': stats['humidity_min'],
+                'humidity_max': stats['humidity_max'],
+                'feels_like_mean': stats['feels_like_mean'] + np.random.normal(0, 1),
+                'feels_like_min': stats['feels_like_min'],
+                'feels_like_max': stats['feels_like_max']
+            })
+
+        return pd.DataFrame(forecasts)
+
+    def _calculate_historical_climate_stats(self) -> dict:
+        """Calcula estadísticas climáticas históricas por mes"""
+        # Verificar si tenemos datos climáticos en el histórico
+        climate_cols = [col for col in self.df_historico.columns if 'temp' in col or 'humidity' in col or 'feels_like' in col]
+
+        if not climate_cols:
+            logger.warning("No hay datos climáticos en el histórico. Usando valores por defecto.")
+            return self._get_default_climate_stats()
+
+        # Calcular por mes
+        self.df_historico['month'] = pd.to_datetime(self.df_historico['fecha']).dt.month
+        stats = {}
+
+        for month in range(1, 13):
+            month_data = self.df_historico[self.df_historico['month'] == month]
+
+            if len(month_data) == 0:
+                stats[month] = self._get_default_climate_stats()[month]
+                continue
+
+            # Extraer valores actuales (quitando _lag1d del nombre si existe)
+            def get_base_value(df, prefix):
+                """Obtiene valor base de columna con lag"""
+                lag_col = f'{prefix}_lag1d'
+                if lag_col in df.columns:
+                    return df[lag_col].mean()
+                elif prefix in df.columns:
+                    return df[prefix].mean()
+                return None
+
+            stats[month] = {
+                'temp_mean': get_base_value(month_data, 'temp_mean') or 22.0,
+                'temp_min': get_base_value(month_data, 'temp_min') or 16.0,
+                'temp_max': get_base_value(month_data, 'temp_max') or 28.0,
+                'temp_std': 2.5,
+                'humidity_mean': get_base_value(month_data, 'humidity_mean') or 70.0,
+                'humidity_min': get_base_value(month_data, 'humidity_min') or 50.0,
+                'humidity_max': get_base_value(month_data, 'humidity_max') or 90.0,
+                'feels_like_mean': get_base_value(month_data, 'feels_like_mean') or 22.0,
+                'feels_like_min': get_base_value(month_data, 'feels_like_min') or 16.0,
+                'feels_like_max': get_base_value(month_data, 'feels_like_max') or 28.0
+            }
+
+        return stats
+
+    def _get_default_climate_stats(self) -> dict:
+        """Estadísticas climáticas por defecto para Medellín"""
+        # Medellín: Clima templado, poca variación anual
+        base_stats = {
+            'temp_mean': 22.0, 'temp_min': 16.0, 'temp_max': 28.0, 'temp_std': 2.5,
+            'humidity_mean': 70.0, 'humidity_min': 50.0, 'humidity_max': 90.0,
+            'feels_like_mean': 22.0, 'feels_like_min': 16.0, 'feels_like_max': 28.0
+        }
+
+        # Ajustes leves por mes (temporada de lluvias: Abril-Mayo, Octubre-Noviembre)
+        adjustments = {
+            1: 0, 2: 0, 3: 0.5, 4: 1, 5: 1, 6: 0.5,
+            7: 0, 8: 0, 9: 0.5, 10: 1, 11: 1, 12: 0
+        }
+
+        stats = {}
+        for month in range(1, 13):
+            adj = adjustments[month]
+            stats[month] = {
+                'temp_mean': base_stats['temp_mean'] - adj,
+                'temp_min': base_stats['temp_min'] - adj,
+                'temp_max': base_stats['temp_max'] - adj * 0.5,
+                'temp_std': base_stats['temp_std'],
+                'humidity_mean': base_stats['humidity_mean'] + adj * 3,
+                'humidity_min': base_stats['humidity_min'],
+                'humidity_max': base_stats['humidity_max'],
+                'feels_like_mean': base_stats['feels_like_mean'] - adj,
+                'feels_like_min': base_stats['feels_like_min'] - adj,
+                'feels_like_max': base_stats['feels_like_max'] - adj * 0.5
+            }
+
+        return stats
+
+    def build_features_for_date(self,
+                                fecha: datetime,
+                                climate_forecast: dict,
+                                df_temp: pd.DataFrame) -> dict:
+        """
+        Construye todas las features necesarias para una fecha específica
+
+        Args:
+            fecha: Fecha a predecir
+            climate_forecast: Pronóstico del clima para esa fecha
+            df_temp: DataFrame temporal con histórico + predicciones previas
+
+        Returns:
+            Diccionario con todas las features
+        """
+        features = {}
+
+        # ========================================
+        # A. FEATURES TEMPORALES (del calendario)
+        # ========================================
+        features['year'] = fecha.year
+        features['month'] = fecha.month
+        features['day'] = fecha.day
+        features['dayofweek'] = fecha.dayofweek
+        features['dayofyear'] = fecha.timetuple().tm_yday
+        features['week'] = fecha.isocalendar()[1]
+        features['quarter'] = (fecha.month - 1) // 3 + 1
+        features['is_weekend'] = int(fecha.dayofweek >= 5)
+        features['is_month_start'] = int(fecha.day == 1)
+        features['is_month_end'] = int(fecha.day == pd.Timestamp(fecha).days_in_month)
+        features['is_quarter_start'] = int(fecha.month in [1, 4, 7, 10] and fecha.day == 1)
+        features['is_quarter_end'] = int(fecha.month in [3, 6, 9, 12] and fecha.day == pd.Timestamp(fecha).days_in_month)
+        features['is_festivo'] = int(self.is_festivo(fecha))
+        features['is_rainy_season'] = int(fecha.month in [4, 5, 10, 11])
+        features['is_january'] = int(fecha.month == 1)
+        features['is_december'] = int(fecha.month == 12)
+        features['week_of_month'] = (fecha.day - 1) // 7 + 1
+
+        # Estacionales (sin/cos)
+        features['dayofweek_sin'] = np.sin(2 * np.pi * fecha.dayofweek / 7)
+        features['dayofweek_cos'] = np.cos(2 * np.pi * fecha.dayofweek / 7)
+        features['month_sin'] = np.sin(2 * np.pi * (fecha.month - 1) / 12)
+        features['month_cos'] = np.cos(2 * np.pi * (fecha.month - 1) / 12)
+        features['dayofyear_sin'] = np.sin(2 * np.pi * features['dayofyear'] / 365)
+        features['dayofyear_cos'] = np.cos(2 * np.pi * features['dayofyear'] / 365)
+
+        # ========================================
+        # B. FEATURES CLIMÁTICAS
+        # ========================================
+        features['temp_mean_lag1d'] = climate_forecast['temp_mean']
+        features['temp_min_lag1d'] = climate_forecast['temp_min']
+        features['temp_max_lag1d'] = climate_forecast['temp_max']
+        features['temp_std_lag1d'] = climate_forecast['temp_std']
+        features['humidity_mean_lag1d'] = climate_forecast['humidity_mean']
+        features['humidity_min_lag1d'] = climate_forecast['humidity_min']
+        features['humidity_max_lag1d'] = climate_forecast['humidity_max']
+        features['feels_like_mean_lag1d'] = climate_forecast['feels_like_mean']
+        features['feels_like_min_lag1d'] = climate_forecast['feels_like_min']
+        features['feels_like_max_lag1d'] = climate_forecast['feels_like_max']
+
+        # ========================================
+        # C. FEATURES DE LAG (demanda histórica)
+        # ========================================
+        # Obtener valores de lags desde df_temp
+        idx_actual = len(df_temp) - 1
+
+        # Lag 1 día
+        if idx_actual >= 1:
+            features['total_lag_1d'] = df_temp.iloc[idx_actual - 1]['demanda_total']
+            features['p8_lag_1d'] = df_temp.iloc[idx_actual - 1].get('P8', features['total_lag_1d'] * 0.042)
+            features['p12_lag_1d'] = df_temp.iloc[idx_actual - 1].get('P12', features['total_lag_1d'] * 0.046)
+            features['p18_lag_1d'] = df_temp.iloc[idx_actual - 1].get('P18', features['total_lag_1d'] * 0.048)
+            features['p20_lag_1d'] = df_temp.iloc[idx_actual - 1].get('P20', features['total_lag_1d'] * 0.045)
+        else:
+            features['total_lag_1d'] = df_temp.iloc[-1]['demanda_total']
+            features['p8_lag_1d'] = features['total_lag_1d'] * 0.042
+            features['p12_lag_1d'] = features['total_lag_1d'] * 0.046
+            features['p18_lag_1d'] = features['total_lag_1d'] * 0.048
+            features['p20_lag_1d'] = features['total_lag_1d'] * 0.045
+
+        # Lag 7 días
+        if idx_actual >= 7:
+            features['total_lag_7d'] = df_temp.iloc[idx_actual - 7]['demanda_total']
+            features['p8_lag_7d'] = df_temp.iloc[idx_actual - 7].get('P8', features['total_lag_7d'] * 0.042)
+            features['p12_lag_7d'] = df_temp.iloc[idx_actual - 7].get('P12', features['total_lag_7d'] * 0.046)
+            features['p18_lag_7d'] = df_temp.iloc[idx_actual - 7].get('P18', features['total_lag_7d'] * 0.048)
+            features['p20_lag_7d'] = df_temp.iloc[idx_actual - 7].get('P20', features['total_lag_7d'] * 0.045)
+        else:
+            features['total_lag_7d'] = features['total_lag_1d']
+            features['p8_lag_7d'] = features['p8_lag_1d']
+            features['p12_lag_7d'] = features['p12_lag_1d']
+            features['p18_lag_7d'] = features['p18_lag_1d']
+            features['p20_lag_7d'] = features['p20_lag_1d']
+
+        # Lag 14 días
+        if idx_actual >= 14:
+            features['total_lag_14d'] = df_temp.iloc[idx_actual - 14]['demanda_total']
+        else:
+            features['total_lag_14d'] = features['total_lag_7d']
+
+        # ========================================
+        # D. ROLLING STATISTICS
+        # ========================================
+        # Últimos 7 días
+        ultimos_7 = df_temp.iloc[max(0, idx_actual-7):idx_actual]['demanda_total'].values
+        if len(ultimos_7) > 0:
+            features['total_rolling_mean_7d'] = np.mean(ultimos_7)
+            features['total_rolling_std_7d'] = np.std(ultimos_7) if len(ultimos_7) > 1 else 0
+            features['total_rolling_min_7d'] = np.min(ultimos_7)
+            features['total_rolling_max_7d'] = np.max(ultimos_7)
+        else:
+            features['total_rolling_mean_7d'] = features['total_lag_1d']
+            features['total_rolling_std_7d'] = 0
+            features['total_rolling_min_7d'] = features['total_lag_1d']
+            features['total_rolling_max_7d'] = features['total_lag_1d']
+
+        # Últimos 14 días
+        ultimos_14 = df_temp.iloc[max(0, idx_actual-14):idx_actual]['demanda_total'].values
+        if len(ultimos_14) > 0:
+            features['total_rolling_mean_14d'] = np.mean(ultimos_14)
+            features['total_rolling_std_14d'] = np.std(ultimos_14) if len(ultimos_14) > 1 else 0
+            features['total_rolling_min_14d'] = np.min(ultimos_14)
+            features['total_rolling_max_14d'] = np.max(ultimos_14)
+        else:
+            features['total_rolling_mean_14d'] = features['total_rolling_mean_7d']
+            features['total_rolling_std_14d'] = features['total_rolling_std_7d']
+            features['total_rolling_min_14d'] = features['total_rolling_min_7d']
+            features['total_rolling_max_14d'] = features['total_rolling_max_7d']
+
+        # Últimos 28 días
+        ultimos_28 = df_temp.iloc[max(0, idx_actual-28):idx_actual]['demanda_total'].values
+        if len(ultimos_28) > 0:
+            features['total_rolling_mean_28d'] = np.mean(ultimos_28)
+            features['total_rolling_std_28d'] = np.std(ultimos_28) if len(ultimos_28) > 1 else 0
+            features['total_rolling_min_28d'] = np.min(ultimos_28)
+            features['total_rolling_max_28d'] = np.max(ultimos_28)
+        else:
+            features['total_rolling_mean_28d'] = features['total_rolling_mean_14d']
+            features['total_rolling_std_28d'] = features['total_rolling_std_14d']
+            features['total_rolling_min_28d'] = features['total_rolling_min_14d']
+            features['total_rolling_max_28d'] = features['total_rolling_max_14d']
+
+        # ========================================
+        # E. FEATURES DE CAMBIO
+        # ========================================
+        features['total_day_change'] = features['total_lag_1d'] - features['total_lag_7d']
+        if features['total_lag_7d'] != 0:
+            features['total_day_change_pct'] = (features['total_day_change'] / features['total_lag_7d']) * 100
+        else:
+            features['total_day_change_pct'] = 0
+
+        # ========================================
+        # F. FEATURES DE INTERACCIÓN
+        # ========================================
+        features['temp_x_is_weekend'] = features['temp_mean_lag1d'] * features['is_weekend']
+        features['temp_x_is_festivo'] = features['temp_mean_lag1d'] * features['is_festivo']
+        features['dayofweek_x_festivo'] = features['dayofweek'] * features['is_festivo']
+        features['month_x_festivo'] = features['month'] * features['is_festivo']
+        features['weekend_x_month'] = features['is_weekend'] * features['month']
+
+        return features
+
+    def predict_next_n_days(self, n_days: int = 30) -> pd.DataFrame:
+        """
+        Predice los próximos N días de forma recursiva
+
+        Args:
+            n_days: Número de días a predecir
+
+        Returns:
+            DataFrame con predicciones
+        """
+        logger.info("="*80)
+        logger.info(f"INICIANDO PREDICCIÓN DE PRÓXIMOS {n_days} DÍAS")
+        logger.info("="*80)
+
+        # Fecha inicial (mañana)
+        ultimo_dia_historico = self.df_historico['fecha'].max()
+        primer_dia_prediccion = ultimo_dia_historico + timedelta(days=1)
+
+        logger.info(f"Último día con datos históricos: {ultimo_dia_historico.strftime('%Y-%m-%d')}")
+        logger.info(f"Primera fecha a predecir: {primer_dia_prediccion.strftime('%Y-%m-%d')}")
+
+        # Generar pronóstico del clima
+        climate_forecast_df = self.generate_climate_forecast(primer_dia_prediccion, n_days)
+
+        # DataFrame temporal (histórico + predicciones que vamos generando)
+        df_temp = self.df_historico.copy()
+
+        # Lista para guardar predicciones
+        predictions = []
+
+        # Loop día por día
+        for day_idx in range(n_days):
+            fecha = primer_dia_prediccion + timedelta(days=day_idx)
+
+            logger.info(f"\n{'─'*80}")
+            logger.info(f"📅 Día {day_idx + 1}/{n_days}: {fecha.strftime('%Y-%m-%d %A')}")
+
+            # Obtener pronóstico del clima para este día
+            climate = climate_forecast_df[climate_forecast_df['fecha'] == fecha].iloc[0].to_dict()
+
+            # Construir features
+            features = self.build_features_for_date(fecha, climate, df_temp)
+
+            # Ordenar features según el modelo (si tenemos feature_names)
+            if self.feature_names:
+                X_pred = pd.DataFrame([features])[self.feature_names]
+            else:
+                X_pred = pd.DataFrame([features])
+
+            # Predecir
+            demanda_pred = self.model.predict(X_pred)[0]
+
+            logger.info(f"   Demanda predicha: {demanda_pred:,.2f} MW")
+
+            # Guardar predicción
+            prediction_record = {
+                'fecha': fecha,
+                'demanda_predicha': demanda_pred,
+                'is_festivo': features['is_festivo'],
+                'is_weekend': features['is_weekend'],
+                'dayofweek': features['dayofweek'],
+                'temp_mean': climate['temp_mean']
+            }
+            predictions.append(prediction_record)
+
+            # Agregar predicción al df_temp para siguiente iteración
+            new_row = {
+                'fecha': fecha,
+                'demanda_total': demanda_pred,
+                'P8': demanda_pred * 0.042,   # Placeholder (Semana 3: desagregación)
+                'P12': demanda_pred * 0.046,
+                'P18': demanda_pred * 0.048,
+                'P20': demanda_pred * 0.045
+            }
+            df_temp = pd.concat([df_temp, pd.DataFrame([new_row])], ignore_index=True)
+
+        logger.info(f"\n{'='*80}")
+        logger.info(f"✓ Predicción completada: {n_days} días procesados")
+        logger.info(f"{'='*80}\n")
+
+        return pd.DataFrame(predictions)
+
+    def save_predictions(self, predictions_df: pd.DataFrame, output_dir: str = 'predictions'):
+        """Guarda predicciones en CSV y resumen en JSON"""
+        output_path = Path(output_dir)
+        output_path.mkdir(exist_ok=True)
+
+        # Guardar CSV
+        csv_path = output_path / 'predictions_next_30_days.csv'
+        predictions_df.to_csv(csv_path, index=False)
+        logger.info(f"✓ Predicciones guardadas en: {csv_path}")
+
+        # Generar resumen
+        summary = {
+            'fecha_generacion': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'num_dias_predichos': len(predictions_df),
+            'fecha_inicio': predictions_df['fecha'].min().strftime('%Y-%m-%d'),
+            'fecha_fin': predictions_df['fecha'].max().strftime('%Y-%m-%d'),
+            'demanda_promedio': float(predictions_df['demanda_predicha'].mean()),
+            'demanda_min': float(predictions_df['demanda_predicha'].min()),
+            'demanda_max': float(predictions_df['demanda_predicha'].max()),
+            'dias_laborables': int((predictions_df['is_weekend'] == 0).sum()),
+            'dias_fin_de_semana': int((predictions_df['is_weekend'] == 1).sum()),
+            'dias_festivos': int(predictions_df['is_festivo'].sum())
+        }
+
+        json_path = output_path / 'predictions_summary.json'
+        with open(json_path, 'w', encoding='utf-8') as f:
+            json.dump(summary, f, indent=2, ensure_ascii=False)
+        logger.info(f"✓ Resumen guardado en: {json_path}")
+
+        # Mostrar resumen
+        logger.info("\n" + "="*80)
+        logger.info("📊 RESUMEN DE PREDICCIONES")
+        logger.info("="*80)
+        logger.info(f"Período: {summary['fecha_inicio']} a {summary['fecha_fin']}")
+        logger.info(f"Demanda promedio: {summary['demanda_promedio']:,.2f} MW")
+        logger.info(f"Demanda mínima: {summary['demanda_min']:,.2f} MW")
+        logger.info(f"Demanda máxima: {summary['demanda_max']:,.2f} MW")
+        logger.info(f"Días laborables: {summary['dias_laborables']}")
+        logger.info(f"Días fin de semana: {summary['dias_fin_de_semana']}")
+        logger.info(f"Días festivos: {summary['dias_festivos']}")
+        logger.info("="*80 + "\n")
+
+
+def main():
+    """Función principal"""
+    logger.info("🚀 Iniciando pipeline de predicción EPM")
+
+    # Inicializar pipeline
+    pipeline = ForecastPipeline(
+        model_path='models/trained/xgboost_20251120_161937.joblib',
+        historical_data_path='data/features/data_with_features_latest.csv',
+        festivos_path='data/calendario_festivos.json'
+    )
+
+    # Predecir próximos 30 días
+    predictions = pipeline.predict_next_n_days(n_days=30)
+
+    # Guardar resultados
+    pipeline.save_predictions(predictions)
+
+    logger.info("✅ Pipeline completado exitosamente")
+
+
+if __name__ == '__main__':
+    main()
