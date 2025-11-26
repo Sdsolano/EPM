@@ -1,12 +1,8 @@
-# ============================================================
-# MODELO COMPLETO PARA PREDICIÓN HORARIA (P1–P24)
-# USANDO TOTAL + FECHA (día de la semana)
-# ============================================================
 
 import pandas as pd
 import numpy as np
 from sklearn.cluster import KMeans
-
+import dias 
 
 def predecir(total_predicho, fecha,k=35,path="/Users/pablo/Documents/GitHub/EPM/data/features/data_with_features_latest.csv"):
     df = pd.read_csv(path)
@@ -57,3 +53,18 @@ def predecir(total_predicho, fecha,k=35,path="/Users/pablo/Documents/GitHub/EPM/
 
 
 
+
+# Cargar datos reales para comparar
+# df_real = pd.read_csv("/Users/pablo/Documents/GitHub/EPM/data/features/data_with_features_latest.csv")
+# df_real["fecha"] = pd.to_datetime(df_real["FECHA"])
+
+# Elegir la fecha real que quieres comparar
+fecha_objetivo = "2023-03-25"
+def full_predict(total_predicho, fecha):
+    dias_comprobacion = ['12-25', '07-20', '06-10',
+                     '05-13', '12-08', '01-01', '05-01', '08-07']
+    if fecha[5:] in dias_comprobacion:
+        return dias.predecir_dia_importante(total_predicho, fecha)
+
+    else:
+        return predecir(total_predicho, fecha)
