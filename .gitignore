@@ -4,12 +4,22 @@ __pycache__/
 *$py.class
 *.so
 .Python
-*.egg-info/
-dist/
 build/
-.pytest_cache/
-.coverage
-htmlcov/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
 
 # Virtual environments
 venv/
@@ -17,50 +27,81 @@ env/
 ENV/
 .venv
 
-# Jupyter Notebook
-.ipynb_checkpoints
-
 # IDEs
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
+.DS_Store
 
-# Models - NO SUBIR MODELOS ENTRENADOS
-models/trained/*.joblib
-models/registry/*.joblib
-models/trained/
-models/registry/
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb_checkpoints/
 
-# Data - Archivos grandes de datos
+# Data files (exclude large CSV files, keep structure)
 data/raw/*.csv
+data/raw/*.xlsx
+data/raw/*.xltx
 data/processed/*.csv
 data/features/*.csv
-*.csv
-!requirements.txt
+data/predictions/*.csv
 
-# Logs
-logs/
-*.log
+# Keep directory structure
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/features/.gitkeep
+!data/predictions/.gitkeep
 
-# OS
-.DS_Store
-Thumbs.db
+# Models (exclude trained models, keep registry metadata)
+models/trained/*.joblib
+models/trained/*.pkl
+models/trained/*.h5
+models/trained/*.json
+models/registry/*.joblib
+!models/registry/registry_metadata.json
+!models/trained/.gitkeep
+!models/registry/.gitkeep
 
-# Temporal files
+# Logs (exclude all logs, keep structure)
+logs/**/*.log
+logs/**/*.json
+!logs/.gitkeep
+!logs/pipeline/.gitkeep
+!logs/training/.gitkeep
+!logs/api/.gitkeep
+!logs/monitoring/.gitkeep
+
+# Temporary files
 *.tmp
 *.bak
 *.swp
+.cache/
+
+# OS files
+Thumbs.db
+.DS_Store
 
 # Environment variables
 .env
 .env.local
 
+# Test coverage
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.pytest_cache/
+nosetests.xml
+coverage.xml
+*.cover
+
 # Streamlit
 .streamlit/
 
-# Excel files
-*.xlsx
-*.xls
-*.xltx
+# Claude AI
+.claude/
+
+# Deployment secrets
+deployment/secrets/
+deployment/*.key

@@ -3,7 +3,13 @@
     "allow": [
       "Bash(python pipeline/orchestrator.py:*)",
       "Bash(dir:*)",
-      "Bash(python prototype_model.py:*)"
+      "Bash(python prototype_model.py:*)",
+      "Bash(python train_models.py:*)",
+      "Bash(pip install:*)",
+      "Bash(streamlit run:*)",
+      "Bash(pip uninstall:*)",
+      "Bash(python:*)",
+      "Bash(tree:*)"
     ],
     "deny": [],
     "ask": []
