@@ -1,0 +1,304 @@
+"""
+Sistema de Clustering para Días Especiales (Festivos)
+
+Este módulo maneja la desagregación horaria para días festivos y especiales,
+que tienen patrones de demanda significativamente diferentes a los días normales.
+"""
+
+import pandas as pd
+import numpy as np
+from sklearn.cluster import KMeans
+from pathlib import Path
+import pickle
+from typing import Optional, Dict
+import logging
+
+from ...config.settings import FEATURES_DATA_DIR, MODELS_DIR
+from .calendar_utils import CalendarClassifier
+
+logger = logging.getLogger(__name__)
+
+
+class SpecialDaysDisaggregator:
+    """
+    Desagregador horario especializado para días festivos.
+
+    Usa clustering sobre días festivos históricos para capturar
+    patrones únicos de demanda en fechas especiales.
+    """
+
+    def __init__(self, n_clusters: int = 15, random_state: int = 42):
+        """
+        Inicializa el desagregador de días especiales.
+
+        Args:
+            n_clusters: Número de clusters para K-Means (menor que días normales)
+            random_state: Semilla aleatoria para reproducibilidad
+        """
+        self.n_clusters = n_clusters
+        self.random_state = random_state
+        self.kmeans = None
+        self.cluster_profiles = None
+        self.cluster_by_date = None  # Mapeo mm-dd -> cluster
+        self.calendar_classifier = CalendarClassifier()
+        self.is_fitted = False
+
+    def fit(self, df: pd.DataFrame, date_column: str = 'FECHA') -> 'SpecialDaysDisaggregator':
+        """
+        Entrena el modelo con datos históricos de días festivos.
+
+        Args:
+            df: DataFrame con datos históricos completos
+            date_column: Nombre de la columna de fechas
+
+        Returns:
+            self
+        """
+        logger.info("Entrenando desagregador para días especiales...")
+
+        # Preparar datos
+        df = df.copy()
+        df[date_column] = pd.to_datetime(df[date_column])
+
+        # Filtrar solo festivos
+        df['es_festivo'] = df[date_column].apply(self.calendar_classifier.is_holiday)
+        df_festivos = df[df['es_festivo']].copy()
+
+        if len(df_festivos) == 0:
+            raise ValueError("No se encontraron días festivos en los datos históricos")
+
+        logger.info(f"Encontrados {len(df_festivos)} días festivos en históricos")
+
+        # Crear identificador mm-dd
+        df_festivos['mmdd'] = df_festivos[date_column].dt.strftime("%m-%d")
+
+        # Agrupar por fecha (promedio de múltiples años del mismo festivo)
+        period_cols = [f'P{i}' for i in range(1, 25)]
+        df_agrupado = df_festivos.groupby(date_column)[period_cols].mean()
+
+        # Normalizar
+        X = df_agrupado.values
+        daily_totals = X.sum(axis=1).reshape(-1, 1)
+        X_normalized = X / daily_totals
+
+        # Clustering
+        logger.info(f"Ejecutando K-Means con k={self.n_clusters}...")
+        self.kmeans = KMeans(
+            n_clusters=min(self.n_clusters, len(df_agrupado)),  # No más clusters que datos
+            random_state=self.random_state,
+            n_init=20
+        )
+        cluster_labels = self.kmeans.fit_predict(X_normalized)
+
+        # Guardar labels
+        df_agrupado['cluster'] = cluster_labels
+        df_agrupado['mmdd'] = df_agrupado.index.strftime("%m-%d")
+
+        # Calcular perfiles promedio por cluster
+        cluster_profiles_raw = df_agrupado.groupby('cluster')[period_cols].mean()
+        cluster_sums = cluster_profiles_raw.sum(axis=1)
+        self.cluster_profiles = cluster_profiles_raw.div(cluster_sums, axis=0)
+
+        # Cluster típico por mm-dd (moda)
+        self.cluster_by_date = (
+            df_agrupado.groupby('mmdd')['cluster']
+            .agg(lambda x: x.mode()[0] if len(x.mode()) > 0 else x.iloc[0])
+        )
+
+        self.is_fitted = True
+        logger.info(f"✓ Desagregador de días especiales entrenado")
+        logger.info(f"  - {len(self.cluster_by_date)} fechas festivas únicas")
+        logger.info(f"  - {len(self.cluster_profiles)} clusters identificados")
+
+        return self
+
+    def is_special_day(self, date: pd.Timestamp) -> bool:
+        """
+        Verifica si una fecha es un día especial conocido.
+
+        Args:
+            date: Fecha a verificar
+
+        Returns:
+            True si es festivo y está en el histórico
+        """
+        if not self.calendar_classifier.is_holiday(date):
+            return False
+
+        mmdd = date.strftime("%m-%d")
+        return mmdd in self.cluster_by_date
+
+    def predict_hourly_profile(
+        self,
+        date: pd.Timestamp,
+        total_daily: float
+    ) -> Optional[np.ndarray]:
+        """
+        Predice la distribución horaria para un día especial.
+
+        Args:
+            date: Fecha del festivo
+            total_daily: Demanda total del día
+
+        Returns:
+            Array de 24 elementos con distribución horaria, o None si no es especial
+        """
+        if not self.is_fitted:
+            raise RuntimeError("El modelo no ha sido entrenado. Ejecute .fit() primero.")
+
+        # Verificar si es día especial
+        if not self.is_special_day(date):
+            logger.debug(f"{date.date()} no es un día especial conocido")
+            return None
+
+        # Obtener mm-dd
+        mmdd = date.strftime("%m-%d")
+        cluster_id = self.cluster_by_date.get(mmdd)
+
+        if cluster_id is None:
+            logger.warning(f"No hay cluster para festivo {mmdd}")
+            return None
+
+        # Obtener perfil normalizado
+        normalized_profile = self.cluster_profiles.loc[cluster_id].values
+
+        # Escalar por total diario
+        hourly_prediction = normalized_profile * total_daily
+
+        return hourly_prediction
+
+    def get_special_days_list(self) -> pd.DataFrame:
+        """
+        Retorna lista de días especiales conocidos por el modelo.
+
+        Returns:
+            DataFrame con columnas: mmdd, cluster, nombre_festivo
+        """
+        if not self.is_fitted:
+            raise RuntimeError("El modelo no ha sido entrenado.")
+
+        results = []
+        for mmdd, cluster in self.cluster_by_date.items():
+            # Crear fecha de ejemplo para obtener nombre
+            year = 2024
+            date = pd.to_datetime(f"{year}-{mmdd}")
+            nombre = self.calendar_classifier.get_holiday_name(date)
+
+            results.append({
+                'mmdd': mmdd,
+                'cluster': cluster,
+                'nombre_festivo': nombre
+            })
+
+        return pd.DataFrame(results).sort_values('mmdd')
+
+    def save(self, filepath: Optional[Path] = None) -> None:
+        """Guarda el modelo entrenado."""
+        if not self.is_fitted:
+            raise RuntimeError("No hay modelo entrenado para guardar.")
+
+        if filepath is None:
+            filepath = Path(MODELS_DIR) / "special_days_disaggregator.pkl"
+
+        filepath.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(filepath, 'wb') as f:
+            pickle.dump({
+                'kmeans': self.kmeans,
+                'cluster_profiles': self.cluster_profiles,
+                'cluster_by_date': self.cluster_by_date,
+                'n_clusters': self.n_clusters,
+                'random_state': self.random_state,
+            }, f)
+
+        logger.info(f"✓ Modelo de días especiales guardado en {filepath}")
+
+    @classmethod
+    def load(cls, filepath: Optional[Path] = None) -> 'SpecialDaysDisaggregator':
+        """Carga un modelo entrenado desde disco."""
+        if filepath is None:
+            filepath = Path(MODELS_DIR) / "special_days_disaggregator.pkl"
+
+        if not filepath.exists():
+            raise FileNotFoundError(f"No se encontró modelo en {filepath}")
+
+        with open(filepath, 'rb') as f:
+            data = pickle.load(f)
+
+        instance = cls(
+            n_clusters=data['n_clusters'],
+            random_state=data['random_state']
+        )
+        instance.kmeans = data['kmeans']
+        instance.cluster_profiles = data['cluster_profiles']
+        instance.cluster_by_date = data['cluster_by_date']
+        instance.is_fitted = True
+
+        logger.info(f"✓ Modelo de días especiales cargado desde {filepath}")
+        return instance
+
+
+# ============== FUNCIONES DE UTILIDAD ==============
+
+def train_and_save_special_days(
+    data_path: Optional[Path] = None,
+    n_clusters: int = 15
+) -> SpecialDaysDisaggregator:
+    """
+    Entrena y guarda el modelo de días especiales.
+
+    Args:
+        data_path: Ruta a datos históricos
+        n_clusters: Número de clusters
+
+    Returns:
+        Modelo entrenado
+    """
+    if data_path is None:
+        data_path = Path(FEATURES_DATA_DIR) / "data_with_features_latest.csv"
+
+    logger.info(f"Cargando datos desde {data_path}...")
+    df = pd.read_csv(data_path)
+
+    # Entrenar
+    disaggregator = SpecialDaysDisaggregator(n_clusters=n_clusters)
+    disaggregator.fit(df, date_column='FECHA')
+
+    # Guardar
+    disaggregator.save()
+
+    return disaggregator
+
+
+# ============== EJEMPLO DE USO ==============
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+
+    print("=" * 80)
+    print("ENTRENAMIENTO DE DESAGREGADOR PARA DÍAS ESPECIALES")
+    print("=" * 80)
+
+    # Entrenar
+    disaggregator = train_and_save_special_days(n_clusters=15)
+
+    # Mostrar días especiales conocidos
+    print("\n📋 Días especiales en el modelo:")
+    special_days_df = disaggregator.get_special_days_list()
+    print(special_days_df.to_string(index=False))
+
+    # Probar predicción para Navidad
+    test_date = pd.to_datetime("2024-12-25")
+    test_total = 1200.0  # Demanda menor en festivos
+
+    if disaggregator.is_special_day(test_date):
+        hourly = disaggregator.predict_hourly_profile(test_date, test_total)
+
+        print(f"\n📅 Predicción para {test_date.date()} - Navidad (total: {test_total} MWh)")
+        print(f"\n   Distribución horaria:")
+        for i, value in enumerate(hourly, start=1):
+            print(f"      P{i:02d}: {value:6.2f} MW")
+
+        print(f"\n   ✓ Suma total: {hourly.sum():.2f} MWh")
+    else:
+        print(f"\n⚠ {test_date.date()} no es un día especial conocido")

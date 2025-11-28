@@ -26,9 +26,20 @@ from datetime import datetime, timedelta
 import logging
 import sys
 
-# Importar pipeline de feature engineering de Semana 1
-sys.path.append(str(Path(__file__).parent))
-from pipeline.feature_engineering import FeatureEngineer
+# Importar pipeline de feature engineering
+try:
+    from ..pipeline.feature_engineering import FeatureEngineer
+except ImportError:
+    # Fallback para ejecución directa
+    sys.path.append(str(Path(__file__).parent.parent))
+    from pipeline.feature_engineering import FeatureEngineer
+
+# Importar sistema de desagregación horaria
+try:
+    from .hourly import HourlyDisaggregationEngine
+except ImportError:
+    # Si no está disponible, será None
+    HourlyDisaggregationEngine = None
 
 # Configurar logging
 logging.basicConfig(
@@ -44,7 +55,8 @@ class ForecastPipeline:
     def __init__(self,
                  model_path: str = 'models/registry/champion_model.joblib',
                  historical_data_path: str = 'data/features/data_with_features_latest.csv',
-                 festivos_path: str = 'data/calendario_festivos.json'):
+                 festivos_path: str = 'data/calendario_festivos.json',
+                 enable_hourly_disaggregation: bool = True):
         """
         Inicializa el pipeline
 
@@ -52,10 +64,12 @@ class ForecastPipeline:
             model_path: Ruta al modelo entrenado
             historical_data_path: Ruta a datos históricos con features
             festivos_path: Ruta al calendario de festivos
+            enable_hourly_disaggregation: Si True, habilita desagregación horaria automática
         """
         self.model_path = model_path
         self.historical_data_path = historical_data_path
         self.festivos_path = festivos_path
+        self.enable_hourly_disaggregation = enable_hourly_disaggregation
 
         # Cargar modelo
         logger.info(f"Cargando modelo desde {model_path}")
@@ -79,6 +93,21 @@ class ForecastPipeline:
 
         # Feature engineer
         self.feature_engineer = FeatureEngineer()
+
+        # Sistema de desagregación horaria
+        if self.enable_hourly_disaggregation and HourlyDisaggregationEngine is not None:
+            logger.info("Inicializando sistema de desagregación horaria...")
+            try:
+                self.hourly_engine = HourlyDisaggregationEngine(auto_load=True)
+                logger.info("✓ Sistema de desagregación horaria cargado")
+            except Exception as e:
+                logger.warning(f"⚠ No se pudo cargar sistema de desagregación: {e}")
+                logger.warning("  Se usarán placeholders para distribución horaria")
+                self.hourly_engine = None
+        else:
+            if self.enable_hourly_disaggregation:
+                logger.warning("⚠ HourlyDisaggregationEngine no disponible. Se usarán placeholders.")
+            self.hourly_engine = None
 
         logger.info("✓ Pipeline inicializado correctamente")
 
@@ -110,6 +139,52 @@ class ForecastPipeline:
         """Verifica si una fecha es festivo"""
         fecha_str = fecha.strftime('%Y-%m-%d')
         return fecha_str in self.festivos
+
+    def _get_placeholder_hourly(self, total_daily: float) -> dict:
+        """
+        Genera distribución horaria usando placeholders simples.
+
+        Se usa como fallback cuando el sistema de clustering no está disponible.
+
+        Args:
+            total_daily: Demanda total del día
+
+        Returns:
+            Dict con P1-P24
+        """
+        # Perfil aproximado basado en patrones típicos de demanda
+        # Horas pico: 6-9am y 6-9pm
+        hourly_distribution = [
+            0.038,  # P1  (00:00-01:00) - madrugada
+            0.036,  # P2  (01:00-02:00)
+            0.034,  # P3  (02:00-03:00)
+            0.035,  # P4  (03:00-04:00)
+            0.037,  # P5  (04:00-05:00)
+            0.040,  # P6  (05:00-06:00) - empieza a subir
+            0.042,  # P7  (06:00-07:00) - pico mañana
+            0.044,  # P8  (07:00-08:00)
+            0.045,  # P9  (08:00-09:00)
+            0.044,  # P10 (09:00-10:00)
+            0.043,  # P11 (10:00-11:00)
+            0.042,  # P12 (11:00-12:00)
+            0.041,  # P13 (12:00-13:00)
+            0.040,  # P14 (13:00-14:00)
+            0.041,  # P15 (14:00-15:00)
+            0.042,  # P16 (15:00-16:00)
+            0.043,  # P17 (16:00-17:00)
+            0.045,  # P18 (17:00-18:00) - empieza pico tarde
+            0.047,  # P19 (18:00-19:00) - pico tarde
+            0.048,  # P20 (19:00-20:00)
+            0.046,  # P21 (20:00-21:00)
+            0.044,  # P22 (21:00-22:00)
+            0.041,  # P23 (22:00-23:00)
+            0.039,  # P24 (23:00-00:00)
+        ]
+
+        # Verificar que sume 1.0
+        assert abs(sum(hourly_distribution) - 1.0) < 0.001, "La distribución debe sumar 1.0"
+
+        return {f'P{i}': total_daily * hourly_distribution[i-1] for i in range(1, 25)}
 
     def generate_climate_forecast(self, start_date: datetime, days: int = 30) -> pd.DataFrame:
         """
@@ -453,6 +528,21 @@ class ForecastPipeline:
 
             logger.info(f"   Demanda predicha: {demanda_pred:,.2f} MW")
 
+            # Desagregación horaria (si está habilitada)
+            hourly_breakdown = {}
+            if self.hourly_engine is not None:
+                try:
+                    hourly_result = self.hourly_engine.predict_hourly(fecha, demanda_pred, validate=True)
+                    hourly_breakdown = {f'P{i}': hourly_result['hourly'][i-1] for i in range(1, 25)}
+                    logger.info(f"   ✓ Desagregación horaria: método={hourly_result['method']}")
+                except Exception as e:
+                    logger.warning(f"   ⚠ Error en desagregación horaria: {e}")
+                    logger.warning(f"   Usando placeholders")
+                    hourly_breakdown = self._get_placeholder_hourly(demanda_pred)
+            else:
+                # Placeholders si no hay desagregación
+                hourly_breakdown = self._get_placeholder_hourly(demanda_pred)
+
             # Guardar predicción
             prediction_record = {
                 'fecha': fecha,
@@ -460,7 +550,8 @@ class ForecastPipeline:
                 'is_festivo': features['is_festivo'],
                 'is_weekend': features['is_weekend'],
                 'dayofweek': features['dayofweek'],
-                'temp_mean': climate['temp_mean']
+                'temp_mean': climate['temp_mean'],
+                **hourly_breakdown  # Agregar P1-P24
             }
             predictions.append(prediction_record)
 
@@ -468,10 +559,7 @@ class ForecastPipeline:
             new_row = {
                 'fecha': fecha,
                 'demanda_total': demanda_pred,
-                'P8': demanda_pred * 0.042,   # Placeholder (Semana 3: desagregación)
-                'P12': demanda_pred * 0.046,
-                'P18': demanda_pred * 0.048,
-                'P20': demanda_pred * 0.045
+                **hourly_breakdown
             }
             df_temp = pd.concat([df_temp, pd.DataFrame([new_row])], ignore_index=True)
 

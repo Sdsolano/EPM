@@ -1,0 +1,150 @@
+================================================================================
+REPORTE DE VALIDACIÓN - SISTEMA DE DESAGREGACIÓN HORARIA EPM
+================================================================================
+
+Fecha de generación: 2025-11-27 19:10:00
+Período evaluado: 2025-09-03 a 2025-11-01
+Total de días evaluados: 60
+
+================================================================================
+1. VALIDACIÓN DE SUMA (sum(P1-P24) = TOTAL)
+================================================================================
+
+✓ Días con suma válida: 60/60 (100.00%)
+
+Diferencia máxima encontrada: 0.000000 MWh
+
+================================================================================
+2. MÉTRICAS GLOBALES DE PRECISIÓN
+================================================================================
+
+MAE (Error Absoluto Medio):  19.5700 MW
+RMSE (Raíz Error Cuadrático): 23.4185 MW
+MAPE (Error Porcentual Medio): 1.61%
+
+Error máximo encontrado: 69.9009 MW
+
+================================================================================
+3. DESGLOSE POR TIPO DE DÍA
+================================================================================
+
+LABORAL (42 días, 70.0%):
+  MAE:  17.5107 MW
+  RMSE: 21.3496 MW
+  MAPE: 1.39%
+
+FIN_DE_SEMANA (17 días, 28.3%):
+  MAE:  25.0872 MW
+  RMSE: 28.9438 MW
+  MAPE: 2.20%
+
+FESTIVO (1 días, 1.7%):
+  MAE:  12.2661 MW
+  RMSE: 16.3820 MW
+  MAPE: 1.19%
+
+================================================================================
+4. DESGLOSE POR MÉTODO DE CLUSTERING
+================================================================================
+
+Normal (35 clusters) (59 días, 98.3%):
+  MAE:  19.6938 MW
+  RMSE: 23.5377 MW
+  MAPE: 1.62%
+
+Especial (15 clusters) (1 días, 1.7%):
+  MAE:  12.2661 MW
+  RMSE: 16.3820 MW
+  MAPE: 1.19%
+
+================================================================================
+5. ANÁLISIS DE DÍAS FESTIVOS
+================================================================================
+
+Total festivos evaluados: 1
+MAE promedio festivos: 12.2661 MW
+MAPE promedio festivos: 1.19%
+
+Festivos evaluados:
+  - 2025-10-13 (Columbus Day (observed)): MAPE = 1.19%
+
+================================================================================
+6. DÍAS CON MAYOR ERROR (Top 10)
+================================================================================
+
+
+  2025-09-28:
+    Tipo: fin_de_semana, Método: normal
+    MAPE: 2.72%, MAE: 29.21 MW
+    Error máximo: 52.22 MW en hora P13
+
+  2025-09-15:
+    Tipo: laboral, Método: normal
+    MAPE: 2.71%, MAE: 32.90 MW
+    Error máximo: 69.86 MW en hora P3
+
+  2025-10-20:
+    Tipo: laboral, Método: normal
+    MAPE: 2.65%, MAE: 31.51 MW
+    Error máximo: 60.93 MW en hora P2
+
+  2025-10-19:
+    Tipo: fin_de_semana, Método: normal
+    MAPE: 2.63%, MAE: 28.33 MW
+    Error máximo: 45.80 MW en hora P21
+
+  2025-10-27:
+    Tipo: laboral, Método: normal
+    MAPE: 2.60%, MAE: 29.61 MW
+    Error máximo: 62.59 MW en hora P2
+
+  2025-10-06:
+    Tipo: laboral, Método: normal
+    MAPE: 2.59%, MAE: 29.64 MW
+    Error máximo: 64.13 MW en hora P1
+
+  2025-10-14:
+    Tipo: laboral, Método: normal
+    MAPE: 2.53%, MAE: 29.10 MW
+    Error máximo: 69.90 MW en hora P19
+
+  2025-09-13:
+    Tipo: fin_de_semana, Método: normal
+    MAPE: 2.47%, MAE: 30.11 MW
+    Error máximo: 59.92 MW en hora P13
+
+  2025-09-29:
+    Tipo: laboral, Método: normal
+    MAPE: 2.47%, MAE: 28.80 MW
+    Error máximo: 62.70 MW en hora P3
+
+  2025-10-12:
+    Tipo: fin_de_semana, Método: normal
+    MAPE: 2.45%, MAE: 25.01 MW
+    Error máximo: 48.52 MW en hora P21
+
+================================================================================
+7. DESGLOSE POR TEMPORADA
+================================================================================
+
+LLUVIOSA (60 días, 100.0%):
+  MAE:  19.5700 MW
+  RMSE: 23.4185 MW
+  MAPE: 1.61%
+
+================================================================================
+8. CONCLUSIONES Y RECOMENDACIONES
+================================================================================
+
+✓ Precisión Global (MAPE): 1.61%
+  → Excelente precisión. Sistema listo para producción.
+
+✓ Validación de Suma: PERFECTA (100% de días válidos)
+
+✓ Comparación de Métodos:
+  - Normal (días regulares):  MAPE = 1.62%
+  - Especial (festivos):      MAPE = 1.19%
+
+================================================================================
+FIN DEL REPORTE
+================================================================================

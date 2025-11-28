@@ -14,9 +14,11 @@ Sistema de machine learning que automatiza el pronóstico de demanda energética
 - ✅ **Pipeline Automatizado de Datos**: Lectura, limpieza y transformación automática
 - ✅ **Feature Engineering Inteligente**: 63 features creadas automáticamente
 - ✅ **Modelos de ML Optimizados**: XGBoost, LightGBM, RandomForest
+- ✅ **Desagregación Horaria con Clustering**: K-Means dual (35 + 15 clusters)
 - ✅ **Métrica rMAPE Innovadora**: Del paper de Universidad del Norte
 - ✅ **Versionado de Modelos**: Registry completo con selección automática del campeón
-- ✅ **Alta Precisión**: MAPE 0.45% (11x mejor que objetivo regulatorio de 5%)
+- ✅ **Alta Precisión**: MAPE 0.45% diario + 1.61% horario
+- ✅ **Dashboards Interactivos**: Visualización y validación con Streamlit
 
 ## 📊 Estado del Proyecto
 
@@ -24,7 +26,8 @@ Sistema de machine learning que automatiza el pronóstico de demanda energética
 |------|-----------|--------|--------|
 | **Fase 1** | Pipeline Automatizado de Datos | ✅ Completada | 100% |
 | **Fase 2** | Modelos Predictivos + Entrenamiento | ✅ Completada | 100% |
-| **Fase 3** | Sistema de Validación y Selección | ⚠️ En progreso | 70% |
+| **Fase 2.5** | Desagregación Horaria (Clustering) | ✅ Completada | 100% |
+| **Fase 3** | Sistema de Validación y Dashboards | ✅ Completada | 100% |
 | **Fase 4** | API Gateway + Monitoreo + Reentrenamiento | ⏸️ Pendiente | 10% |
 
 ## 🚀 Inicio Rápido
@@ -47,35 +50,45 @@ pip install -e .
 ### Ejecutar Pipeline Completo
 
 ```bash
-# Ejecutar pipeline de datos
-python scripts/run_pipeline.py
+# 1. Ejecutar pipeline de datos
+python pipeline/orchestrator.py
 
-# Entrenar modelos
-python scripts/train_models.py
+# 2. Entrenar modelos de predicción diaria
+python train_models.py
 
-# Generar predicciones (30 días)
-python scripts/predict_30_days.py
+# 3. Entrenar sistema de desagregación horaria
+python scripts/train_hourly_disaggregation.py
+
+# 4. Generar predicciones (30 días con desagregación horaria)
+python src/prediction/forecaster.py
+
+# 5. Validar desagregación horaria
+python scripts/validate_hourly_disaggregation.py
 ```
 
 ### Uso Programático
 
 ```python
-from src.pipeline.orchestrator import run_automated_pipeline
-from src.models.trainer import ModelTrainer
+from src.prediction.forecaster import ForecastPipeline
+from src.prediction.hourly import HourlyDisaggregationEngine
 
-# 1. Ejecutar pipeline de datos
-df_features, report = run_automated_pipeline(
-    power_data_path='data/raw/datos.csv',
-    weather_data_path='data/raw/weather.csv',
-    start_date='2017-01-01'
+# 1. Pipeline completo de predicción (incluye desagregación horaria automática)
+pipeline = ForecastPipeline(
+    model_path='models/trained/xgboost_20251120_161937.joblib',
+    historical_data_path='data/features/data_with_features_latest.csv',
+    enable_hourly_disaggregation=True
 )
 
-# 2. Entrenar modelos
-trainer = ModelTrainer(optimize_hyperparams=True)
-trained_models = trainer.train_all_models(X_train, y_train, X_val, y_val)
+# Predecir próximos 30 días
+predictions = pipeline.predict_next_n_days(n_days=30)
 
-# 3. Seleccionar mejor modelo
-best_name, best_model, results = trainer.select_best_model(criterion='rmape')
+# 2. Usar desagregación horaria independiente
+engine = HourlyDisaggregationEngine(auto_load=True)
+result = engine.predict_hourly(date="2024-03-15", total_daily=31500.0)
+
+print(f"Método usado: {result['method']}")  # 'normal' o 'special'
+print(f"Suma válida: {result['validation']['is_valid']}")  # True
+print(f"P1-P24: {result['hourly']}")  # Array de 24 valores
 ```
 
 ## 📁 Estructura del Proyecto
@@ -86,22 +99,45 @@ EPM/
 │   ├── pipeline/                 # Pipeline de datos (Fase 1)
 │   ├── models/                   # Modelos ML (Fase 2)
 │   ├── prediction/               # Sistema de predicción
+│   │   ├── forecaster.py         # Pipeline de predicción
+│   │   └── hourly/               # ✨ Desagregación horaria (NUEVO)
+│   │       ├── calendar_utils.py      # Clasificador de días (holidays)
+│   │       ├── hourly_disaggregator.py # Clustering días normales
+│   │       ├── special_days.py        # Clustering días especiales
+│   │       └── disaggregation_engine.py # Orquestador
 │   ├── api/                      # API Gateway (Fase 4)
 │   ├── monitoring/               # Monitoreo y reentrenamiento
 │   └── config/                   # Configuración
 │
 ├── scripts/                      # Scripts ejecutables
-│   ├── run_pipeline.py
-│   ├── train_models.py
-│   └── predict_30_days.py
+│   ├── train_hourly_disaggregation.py  # Entrenar clustering horario
+│   └── validate_hourly_disaggregation.py # Validación interna del sistema
 │
-├── tests/                        # Tests
-├── docs/                         # Documentación
-├── notebooks/                    # Jupyter notebooks
-├── dashboards/                   # Dashboards Streamlit
+├── tests/                        # Tests unitarios
+│   └── test_hourly_disaggregation.py  # Tests del sistema horario
+│
+├── dashboards/                   # Dashboards Streamlit interactivos
+│   ├── hourly_comparison_dashboard.py  # Comparación 30d vs históricos
+│   ├── hourly_validation_dashboard.py  # Validación retrospectiva
+│   └── prediction_dashboard.py         # Predicciones futuras
+│
+├── notebooks/                    # Jupyter notebooks (exploración)
 ├── data/                         # Datos (gitignored)
+│   ├── raw/                      # Datos originales
+│   ├── processed/                # Datos procesados
+│   ├── features/                 # Features engineering
+│   └── predictions/              # Predicciones generadas
+│
 ├── models/                       # Modelos entrenados (gitignored)
-└── logs/                         # Logs (gitignored)
+│   ├── trained/                  # Modelos de predicción diaria
+│   ├── registry/                 # Model registry (campeón)
+│   ├── hourly_disaggregator.pkl  # Clustering días normales
+│   └── special_days_disaggregator.pkl # Clustering festivos
+│
+└── logs/                         # Logs del sistema
+    ├── pipeline/                 # Logs de pipeline de datos
+    ├── training/                 # Logs de entrenamiento
+    └── validation/               # Reportes de validación
 ```
 
 ## 🧠 Modelos Implementados
@@ -140,6 +176,99 @@ EPM/
 - **4 features de estacionalidad**: Temporada lluviosa/seca
 - **3 features de interacción**: Clima × calendario
 
+## ⏰ Sistema de Desagregación Horaria
+
+El sistema convierte pronósticos **diarios totales** en distribuciones **horarias (P1-P24)** usando clustering inteligente basado en K-Means.
+
+### Arquitectura
+
+```
+Predicción Diaria (TOTAL)
+    ↓
+CalendarClassifier (holidays library)
+    ↓
+¿Es festivo/especial? → SÍ → SpecialDaysDisaggregator (15 clusters)
+    ↓                          ↓
+   NO                   Perfil Horario P1-P24
+    ↓                          ↓
+HourlyDisaggregator      Validación: sum(P1-P24) = TOTAL
+(35 clusters)                  ↓
+    ↓                    Predicción Horaria Lista
+Perfil Horario P1-P24
+```
+
+### Características Técnicas
+
+- ✅ **Clustering Dual K-Means**:
+  - 35 clusters para días normales (laborales, fines de semana)
+  - 15 clusters para días especiales (festivos colombianos)
+- ✅ **Librería `holidays`**: Festivos de Colombia automáticos 2017-2030
+- ✅ **Validación Matemática**: Garantiza `sum(P1-P24) == TOTAL_DIARIO` (error < 0.01 MWh)
+- ✅ **Clasificación Inteligente**:
+  - Tipo de día: Laboral / Festivo / Fin de semana
+  - Temporada: Lluviosa / Seca (clima Antioquia)
+- ✅ **Precisión Validada**: MAPE 1.61% en 60 días de prueba
+- ✅ **Production-Ready**: Modelos serializados, logging, tests completos
+
+### Métricas de Validación (60 días)
+
+| Métrica | Valor | Estado |
+|---------|-------|--------|
+| **MAPE Global** | 1.61% | ✅ Excelente |
+| **MAE** | 19.57 MW | ✅ Bajo error |
+| **RMSE** | 23.42 MW | ✅ Consistente |
+| **Validación Suma** | 100% válido | ✅ Perfecto |
+| **Días Laborales** | MAPE 1.39% | ✅ Superior |
+| **Fines de Semana** | MAPE 2.20% | ✅ Bueno |
+| **Festivos** | MAPE 1.19% | ✅ Excelente |
+
+### Uso Rápido
+
+```python
+from src.prediction.hourly import HourlyDisaggregationEngine
+
+# Cargar sistema entrenado
+engine = HourlyDisaggregationEngine(auto_load=True)
+
+# Predecir distribución horaria
+result = engine.predict_hourly(
+    date="2024-03-15",
+    total_daily=31500.0,
+    validate=True
+)
+
+print(f"Método: {result['method']}")           # 'normal' o 'special'
+print(f"P1-P24: {result['hourly']}")           # Array[24] con valores
+print(f"Suma válida: {result['validation']['is_valid']}")  # True
+print(f"Suma total: {result['validation']['sum']:.2f}")    # 31500.00
+```
+
+### Entrenar y Validar
+
+```bash
+# Entrenar modelos de clustering (3,226 días normales + 156 festivos)
+python scripts/train_hourly_disaggregation.py
+
+# Validar sistema contra históricos (genera reporte completo)
+python scripts/validate_hourly_disaggregation.py --days 60
+
+# Ejecutar tests unitarios
+pytest tests/test_hourly_disaggregation.py -v
+```
+
+### Dashboards Interactivos
+
+```bash
+# Dashboard de comparación (30 días × 24 horas vs históricos)
+streamlit run dashboards/hourly_comparison_dashboard.py
+
+# Dashboard de validación retrospectiva
+streamlit run dashboards/hourly_validation_dashboard.py
+
+# Dashboard de predicciones futuras
+streamlit run dashboards/prediction_dashboard.py
+```
+
 ## 🔧 Configuración
 
 Editar `src/config/settings.py` para ajustar:
@@ -152,19 +281,38 @@ Editar `src/config/settings.py` para ajustar:
 
 ## 📚 Documentación
 
-- [Fase 1 Completada](docs/FASE1_COMPLETADA.md)
-- [Fase 2 Modelos Implementados](docs/FASE2_MODELOS_IMPLEMENTADOS.md)
-- [Especificaciones del Proyecto](docs/proyecto_especificaciones.pdf)
-- [Estructura del Repositorio](docs/ESTRUCTURA_REORGANIZACION.md)
+### Fases del Proyecto
+- [Especificaciones del Proyecto](docs/proyecto_especificaciones.pdf) - PDF con requerimientos completos
+
+### Reportes de Validación
+- **Validación Horaria**: `logs/validation/validation_report.txt`
+  - 60 días evaluados (Sep-Nov 2025)
+  - MAPE global: 1.61%
+  - Validación de suma: 100% perfecta
+  - Desglose por tipo de día y método de clustering
+
+### Datos de Salida
+- **Predicciones**: `data/predictions/predictions_next_30_days.csv`
+- **Features Engineering**: `data/features/data_with_features_latest.csv`
+- **Logs del Sistema**: `logs/pipeline/`, `logs/training/`, `logs/validation/`
 
 ## 🧪 Testing
 
 ```bash
-# Ejecutar tests
-pytest tests/
+# Ejecutar todos los tests
+pytest tests/ -v
+
+# Test específico de desagregación horaria
+pytest tests/test_hourly_disaggregation.py -v
 
 # Con coverage
 pytest --cov=src tests/
+
+# Tests críticos incluidos:
+# - Validación suma(P1-P24) = TOTAL
+# - Formato de salida (24 valores)
+# - Clustering con diferentes n_clusters
+# - Manejo de días especiales
 ```
 
 ## 📋 Requisitos Regulatorios
@@ -183,8 +331,10 @@ El sistema cumple con:
 
 ### Granularidades
 
-- Horaria (24 períodos)
-- 15 minutos (96 períodos)
+- ✅ **Horaria (24 períodos)** - Implementada con clustering K-Means
+  - MAPE: 1.61% (validado en 60 días)
+  - Validación matemática: suma(P1-P24) = TOTAL
+- ⏸️ **15 minutos (96 períodos)** - Pendiente (Fase 4)
 
 ## 🤝 Contribución
 
@@ -205,5 +355,59 @@ Propiedad de **Empresas Públicas de Medellín (EPM)**
 
 ---
 
-**Versión**: 1.0.0
-**Última actualización**: Noviembre 2024
+## 🎓 Metodología Técnica
+
+### Pipeline de Predicción Completo
+
+1. **Ingesta de Datos**
+   - Datos históricos de demanda (TOTAL + P1-P24)
+   - Datos climáticos (temperatura, humedad, sensación térmica)
+   - Calendario de festivos (librería `holidays`)
+
+2. **Feature Engineering** (63 features)
+   - 19 temporales: año, mes, día, día de semana, sin/cos
+   - 25 de demanda: lags (1d, 7d, 14d) + rolling stats (7d, 14d, 28d)
+   - 25 climáticas: temperatura, humedad, feels_like con lags
+   - 4 estacionales: temporada lluviosa/seca
+   - 3 de interacción: clima × calendario
+
+3. **Predicción Diaria** (XGBoost)
+   - Input: 63 features
+   - Output: TOTAL_DIARIO
+   - MAPE: 0.45%
+
+4. **Desagregación Horaria** (K-Means Clustering)
+   - Input: TOTAL_DIARIO + fecha
+   - Clasificación: Laboral/Festivo/Fin_de_semana
+   - Clustering: 35 clusters (normal) o 15 clusters (especial)
+   - Output: P1-P24 (24 períodos horarios)
+   - MAPE: 1.61%
+   - Validación: sum(P1-P24) = TOTAL
+
+5. **Validación y Monitoreo**
+   - Validación retrospectiva vs datos históricos
+   - Dashboards interactivos con Streamlit
+   - Reportes automáticos con métricas detalladas
+
+---
+
+**Versión**: 2.0.0
+**Última actualización**: Noviembre 2025
+
+### Changelog
+
+**v2.0.0** (Nov 2025)
+- ✨ Sistema completo de desagregación horaria con clustering K-Means
+- ✨ Integración con librería `holidays` para festivos colombianos
+- ✨ 3 dashboards interactivos con Streamlit
+- ✨ Script de validación interna automatizada
+- ✨ Tests completos del sistema horario
+- 🎯 MAPE horario: 1.61% (validado en 60 días)
+- 🎯 Validación matemática: 100% suma correcta
+
+**v1.0.0** (Nov 2024)
+- ✅ Pipeline automatizado de datos
+- ✅ Modelos ML (XGBoost, LightGBM, RandomForest)
+- ✅ Feature engineering (63 features)
+- ✅ Model registry con versionado
+- 🎯 MAPE diario: 0.45%
