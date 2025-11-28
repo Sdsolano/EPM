@@ -80,13 +80,29 @@ class ForecastPipeline:
         # Cargar datos históricos
         logger.info(f"Cargando datos históricos desde {historical_data_path}")
         self.df_historico = pd.read_csv(historical_data_path)
-        self.df_historico['fecha'] = pd.to_datetime(self.df_historico['fecha'])
 
         # Normalizar nombres de columnas (FECHA -> fecha, TOTAL -> demanda_total)
         if 'FECHA' in self.df_historico.columns:
             self.df_historico.rename(columns={'FECHA': 'fecha'}, inplace=True)
+        elif 'fecha' not in self.df_historico.columns:
+            # Si no hay columna de fecha, crear una basándose en year, month, day
+            if all(col in self.df_historico.columns for col in ['year', 'month', 'day']):
+                self.df_historico['fecha'] = pd.to_datetime(
+                    self.df_historico[['year', 'month', 'day']].rename(columns={
+                        'year': 'year', 'month': 'month', 'day': 'day'
+                    })
+                )
+            else:
+                # Último recurso: crear fechas basadas en el índice
+                # Asumiendo que los datos empiezan en 2017-01-01
+                logger.warning("No se encontró columna de fecha, creando fechas desde índice")
+                self.df_historico['fecha'] = pd.date_range(start='2017-01-01', periods=len(self.df_historico), freq='D')
+
         if 'TOTAL' in self.df_historico.columns:
             self.df_historico.rename(columns={'TOTAL': 'demanda_total'}, inplace=True)
+
+        if not pd.api.types.is_datetime64_any_dtype(self.df_historico['fecha']):
+            self.df_historico['fecha'] = pd.to_datetime(self.df_historico['fecha'])
 
         # Cargar festivos
         self.festivos = self._load_festivos()

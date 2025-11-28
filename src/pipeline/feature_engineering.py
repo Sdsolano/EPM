@@ -231,22 +231,37 @@ class FeatureEngineer:
         """Integra características climáticas con datos de demanda"""
         # Preparar datos meteorológicos
         weather = weather_df.copy()
-        weather['FECHA'] = pd.to_datetime(weather['dt_iso']).dt.date
+
+        # Detectar si los datos ya están en formato diario (con FECHA) o horario (con dt_iso)
+        if 'FECHA' in weather.columns:
+            # Ya tenemos datos diarios del conector
+            weather['FECHA_DATE'] = pd.to_datetime(weather['FECHA']).dt.date
+            weather_daily = weather.copy()
+
+            # Renombrar para mantener consistencia con el resto del código
+            # El conector ya proporciona: temp_mean, temp_min, temp_max, temp_std, etc.
+            # No es necesario agregar nuevamente
+        elif 'dt_iso' in weather.columns:
+            # Datos horarios - necesitan agregación
+            weather['FECHA'] = pd.to_datetime(weather['dt_iso']).dt.date
+
+            # Agregar datos meteorológicos por día (promedios, min, max)
+            weather_daily = weather.groupby('FECHA').agg({
+                'temp': ['mean', 'min', 'max', 'std'],
+                'humidity': ['mean', 'min', 'max'],
+                'feels_like': ['mean', 'min', 'max'],
+                'wind_speed': ['mean', 'max'],
+                'clouds_all': 'mean',
+                'pressure': 'mean'
+            }).reset_index()
+
+            # Aplanar nombres de columnas
+            weather_daily.columns = ['_'.join(col).strip('_') for col in weather_daily.columns.values]
+            weather_daily.rename(columns={'FECHA': 'FECHA_DATE'}, inplace=True)
+        else:
+            raise ValueError("Datos meteorológicos deben contener columna 'FECHA' (diario) o 'dt_iso' (horario)")
+
         power_df['FECHA_DATE'] = power_df['FECHA'].dt.date
-
-        # Agregar datos meteorológicos por día (promedios, min, max)
-        weather_daily = weather.groupby('FECHA').agg({
-            'temp': ['mean', 'min', 'max', 'std'],
-            'humidity': ['mean', 'min', 'max'],
-            'feels_like': ['mean', 'min', 'max'],
-            'wind_speed': ['mean', 'max'],
-            'clouds_all': 'mean',
-            'pressure': 'mean'
-        }).reset_index()
-
-        # Aplanar nombres de columnas
-        weather_daily.columns = ['_'.join(col).strip('_') for col in weather_daily.columns.values]
-        weather_daily.rename(columns={'FECHA': 'FECHA_DATE'}, inplace=True)
 
         # Merge con datos de demanda
         df = power_df.merge(weather_daily, on='FECHA_DATE', how='left')

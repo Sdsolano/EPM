@@ -107,7 +107,7 @@ class DataPipelineOrchestrator:
             report = self._generate_final_report()
 
             print("\n" + "="*70)
-            print("✓ PIPELINE COMPLETADO EXITOSAMENTE")
+            print("PIPELINE COMPLETADO EXITOSAMENTE")
             print("="*70)
             print(f"  Registros finales: {len(self.df_with_features)}")
             print(f"  Features creadas: {self.feature_summary['stats']['total_features']}")
