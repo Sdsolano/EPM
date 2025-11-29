@@ -60,8 +60,20 @@ print("2. PREPARANDO DATOS PARA MODELADO")
 print("="*80)
 
 # Separar features y target
-exclude_cols = ['FECHA', 'TOTAL'] + [f'P{i}' for i in range(1, 25)]
+# IMPORTANTE: Excluir features de lag para evitar train-test mismatch en predicción recursiva
+FEATURES_LAG_TO_EXCLUDE = [
+    'total_lag_1d', 'total_lag_7d', 'total_lag_14d',
+    'p8_lag_1d', 'p8_lag_7d',
+    'p12_lag_1d', 'p12_lag_7d',
+    'p18_lag_1d', 'p18_lag_7d',
+    'p20_lag_1d', 'p20_lag_7d',
+    'total_day_change', 'total_day_change_pct'
+]
+
+exclude_cols = ['FECHA', 'TOTAL'] + [f'P{i}' for i in range(1, 25)] + FEATURES_LAG_TO_EXCLUDE
 feature_cols = [col for col in df.columns if col not in exclude_cols]
+
+print(f"\n⚠️  NOTA: Excluyendo {len(FEATURES_LAG_TO_EXCLUDE)} features de lag para mejor predicción recursiva")
 
 print(f"\n  Features disponibles: {len(feature_cols)}")
 print(f"  Target: TOTAL (demanda diaria)")

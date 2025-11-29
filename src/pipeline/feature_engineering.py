@@ -105,6 +105,8 @@ class FeatureEngineer:
 
         # Indicadores booleanos
         df['is_weekend'] = (df['dayofweek'] >= 5).astype(int)
+        df['is_saturday'] = (df['dayofweek'] == 5).astype(int)
+        df['is_sunday'] = (df['dayofweek'] == 6).astype(int)
         df['is_month_start'] = df['FECHA'].dt.is_month_start.astype(int)
         df['is_month_end'] = df['FECHA'].dt.is_month_end.astype(int)
         df['is_quarter_start'] = df['FECHA'].dt.is_quarter_start.astype(int)
@@ -129,7 +131,7 @@ class FeatureEngineer:
 
         calendar_features = [
             'year', 'month', 'day', 'dayofweek', 'dayofyear', 'week', 'quarter',
-            'is_weekend', 'is_month_start', 'is_month_end', 'is_quarter_start',
+            'is_weekend', 'is_saturday', 'is_sunday', 'is_month_start', 'is_month_end', 'is_quarter_start',
             'is_quarter_end', 'is_festivo', 'dayofweek_sin', 'dayofweek_cos',
             'month_sin', 'month_cos', 'dayofyear_sin', 'dayofyear_cos'
         ]

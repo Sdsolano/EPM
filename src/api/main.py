@@ -241,12 +241,26 @@ def train_model_if_needed(df_with_features: pd.DataFrame,
         return model_path, {}
 
     logger.info("="*80)
-    logger.info("🔧 INICIANDO ENTRENAMIENTO AUTOMÁTICO DE MODELOS")
+    logger.info("🔧 INICIANDO ENTRENAMIENTO AUTOMÁTICO DE MODELOS (SIN LAGS)")
     logger.info("="*80)
+
+    # IMPORTANTE: Excluir features de lag para evitar train-test mismatch en predicción recursiva
+    FEATURES_LAG_TO_EXCLUDE = [
+        'total_lag_1d', 'total_lag_7d', 'total_lag_14d',
+        'p8_lag_1d', 'p8_lag_7d',
+        'p12_lag_1d', 'p12_lag_7d',
+        'p18_lag_1d', 'p18_lag_7d',
+        'p20_lag_1d', 'p20_lag_7d',
+        'total_day_change', 'total_day_change_pct'
+    ]
 
     # Preparar datos para entrenamiento
     exclude_cols = ['FECHA', 'fecha', 'TOTAL', 'demanda_total'] + [f'P{i}' for i in range(1, 25)]
+    exclude_cols.extend(FEATURES_LAG_TO_EXCLUDE)  # ← AGREGAR LAGS A EXCLUSIÓN
+    
     feature_cols = [col for col in df_with_features.columns if col not in exclude_cols]
+    
+    logger.info(f"  ⚠️  Excluyendo {len(FEATURES_LAG_TO_EXCLUDE)} features de lag para mejor predicción recursiva")
 
     # Normalizar nombres de columnas
     target_col = 'TOTAL' if 'TOTAL' in df_with_features.columns else 'demanda_total'
@@ -260,7 +274,9 @@ def train_model_if_needed(df_with_features: pd.DataFrame,
     y = y[mask]
 
     logger.info(f"  Total registros: {len(X)}")
-    logger.info(f"  Features: {len(feature_cols)}")
+    logger.info(f"  Features totales: {len(df_with_features.columns) - len(exclude_cols)}")
+    logger.info(f"  Features usados: {len(feature_cols)} (sin lags)")
+    logger.info(f"  Features excluidos: {len(FEATURES_LAG_TO_EXCLUDE)} lags")
 
     # Split temporal (80% train, 20% validation)
     split_idx = int(len(X) * 0.8)
@@ -306,6 +322,8 @@ def train_model_if_needed(df_with_features: pd.DataFrame,
 
     # Path del mejor modelo
     best_model_path = saved_paths[best_name]
+    # Asegurar que es un Path object
+    best_model_path = Path(best_model_path) if isinstance(best_model_path, str) else best_model_path
 
     # Guardar el MEJOR modelo como campeón en registry
     registry_dir = Path('models/registry')
@@ -318,7 +336,9 @@ def train_model_if_needed(df_with_features: pd.DataFrame,
     logger.info(f"\n✓ Modelos guardados en: models/trained/")
     for name, path in saved_paths.items():
         status = "🏆 CAMPEÓN" if name == best_name else ""
-        logger.info(f"    {name}: {path.name} {status}")
+        # Asegurar que path es un Path object
+        path_obj = Path(path) if isinstance(path, str) else path
+        logger.info(f"    {name}: {path_obj.name} {status}")
 
     logger.info(f"✓ Modelo campeón actualizado: {champion_path}")
     logger.info("="*80)
@@ -524,7 +544,7 @@ async def predict_demand(request: PredictRequest):
                 model_path=str(model_path),
                 historical_data_path=temp_features_path,
                 festivos_path='config/festivos.json',
-                enable_hourly_disaggregation=True,
+                enable_hourly_disaggregation=True,  # ← Habilitado con nuevo modelo
                 raw_climate_path=climate_raw_path
             )
 

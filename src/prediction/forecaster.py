@@ -483,6 +483,8 @@ class ForecastPipeline:
         features['week'] = fecha.isocalendar()[1]
         features['quarter'] = (fecha.month - 1) // 3 + 1
         features['is_weekend'] = int(fecha.dayofweek >= 5)
+        features['is_saturday'] = int(fecha.dayofweek == 5)
+        features['is_sunday'] = int(fecha.dayofweek == 6)
         features['is_month_start'] = int(fecha.day == 1)
         features['is_month_end'] = int(fecha.day == pd.Timestamp(fecha).days_in_month)
         features['is_quarter_start'] = int(fecha.month in [1, 4, 7, 10] and fecha.day == 1)
