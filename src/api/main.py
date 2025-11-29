@@ -54,8 +54,8 @@ class PredictRequest(BaseModel):
         description="Ruta al archivo CSV con datos históricos de demanda hasta el día anterior"
     )
     weather_data_path: Optional[str] = Field(
-        None,
-        description="Ruta al archivo CSV con datos meteorológicos (opcional)"
+        'data/raw/clima.csv',
+        description="Ruta al archivo CSV con datos meteorológicos (se usa por defecto data/raw/clima.csv si no se especifica)"
     )
     start_date: Optional[str] = Field(
         None,
@@ -503,16 +503,38 @@ async def predict_demand(request: PredictRequest):
         logger.info(f"\n🔮 PASO 4: Generando predicciones para {request.n_days} días...")
 
         try:
-            # Inicializar pipeline de predicción
+            # Determinar ruta de datos climáticos RAW
+            climate_raw_path = request.weather_data_path if request.weather_data_path else 'data/raw/clima.csv'
+            
+            # CRITICO: Guardar datos procesados temporalmente
+            temp_features_path = 'data/features/temp_api_features.csv'
+            df_with_features.to_csv(temp_features_path, index=False)
+            
+            # Log datos guardados (detectar columna de fecha)
+            if 'FECHA' in df_with_features.columns:
+                logger.info(f"   Última fecha en temp: {df_with_features['FECHA'].max()}")
+            elif 'fecha' in df_with_features.columns:
+                logger.info(f"   Última fecha en temp: {df_with_features['fecha'].max()}")
+            else:
+                logger.info(f"   Datos guardados en temp (sin columna fecha explícita)")
+            logger.info(f"   Total filas: {len(df_with_features)}")
+            
+            # Inicializar pipeline de predicción con datos RECIEN PROCESADOS
             pipeline = ForecastPipeline(
                 model_path=str(model_path),
-                historical_data_path='data/features/data_with_features_latest.csv',
+                historical_data_path=temp_features_path,
                 festivos_path='config/festivos.json',
-                enable_hourly_disaggregation=True
+                enable_hourly_disaggregation=True,
+                raw_climate_path=climate_raw_path
             )
 
             # Generar predicciones
             predictions_df = pipeline.predict_next_n_days(n_days=request.n_days)
+            
+            # Limpiar archivo temporal
+            import os
+            if os.path.exists(temp_features_path):
+                os.remove(temp_features_path)
 
             logger.info(f"✓ Predicciones generadas: {len(predictions_df)} días")
 

@@ -56,7 +56,8 @@ class ForecastPipeline:
                  model_path: str = 'models/registry/champion_model.joblib',
                  historical_data_path: str = 'data/features/data_with_features_latest.csv',
                  festivos_path: str = 'data/calendario_festivos.json',
-                 enable_hourly_disaggregation: bool = True):
+                 enable_hourly_disaggregation: bool = True,
+                 raw_climate_path: str = 'data/raw/clima.csv'):
         """
         Inicializa el pipeline
 
@@ -65,11 +66,13 @@ class ForecastPipeline:
             historical_data_path: Ruta a datos históricos con features
             festivos_path: Ruta al calendario de festivos
             enable_hourly_disaggregation: Si True, habilita desagregación horaria automática
+            raw_climate_path: Ruta a datos climáticos RAW (para obtener datos reales más allá del entrenamiento)
         """
         self.model_path = model_path
         self.historical_data_path = historical_data_path
         self.festivos_path = festivos_path
         self.enable_hourly_disaggregation = enable_hourly_disaggregation
+        self.raw_climate_path = raw_climate_path
 
         # Cargar modelo
         logger.info(f"Cargando modelo desde {model_path}")
@@ -103,6 +106,27 @@ class ForecastPipeline:
 
         if not pd.api.types.is_datetime64_any_dtype(self.df_historico['fecha']):
             self.df_historico['fecha'] = pd.to_datetime(self.df_historico['fecha'])
+
+        # Cargar datos climáticos RAW (para obtener datos más allá del entrenamiento)
+        self.df_climate_raw = None
+        if Path(self.raw_climate_path).exists():
+            try:
+                logger.info(f"Cargando datos climáticos RAW desde {self.raw_climate_path}")
+                from ..pipeline.connectors import WeatherDataConnector
+                weather_connector = WeatherDataConnector({'path': self.raw_climate_path})
+                # CRÍTICO: NO pasar filtros de fecha para obtener TODOS los datos disponibles
+                self.df_climate_raw = weather_connector.read_data(start_date=None, end_date=None)
+                if 'FECHA' in self.df_climate_raw.columns:
+                    self.df_climate_raw.rename(columns={'FECHA': 'fecha'}, inplace=True)
+                if not pd.api.types.is_datetime64_any_dtype(self.df_climate_raw['fecha']):
+                    self.df_climate_raw['fecha'] = pd.to_datetime(self.df_climate_raw['fecha'])
+                logger.info(f"✅ Datos climaticos RAW cargados: {len(self.df_climate_raw)} dias ({self.df_climate_raw['fecha'].min()} a {self.df_climate_raw['fecha'].max()})")
+                logger.info(f"   Columnas disponibles: {list(self.df_climate_raw.columns)[:15]}...")
+                logger.info(f"   Shape: {self.df_climate_raw.shape}")
+            except Exception as e:
+                logger.warning(f"⚠️ ALERTA No se pudieron cargar datos climaticos RAW: {e}")
+                logger.warning(f"   Se usarán promedios históricos como fallback")
+                self.df_climate_raw = None
 
         # Cargar festivos
         self.festivos = self._load_festivos()
@@ -202,12 +226,106 @@ class ForecastPipeline:
 
         return {f'P{i}': total_daily * hourly_distribution[i-1] for i in range(1, 25)}
 
+    def get_real_climate_data(self, start_date: datetime, days: int = 30) -> pd.DataFrame:
+        """
+        Intenta obtener datos climáticos REALES, primero de RAW luego de histórico
+
+        Args:
+            start_date: Fecha inicial
+            days: Número de días
+
+        Returns:
+            DataFrame con datos reales o None si no existen
+        """
+        end_date = start_date + timedelta(days=days - 1)
+
+        # PRIMERO: Intentar desde datos climáticos RAW (tienen datos más recientes)
+        if self.df_climate_raw is not None:
+            df_climate_raw_filtered = self.df_climate_raw[
+                (self.df_climate_raw['fecha'] >= start_date) &
+                (self.df_climate_raw['fecha'] <= end_date)
+            ].copy()
+
+            logger.info(f"   Buscando datos climáticos RAW: {start_date.date()} a {end_date.date()}")
+            logger.info(f"   Registros encontrados en RAW: {len(df_climate_raw_filtered)}/{days} días")
+
+            if len(df_climate_raw_filtered) >= days:
+                # Tenemos datos suficientes en RAW
+                # CAMBIO: Buscar columnas de forma más flexible
+                all_cols = df_climate_raw_filtered.columns.tolist()
+                
+                # Filtrar columnas climáticas (cualquier columna con temp, humidity, feels_like)
+                # Excluir columnas con _lag, _x_ (son transformaciones)
+                clima_cols = [col for col in all_cols if
+                             any(keyword in col.lower() for keyword in 
+                                 ['temp', 'humidity', 'feels_like']) and
+                             '_lag' not in col and 
+                             '_x_' not in col and
+                             col != 'fecha']
+
+                logger.info(f"   Columnas climáticas disponibles en RAW: {len(clima_cols)}")
+                if len(clima_cols) > 0:
+                    logger.info(f"   Primeras columnas: {clima_cols[:5]}")
+
+                if len(clima_cols) > 0:
+                    df_result = df_climate_raw_filtered[['fecha'] + clima_cols].copy()
+                    logger.info(f"✅ Usando datos climáticos REALES de archivo RAW para {len(df_result)} días")
+                    return df_result
+                else:
+                    logger.warning(f"⚠️ No se encontraron columnas climáticas válidas en RAW")
+                    logger.warning(f"   Columnas disponibles: {all_cols[:10]}...")
+
+        # SEGUNDO: Buscar en histórico (features file)
+        # Verificar si tenemos columnas climáticas en el histórico (incluyendo lag)
+        # Buscar columnas base (sin _lag1d) primero
+        climate_cols_base = [col for col in self.df_historico.columns if
+                            any(x in col for x in ['temp_mean', 'temp_min', 'temp_max', 'temp_std',
+                                                   'humidity_mean', 'humidity_min', 'humidity_max',
+                                                   'feels_like_mean', 'feels_like_min', 'feels_like_max'])
+                            and '_lag' not in col and '_x_' not in col]
+
+        # Si no hay columnas base, buscar lag
+        climate_cols_lag = [col for col in self.df_historico.columns if
+                           col.endswith('_lag1d') and
+                           any(x in col for x in ['temp_', 'humidity_', 'feels_like_'])]
+
+        if len(climate_cols_base) == 0 and len(climate_cols_lag) == 0:
+            logger.warning(f"⚠ No se encontraron datos climáticos en el histórico")
+            return None
+
+        # Filtrar datos históricos para ese rango
+        df_climate = self.df_historico[
+            (self.df_historico['fecha'] >= start_date) &
+            (self.df_historico['fecha'] <= end_date)
+        ].copy()
+
+        if len(df_climate) < days:
+            # No hay suficientes datos reales
+            logger.warning(f"⚠ Solo se encontraron {len(df_climate)}/{days} días de datos climáticos reales (necesarios: {days})")
+            logger.warning(f"  Rango disponible: {self.df_historico['fecha'].min()} a {self.df_historico['fecha'].max()}")
+            logger.warning(f"  Rango solicitado: {start_date} a {end_date}")
+            return None
+
+        # Usar columnas base si existen, si no usar lag (y renombrar quitando _lag1d)
+        if len(climate_cols_base) > 0:
+            df_result = df_climate[['fecha'] + climate_cols_base].copy()
+            logger.info(f"✅ Usando datos climáticos REALES de features file para {len(df_result)} días (columnas base)")
+        else:
+            df_result = df_climate[['fecha'] + climate_cols_lag].copy()
+            # Renombrar quitando _lag1d
+            rename_map = {col: col.replace('_lag1d', '') for col in climate_cols_lag}
+            df_result = df_result.rename(columns=rename_map)
+            logger.info(f"✅ Usando datos climáticos REALES de features file para {len(df_result)} días (columnas lag)")
+
+        return df_result
+
     def generate_climate_forecast(self, start_date: datetime, days: int = 30) -> pd.DataFrame:
         """
         Genera pronóstico del clima para los próximos N días
 
-        NOTA: Esta versión usa PROMEDIOS HISTÓRICOS como fallback.
-        Para producción, integrar con API de clima (OpenWeatherMap, IDEAM, etc.)
+        PRIORIDAD:
+        1. Intenta usar datos climáticos REALES del histórico si existen
+        2. Si no, usa PROMEDIOS HISTÓRICOS como fallback
 
         Args:
             start_date: Fecha inicial
@@ -217,6 +335,13 @@ class ForecastPipeline:
             DataFrame con pronóstico del clima
         """
         logger.info(f"Generando pronóstico del clima para {days} días...")
+
+        # PRIMERO: Intentar usar datos reales
+        real_data = self.get_real_climate_data(start_date, days)
+        if real_data is not None:
+            return real_data
+
+        # FALLBACK: Usar promedios históricos
         logger.warning("⚠️  Usando promedios históricos (fallback). Integrar API de clima para producción.")
 
         # Calcular promedios históricos por mes/día del año
@@ -331,7 +456,8 @@ class ForecastPipeline:
     def build_features_for_date(self,
                                 fecha: datetime,
                                 climate_forecast: dict,
-                                df_temp: pd.DataFrame) -> dict:
+                                df_temp: pd.DataFrame,
+                                ultimo_historico: datetime = None) -> dict:
         """
         Construye todas las features necesarias para una fecha específica
 
@@ -339,6 +465,7 @@ class ForecastPipeline:
             fecha: Fecha a predecir
             climate_forecast: Pronóstico del clima para esa fecha
             df_temp: DataFrame temporal con histórico + predicciones previas
+            ultimo_historico: Ultimo dia con datos reales (para filtrar predicciones en rolling stats)
 
         Returns:
             Diccionario con todas las features
@@ -391,48 +518,81 @@ class ForecastPipeline:
         # ========================================
         # C. FEATURES DE LAG (demanda histórica)
         # ========================================
-        # Obtener valores de lags desde df_temp
-        idx_actual = len(df_temp) - 1
+        # IMPORTANTE: Usar FECHAS absolutas en lugar de índices relativos
+        # para evitar desalineación cuando hay gaps en los datos
+
+        # Calcular fechas de los lags
+        fecha_lag_1d = fecha - timedelta(days=1)
+        fecha_lag_7d = fecha - timedelta(days=7)
+        fecha_lag_14d = fecha - timedelta(days=14)
+
+        # Buscar valores por FECHA en lugar de índice
+        def get_value_by_date(df, target_date, column='demanda_total'):
+            """Obtiene valor de una columna buscando por fecha exacta"""
+            mask = df['fecha'].dt.date == target_date.date()
+            if mask.any():
+                return df.loc[mask, column].iloc[-1]  # Tomar último si hay duplicados
+            else:
+                # Fallback: buscar el día más cercano anterior
+                df_antes = df[df['fecha'].dt.date < target_date.date()]
+                if len(df_antes) > 0:
+                    return df_antes.iloc[-1][column]
+                else:
+                    # Si no hay datos anteriores, usar el primer valor disponible
+                    return df.iloc[0][column] if len(df) > 0 else 0
 
         # Lag 1 día
-        if idx_actual >= 1:
-            features['total_lag_1d'] = df_temp.iloc[idx_actual - 1]['demanda_total']
-            features['p8_lag_1d'] = df_temp.iloc[idx_actual - 1].get('P8', features['total_lag_1d'] * 0.042)
-            features['p12_lag_1d'] = df_temp.iloc[idx_actual - 1].get('P12', features['total_lag_1d'] * 0.046)
-            features['p18_lag_1d'] = df_temp.iloc[idx_actual - 1].get('P18', features['total_lag_1d'] * 0.048)
-            features['p20_lag_1d'] = df_temp.iloc[idx_actual - 1].get('P20', features['total_lag_1d'] * 0.045)
-        else:
-            features['total_lag_1d'] = df_temp.iloc[-1]['demanda_total']
-            features['p8_lag_1d'] = features['total_lag_1d'] * 0.042
-            features['p12_lag_1d'] = features['total_lag_1d'] * 0.046
-            features['p18_lag_1d'] = features['total_lag_1d'] * 0.048
-            features['p20_lag_1d'] = features['total_lag_1d'] * 0.045
+        features['total_lag_1d'] = get_value_by_date(df_temp, fecha_lag_1d, 'demanda_total')
+        features['p8_lag_1d'] = get_value_by_date(df_temp, fecha_lag_1d, 'P8') if 'P8' in df_temp.columns else features['total_lag_1d'] * 0.042
+        features['p12_lag_1d'] = get_value_by_date(df_temp, fecha_lag_1d, 'P12') if 'P12' in df_temp.columns else features['total_lag_1d'] * 0.046
+        features['p18_lag_1d'] = get_value_by_date(df_temp, fecha_lag_1d, 'P18') if 'P18' in df_temp.columns else features['total_lag_1d'] * 0.048
+        features['p20_lag_1d'] = get_value_by_date(df_temp, fecha_lag_1d, 'P20') if 'P20' in df_temp.columns else features['total_lag_1d'] * 0.045
 
         # Lag 7 días
-        if idx_actual >= 7:
-            features['total_lag_7d'] = df_temp.iloc[idx_actual - 7]['demanda_total']
-            features['p8_lag_7d'] = df_temp.iloc[idx_actual - 7].get('P8', features['total_lag_7d'] * 0.042)
-            features['p12_lag_7d'] = df_temp.iloc[idx_actual - 7].get('P12', features['total_lag_7d'] * 0.046)
-            features['p18_lag_7d'] = df_temp.iloc[idx_actual - 7].get('P18', features['total_lag_7d'] * 0.048)
-            features['p20_lag_7d'] = df_temp.iloc[idx_actual - 7].get('P20', features['total_lag_7d'] * 0.045)
-        else:
-            features['total_lag_7d'] = features['total_lag_1d']
-            features['p8_lag_7d'] = features['p8_lag_1d']
-            features['p12_lag_7d'] = features['p12_lag_1d']
-            features['p18_lag_7d'] = features['p18_lag_1d']
-            features['p20_lag_7d'] = features['p20_lag_1d']
+        features['total_lag_7d'] = get_value_by_date(df_temp, fecha_lag_7d, 'demanda_total')
+        features['p8_lag_7d'] = get_value_by_date(df_temp, fecha_lag_7d, 'P8') if 'P8' in df_temp.columns else features['total_lag_7d'] * 0.042
+        features['p12_lag_7d'] = get_value_by_date(df_temp, fecha_lag_7d, 'P12') if 'P12' in df_temp.columns else features['total_lag_7d'] * 0.046
+        features['p18_lag_7d'] = get_value_by_date(df_temp, fecha_lag_7d, 'P18') if 'P18' in df_temp.columns else features['total_lag_7d'] * 0.048
+        features['p20_lag_7d'] = get_value_by_date(df_temp, fecha_lag_7d, 'P20') if 'P20' in df_temp.columns else features['total_lag_7d'] * 0.045
 
         # Lag 14 días
-        if idx_actual >= 14:
-            features['total_lag_14d'] = df_temp.iloc[idx_actual - 14]['demanda_total']
-        else:
-            features['total_lag_14d'] = features['total_lag_7d']
+        features['total_lag_14d'] = get_value_by_date(df_temp, fecha_lag_14d, 'demanda_total')
 
         # ========================================
         # D. ROLLING STATISTICS
         # ========================================
-        # Últimos 7 días
-        ultimos_7 = df_temp.iloc[max(0, idx_actual-7):idx_actual]['demanda_total'].values
+        # IMPORTANTE: Usar FECHAS para definir ventanas, no índices
+
+        def get_rolling_values(df, target_date, days_back, column='demanda_total', ultimo_historico=None):
+            """
+            Obtiene valores de una ventana de tiempo basada en fechas.
+            CRITICO: Solo usa datos historicos REALES, NO predicciones.
+
+            Args:
+                df: DataFrame con datos (historicos + predicciones)
+                target_date: Fecha objetivo
+                days_back: Dias hacia atras
+                column: Columna a extraer
+                ultimo_historico: Ultimo dia con datos reales (no predicciones)
+            """
+            # FILTRO CRITICO: Solo datos historicos reales (nunca usar predicciones)
+            if ultimo_historico is not None:
+                # Usar ultimos N dias HISTORICOS disponibles (antes de ultimo_historico)
+                fecha_fin = ultimo_historico  # Ultimo dia con datos reales
+                fecha_inicio = fecha_fin - timedelta(days=days_back - 1)  # N dias hacia atras
+
+                mask = (df['fecha'].dt.date >= fecha_inicio.date()) & (df['fecha'].dt.date <= fecha_fin.date())
+            else:
+                # Modo normal (sin filtro, para compatibilidad)
+                fecha_inicio = target_date - timedelta(days=days_back)
+                fecha_fin = target_date - timedelta(days=1)
+                mask = (df['fecha'].dt.date >= fecha_inicio.date()) & (df['fecha'].dt.date <= fecha_fin.date())
+
+            valores = df.loc[mask, column].values
+            return valores
+
+        # Últimos 7 días (SOLO DATOS HISTORICOS REALES)
+        ultimos_7 = get_rolling_values(df_temp, fecha, 7, ultimo_historico=ultimo_historico)
         if len(ultimos_7) > 0:
             features['total_rolling_mean_7d'] = np.mean(ultimos_7)
             features['total_rolling_std_7d'] = np.std(ultimos_7) if len(ultimos_7) > 1 else 0
@@ -444,8 +604,8 @@ class ForecastPipeline:
             features['total_rolling_min_7d'] = features['total_lag_1d']
             features['total_rolling_max_7d'] = features['total_lag_1d']
 
-        # Últimos 14 días
-        ultimos_14 = df_temp.iloc[max(0, idx_actual-14):idx_actual]['demanda_total'].values
+        # Últimos 14 días (SOLO DATOS HISTORICOS REALES)
+        ultimos_14 = get_rolling_values(df_temp, fecha, 14, ultimo_historico=ultimo_historico)
         if len(ultimos_14) > 0:
             features['total_rolling_mean_14d'] = np.mean(ultimos_14)
             features['total_rolling_std_14d'] = np.std(ultimos_14) if len(ultimos_14) > 1 else 0
@@ -457,8 +617,8 @@ class ForecastPipeline:
             features['total_rolling_min_14d'] = features['total_rolling_min_7d']
             features['total_rolling_max_14d'] = features['total_rolling_max_7d']
 
-        # Últimos 28 días
-        ultimos_28 = df_temp.iloc[max(0, idx_actual-28):idx_actual]['demanda_total'].values
+        # Últimos 28 días (SOLO DATOS HISTORICOS REALES)
+        ultimos_28 = get_rolling_values(df_temp, fecha, 28, ultimo_historico=ultimo_historico)
         if len(ultimos_28) > 0:
             features['total_rolling_mean_28d'] = np.mean(ultimos_28)
             features['total_rolling_std_28d'] = np.std(ultimos_28) if len(ultimos_28) > 1 else 0
@@ -530,8 +690,8 @@ class ForecastPipeline:
             # Obtener pronóstico del clima para este día
             climate = climate_forecast_df[climate_forecast_df['fecha'] == fecha].iloc[0].to_dict()
 
-            # Construir features
-            features = self.build_features_for_date(fecha, climate, df_temp)
+            # Construir features (pasando ultimo_dia_historico para filtrar rolling stats)
+            features = self.build_features_for_date(fecha, climate, df_temp, ultimo_dia_historico)
 
             # Ordenar features según el modelo (si tenemos feature_names)
             if self.feature_names:
@@ -541,8 +701,11 @@ class ForecastPipeline:
 
             # Predecir
             demanda_pred = self.model.predict(X_pred)[0]
-
+            
+            # Log adicional para debugging
             logger.info(f"   Demanda predicha: {demanda_pred:,.2f} MW")
+            logger.info(f"   Features clave: is_weekend={features['is_weekend']}, is_festivo={features['is_festivo']}")
+            logger.info(f"   Lags: lag_1d={features['total_lag_1d']:.2f}, lag_7d={features['total_lag_7d']:.2f}")
 
             # Desagregación horaria (si está habilitada)
             hourly_breakdown = {}
@@ -572,10 +735,12 @@ class ForecastPipeline:
             predictions.append(prediction_record)
 
             # Agregar predicción al df_temp para siguiente iteración
+            # CRÍTICO: INCLUIR hourly_breakdown para que los lags (p8_lag_1d, p12_lag_1d, etc.)
+            # usen valores REALES del clustering en lugar de multiplicadores fijos incorrectos
             new_row = {
                 'fecha': fecha,
                 'demanda_total': demanda_pred,
-                **hourly_breakdown
+                **hourly_breakdown  # ← CRÍTICO: Agregar P1-P24 del clustering
             }
             df_temp = pd.concat([df_temp, pd.DataFrame([new_row])], ignore_index=True)
 

@@ -10,7 +10,11 @@
       "Bash(pip uninstall:*)",
       "Bash(python:*)",
       "Bash(tree:*)",
-      "Bash(findstr:*)"
+      "Bash(findstr:*)",
+      "Bash(curl:*)",
+      "Bash(cat:*)",
+      "Bash(tasklist:*)",
+      "Read(//c/**)"
     ],
     "deny": [],
     "ask": []

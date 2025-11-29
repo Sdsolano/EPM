@@ -40,7 +40,7 @@ ENV/
 *.ipynb_checkpoints/
 
 # Data files (exclude large CSV files, keep structure)
-data/raw/*.csv
+
 data/raw/*.xlsx
 data/raw/*.xltx
 data/processed/*.csv
