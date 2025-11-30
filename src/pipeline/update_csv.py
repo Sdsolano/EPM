@@ -36,7 +36,7 @@ data_json = {
 
 # --- 2. Convertir JSON a DataFrame ---
 def json_to_csv_power(data_json,ucp_name,variable="Demanda_Real",clasificador="NORMAL"):
-    archivo='../../data/raw/historicos_cartagena.csv'
+    archivo='../../data/raw/datos.csv'
     df = pd.DataFrame(data_json["data"])
     
     # --- 3. Convertir fecha a YYYY-MM-DD ---
