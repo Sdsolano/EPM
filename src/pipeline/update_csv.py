@@ -1,6 +1,6 @@
 import pandas as pd
 import json
-
+from datetime import datetime, timedelta
 # --- 1. JSON de entrada ---
 data_json = {
     "success": True,
@@ -67,5 +67,6 @@ def json_to_csv_power(data_json,ucp_name,variable="Demanda_Real",clasificador="N
     print("CSV generado correctamente.")
 
 #df=pd.read_csv('/Users/pablo/Documents/GitHub/EPM/string/data_with_features_latest.csv')
-df=pd.read_csv('/Users/pablo/Documents/GitHub/EPM/data/raw/clima.csv')
-print(df.columns)   
+df=pd.read_csv('../../data/raw/datos.csv')
+ultima_fecha=df['FECHA'].max()
+print(ultima_fecha)   
