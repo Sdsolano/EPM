@@ -1,0 +1,107 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb_checkpoints/
+
+# Data files (exclude large CSV files, keep structure)
+
+data/raw/*.xlsx
+data/raw/*.xltx
+data/processed/*.csv
+data/features/*.csv
+data/predictions/*.csv
+
+# Keep directory structure
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/features/.gitkeep
+!data/predictions/.gitkeep
+
+# Models (exclude trained models, keep registry metadata)
+models/trained/*.joblib
+models/trained/*.pkl
+models/trained/*.h5
+models/trained/*.json
+models/registry/*.joblib
+!models/registry/registry_metadata.json
+!models/trained/.gitkeep
+!models/registry/.gitkeep
+
+# Logs (exclude all logs, keep structure)
+logs/**/*.log
+logs/**/*.json
+!logs/.gitkeep
+!logs/pipeline/.gitkeep
+!logs/training/.gitkeep
+!logs/api/.gitkeep
+!logs/monitoring/.gitkeep
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+.cache/
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Environment variables
+.env
+.env.local
+
+# Test coverage
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.pytest_cache/
+nosetests.xml
+coverage.xml
+*.cover
+
+# Streamlit
+.streamlit/
+
+# Claude AI
+.claude/
+
+# Deployment secrets
+deployment/secrets/
+deployment/*.key

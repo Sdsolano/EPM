@@ -1,0 +1,2263 @@
+{
+  "models": {
+    "xgboost_20251120_161227": {
+      "model_id": "xgboost_20251120_161227",
+      "model_name": "xgboost",
+      "version": "20251120_161227",
+      "timestamp": "2025-11-20T16:12:27.177252",
+      "path": "models\\registry\\xgboost_20251120_161227.joblib",
+      "metrics": {
+        "mape": 1.1732339947894475,
+        "correlation": 0.9814832969345338,
+        "rmape": 1.1953682741762477,
+        "mae": 346.9799624932065,
+        "rmse": 498.58267676714064,
+        "r2": 0.9594341038030461
+      },
+      "metadata": {
+        "training_time": 2.737508,
+        "n_features": 63,
+        "n_train_samples": 2572,
+        "cv_results": {
+          "mean_rmape": 1.7797601509856182,
+          "std_rmape": 0.4233364120222137,
+          "mean_mape": 1.7224644506309217,
+          "std_mape": 0.3921801894305149,
+          "all_rmapes": [
+            1.8359517058027053,
+            1.2354740419248913,
+            2.267854705229258
+          ],
+          "all_mapes": [
+            1.7875096667579071,
+            1.2129357719908826,
+            2.1669479131439755
+          ]
+        }
+      },
+      "is_champion": false
+    },
+    "xgboost_20251120_161824": {
+      "model_id": "xgboost_20251120_161824",
+      "model_name": "xgboost",
+      "version": "20251120_161824",
+      "timestamp": "2025-11-20T16:18:24.728593",
+      "path": "models\\registry\\xgboost_20251120_161824.joblib",
+      "metrics": {
+        "mape": 1.1732339947894475,
+        "correlation": 0.9814832969345338,
+        "rmape": 1.1953682741762477,
+        "mae": 346.9799624932065,
+        "rmse": 498.58267676714064,
+        "r2": 0.9594341038030461
+      },
+      "metadata": {
+        "training_time": 2.675593,
+        "n_features": 63,
+        "n_train_samples": 2572,
+        "cv_results": {
+          "mean_rmape": 1.7797601509856182,
+          "std_rmape": 0.4233364120222137,
+          "mean_mape": 1.7224644506309217,
+          "std_mape": 0.3921801894305149,
+          "all_rmapes": [
+            1.8359517058027053,
+            1.2354740419248913,
+            2.267854705229258
+          ],
+          "all_mapes": [
+            1.7875096667579071,
+            1.2129357719908826,
+            2.1669479131439755
+          ]
+        }
+      },
+      "is_champion": false
+    },
+    "lightgbm_20251120_161824": {
+      "model_id": "lightgbm_20251120_161824",
+      "model_name": "lightgbm",
+      "version": "20251120_161824",
+      "timestamp": "2025-11-20T16:18:24.754335",
+      "path": "models\\registry\\lightgbm_20251120_161824.joblib",
+      "metrics": {
+        "mape": 1.274216319964292,
+        "correlation": 0.9784938903354352,
+        "rmape": 1.302222050183145,
+        "mae": 377.2837322244176,
+        "rmse": 536.0941785148901,
+        "r2": 0.9531004271079536
+      },
+      "metadata": {
+        "training_time": 0.394725,
+        "n_features": 63,
+        "n_train_samples": 2572,
+        "cv_results": {
+          "mean_rmape": 1.7615695034905192,
+          "std_rmape": 0.467049358615983,
+          "mean_mape": 1.7046371054937521,
+          "std_mape": 0.4291570290074229,
+          "all_rmapes": [
+            1.6939704737163164,
+            1.2263563353418279,
+            2.3643817014134134
+          ],
+          "all_mapes": [
+            1.6564543542942956,
+            1.2047795807369135,
+            2.252677381450047
+          ]
+        }
+      },
+      "is_champion": false
+    },
+    "randomforest_20251120_161824": {
+      "model_id": "randomforest_20251120_161824",
+      "model_name": "randomforest",
+      "version": "20251120_161824",
+      "timestamp": "2025-11-20T16:18:24.882525",
+      "path": "models\\registry\\randomforest_20251120_161824.joblib",
+      "metrics": {
+        "mape": 1.7853447866379824,
+        "correlation": 0.9604604095433571,
+        "rmape": 1.858842664308058,
+        "mae": 521.3402484687581,
+        "rmse": 738.2864836376887,
+        "r2": 0.9110519277169454
+      },
+      "metadata": {
+        "training_time": 0.805377,
+        "n_features": 63,
+        "n_train_samples": 2572,
+        "cv_results": {
+          "mean_rmape": 2.6587816668500976,
+          "std_rmape": 0.6101492037585741,
+          "mean_mape": 2.5119536337827877,
+          "std_mape": 0.5366037101383108,
+          "all_rmapes": [
+            2.767177594600004,
+            1.8632262868752847,
+            3.3459411190750044
+          ],
+          "all_mapes": [
+            2.6292322408634505,
+            1.8040073082242005,
+            3.102621352260711
+          ]
+        }
+      },
+      "is_champion": false
+    },
+    "xgboost_20251120_161837": {
+      "model_id": "xgboost_20251120_161837",
+      "model_name": "xgboost",
+      "version": "20251120_161837",
+      "timestamp": "2025-11-20T16:18:37.490436",
+      "path": "models\\registry\\xgboost_20251120_161837.joblib",
+      "metrics": {
+        "mape": 1.1732339947894475,
+        "correlation": 0.9814832969345338,
+        "rmape": 1.1953682741762477,
+        "mae": 346.9799624932065,
+        "rmse": 498.58267676714064,
+        "r2": 0.9594341038030461
+      },
+      "metadata": {
+        "training_time": 1.062853,
+        "n_features": 63,
+        "n_train_samples": 2572,
+        "cv_results": {
+          "mean_rmape": 1.7797601509856182,
+          "std_rmape": 0.4233364120222137,
+          "mean_mape": 1.7224644506309217,
+          "std_mape": 0.3921801894305149,
+          "all_rmapes": [
+            1.8359517058027053,
+            1.2354740419248913,
+            2.267854705229258
+          ],
+          "all_mapes": [
+            1.7875096667579071,
+            1.2129357719908826,
+            2.1669479131439755
+          ]
+        }
+      },
+      "is_champion": false
+    },
+    "lightgbm_20251120_161837": {
+      "model_id": "lightgbm_20251120_161837",
+      "model_name": "lightgbm",
+      "version": "20251120_161837",
+      "timestamp": "2025-11-20T16:18:37.519928",
+      "path": "models\\registry\\lightgbm_20251120_161837.joblib",
+      "metrics": {
+        "mape": 1.274216319964292,
+        "correlation": 0.9784938903354352,
+        "rmape": 1.302222050183145,
+        "mae": 377.2837322244176,
+        "rmse": 536.0941785148901,
+        "r2": 0.9531004271079536
+      },
+      "metadata": {
+        "training_time": 0.434323,
+        "n_features": 63,
+        "n_train_samples": 2572,
+        "cv_results": {
+          "mean_rmape": 1.7615695034905192,
+          "std_rmape": 0.467049358615983,
+          "mean_mape": 1.7046371054937521,
+          "std_mape": 0.4291570290074229,
+          "all_rmapes": [
+            1.6939704737163164,
+            1.2263563353418279,
+            2.3643817014134134
+          ],
+          "all_mapes": [
+            1.6564543542942956,
+            1.2047795807369135,
+            2.252677381450047
+          ]
+        }
+      },
+      "is_champion": false
+    },
+    "randomforest_20251120_161837": {
+      "model_id": "randomforest_20251120_161837",
+      "model_name": "randomforest",
+      "version": "20251120_161837",
+      "timestamp": "2025-11-20T16:18:37.665063",
+      "path": "models\\registry\\randomforest_20251120_161837.joblib",
+      "metrics": {
+        "mape": 1.7853447866379824,
+        "correlation": 0.9604604095433572,
+        "rmape": 1.8588426643080578,
+        "mae": 521.3402484687579,
+        "rmse": 738.2864836376887,
+        "r2": 0.9110519277169454
+      },
+      "metadata": {
+        "training_time": 0.742698,
+        "n_features": 63,
+        "n_train_samples": 2572,
+        "cv_results": {
+          "mean_rmape": 2.658781666850097,
+          "std_rmape": 0.6101492037585735,
+          "mean_mape": 2.5119536337827877,
+          "std_mape": 0.5366037101383101,
+          "all_rmapes": [
+            2.767177594600004,
+            1.863226286875285,
+            3.345941119075003
+          ],
+          "all_mapes": [
+            2.6292322408634505,
+            1.8040073082242012,
+            3.10262135226071
+          ]
+        }
+      },
+      "is_champion": false
+    },
+    "xgboost_20251120_161851": {
+      "model_id": "xgboost_20251120_161851",
+      "model_name": "xgboost",
+      "version": "20251120_161851",
+      "timestamp": "2025-11-20T16:18:51.457728",
+      "path": "models\\registry\\xgboost_20251120_161851.joblib",
+      "metrics": {
+        "mape": 1.1732339947894475,
+        "correlation": 0.9814832969345338,
+        "rmape": 1.1953682741762477,
+        "mae": 346.9799624932065,
+        "rmse": 498.58267676714064,
+        "r2": 0.9594341038030461
+      },
+      "metadata": {
+        "training_time": 0.919129,
+        "n_features": 63,
+        "n_train_samples": 2572,
+        "cv_results": {
+          "mean_rmape": 1.7797601509856182,
+          "std_rmape": 0.4233364120222137,
+          "mean_mape": 1.7224644506309217,
+          "std_mape": 0.3921801894305149,
+          "all_rmapes": [
+            1.8359517058027053,
+            1.2354740419248913,
+            2.267854705229258
+          ],
+          "all_mapes": [
+            1.7875096667579071,
+            1.2129357719908826,
+            2.1669479131439755
+          ]
+        }
+      },
+      "is_champion": false
+    },
+    "lightgbm_20251120_161851": {
+      "model_id": "lightgbm_20251120_161851",
+      "model_name": "lightgbm",
+      "version": "20251120_161851",
+      "timestamp": "2025-11-20T16:18:51.486309",
+      "path": "models\\registry\\lightgbm_20251120_161851.joblib",
+      "metrics": {
+        "mape": 1.274216319964292,
+        "correlation": 0.9784938903354352,
+        "rmape": 1.302222050183145,
+        "mae": 377.2837322244176,
+        "rmse": 536.0941785148901,
+        "r2": 0.9531004271079536
+      },
+      "metadata": {
+        "training_time": 0.330511,
+        "n_features": 63,
+        "n_train_samples": 2572,
+        "cv_results": {
+          "mean_rmape": 1.7615695034905192,
+          "std_rmape": 0.467049358615983,
+          "mean_mape": 1.7046371054937521,
+          "std_mape": 0.4291570290074229,
+          "all_rmapes": [
+            1.6939704737163164,
+            1.2263563353418279,
+            2.3643817014134134
+          ],
+          "all_mapes": [
+            1.6564543542942956,
+            1.2047795807369135,
+            2.252677381450047
+          ]
+        }
+      },
+      "is_champion": false
+    },
+    "randomforest_20251120_161851": {
+      "model_id": "randomforest_20251120_161851",
+      "model_name": "randomforest",
+      "version": "20251120_161851",
+      "timestamp": "2025-11-20T16:18:51.646464",
+      "path": "models\\registry\\randomforest_20251120_161851.joblib",
+      "metrics": {
+        "mape": 1.7853447866379824,
+        "correlation": 0.9604604095433571,
+        "rmape": 1.858842664308058,
+        "mae": 521.3402484687581,
+        "rmse": 738.2864836376887,
+        "r2": 0.9110519277169454
+      },
+      "metadata": {
+        "training_time": 0.734142,
+        "n_features": 63,
+        "n_train_samples": 2572,
+        "cv_results": {
+          "mean_rmape": 2.6587816668500976,
+          "std_rmape": 0.6101492037585731,
+          "mean_mape": 2.5119536337827877,
+          "std_mape": 0.5366037101383099,
+          "all_rmapes": [
+            2.767177594600004,
+            1.8632262868752858,
+            3.345941119075003
+          ],
+          "all_mapes": [
+            2.629232240863451,
+            1.8040073082242019,
+            3.10262135226071
+          ]
+        }
+      },
+      "is_champion": false
+    },
+    "xgboost_20251120_161937": {
+      "model_id": "xgboost_20251120_161937",
+      "model_name": "xgboost",
+      "version": "20251120_161937",
+      "timestamp": "2025-11-20T16:19:37.458878",
+      "path": "models\\registry\\xgboost_20251120_161937.joblib",
+      "metrics": {
+        "mape": 1.1732339947894475,
+        "correlation": 0.9814832969345338,
+        "rmape": 1.1953682741762477,
+        "mae": 346.9799624932065,
+        "rmse": 498.58267676714064,
+        "r2": 0.9594341038030461
+      },
+      "metadata": {
+        "training_time": 2.73222,
+        "n_features": 63,
+        "n_train_samples": 2572,
+        "cv_results": {
+          "mean_rmape": 1.7797601509856182,
+          "std_rmape": 0.4233364120222137,
+          "mean_mape": 1.7224644506309217,
+          "std_mape": 0.3921801894305149,
+          "all_rmapes": [
+            1.8359517058027053,
+            1.2354740419248913,
+            2.267854705229258
+          ],
+          "all_mapes": [
+            1.7875096667579071,
+            1.2129357719908826,
+            2.1669479131439755
+          ]
+        }
+      },
+      "is_champion": false
+    },
+    "lightgbm_20251120_161937": {
+      "model_id": "lightgbm_20251120_161937",
+      "model_name": "lightgbm",
+      "version": "20251120_161937",
+      "timestamp": "2025-11-20T16:19:37.490528",
+      "path": "models\\registry\\lightgbm_20251120_161937.joblib",
+      "metrics": {
+        "mape": 1.274216319964292,
+        "correlation": 0.9784938903354352,
+        "rmape": 1.302222050183145,
+        "mae": 377.2837322244176,
+        "rmse": 536.0941785148901,
+        "r2": 0.9531004271079536
+      },
+      "metadata": {
+        "training_time": 0.520503,
+        "n_features": 63,
+        "n_train_samples": 2572,
+        "cv_results": {
+          "mean_rmape": 1.7615695034905192,
+          "std_rmape": 0.467049358615983,
+          "mean_mape": 1.7046371054937521,
+          "std_mape": 0.4291570290074229,
+          "all_rmapes": [
+            1.6939704737163164,
+            1.2263563353418279,
+            2.3643817014134134
+          ],
+          "all_mapes": [
+            1.6564543542942956,
+            1.2047795807369135,
+            2.252677381450047
+          ]
+        }
+      },
+      "is_champion": false
+    },
+    "randomforest_20251120_161937": {
+      "model_id": "randomforest_20251120_161937",
+      "model_name": "randomforest",
+      "version": "20251120_161937",
+      "timestamp": "2025-11-20T16:19:37.626774",
+      "path": "models\\registry\\randomforest_20251120_161937.joblib",
+      "metrics": {
+        "mape": 1.785344786637982,
+        "correlation": 0.9604604095433571,
+        "rmape": 1.8588426643080573,
+        "mae": 521.3402484687579,
+        "rmse": 738.2864836376887,
+        "r2": 0.9110519277169455
+      },
+      "metadata": {
+        "training_time": 0.72049,
+        "n_features": 63,
+        "n_train_samples": 2572,
+        "cv_results": {
+          "mean_rmape": 2.6587816668500976,
+          "std_rmape": 0.6101492037585728,
+          "mean_mape": 2.5119536337827877,
+          "std_mape": 0.53660371013831,
+          "all_rmapes": [
+            2.7671775946000037,
+            1.863226286875286,
+            3.3459411190750026
+          ],
+          "all_mapes": [
+            2.6292322408634505,
+            1.8040073082242016,
+            3.10262135226071
+          ]
+        }
+      },
+      "is_champion": false
+    },
+    "xgboost_20251129_141722": {
+      "model_id": "xgboost_20251129_141722",
+      "model_name": "xgboost",
+      "version": "20251129_141722",
+      "timestamp": "2025-11-29T14:17:22.315371",
+      "path": "models\\registry\\xgboost_20251129_141722.joblib",
+      "metrics": {
+        "mape": 2.673184537344598,
+        "correlation": 0.9386071350091516,
+        "rmape": 2.848033471766155,
+        "mae": 789.2105380133231,
+        "rmse": 1023.8027865196827,
+        "r2": 0.8356908409615338
+      },
+      "metadata": {
+        "training_time": 2.712753,
+        "n_features": 52,
+        "n_train_samples": 2548,
+        "feature_names": [
+          "year",
+          "month",
+          "day",
+          "dayofweek",
+          "dayofyear",
+          "week",
+          "quarter",
+          "is_weekend",
+          "is_saturday",
+          "is_sunday",
+          "is_month_start",
+          "is_month_end",
+          "is_quarter_start",
+          "is_quarter_end",
+          "is_festivo",
+          "dayofweek_sin",
+          "dayofweek_cos",
+          "month_sin",
+          "month_cos",
+          "dayofyear_sin",
+          "dayofyear_cos",
+          "total_rolling_mean_7d",
+          "total_rolling_std_7d",
+          "total_rolling_min_7d",
+          "total_rolling_max_7d",
+          "total_rolling_mean_14d",
+          "total_rolling_std_14d",
+          "total_rolling_min_14d",
+          "total_rolling_max_14d",
+          "total_rolling_mean_28d",
+          "total_rolling_std_28d",
+          "total_rolling_min_28d",
+          "total_rolling_max_28d",
+          "is_rainy_season",
+          "is_january",
+          "is_december",
+          "week_of_month",
+          "temp_mean_lag1d",
+          "temp_std_lag1d",
+          "temp_min_lag1d",
+          "temp_max_lag1d",
+          "feels_like_mean_lag1d",
+          "feels_like_min_lag1d",
+          "feels_like_max_lag1d",
+          "humidity_mean_lag1d",
+          "humidity_min_lag1d",
+          "humidity_max_lag1d",
+          "temp_x_is_weekend",
+          "temp_x_is_festivo",
+          "dayofweek_x_festivo",
+          "month_x_festivo",
+          "weekend_x_month"
+        ],
+        "features_removed": [
+          "total_lag_1d",
+          "total_lag_7d",
+          "total_lag_14d",
+          "p8_lag_1d",
+          "p8_lag_7d",
+          "p12_lag_1d",
+          "p12_lag_7d",
+          "p18_lag_1d",
+          "p18_lag_7d",
+          "p20_lag_1d",
+          "p20_lag_7d",
+          "total_day_change",
+          "total_day_change_pct"
+        ],
+        "n_features_removed": 13,
+        "cv_results": {
+          "mean_rmape": 3.2607485233322553,
+          "std_rmape": 0.1971492819774043,
+          "mean_mape": 3.0013796494431113,
+          "std_mape": 0.1596140130331141,
+          "all_rmapes": [
+            3.208731805429281,
+            3.04953872347152,
+            3.5239750410959654
+          ],
+          "all_mapes": [
+            2.9744068239067087,
+            2.820780257097338,
+            3.2089518673252875
+          ]
+        }
+      },
+      "is_champion": false
+    },
+    "lightgbm_20251129_141722": {
+      "model_id": "lightgbm_20251129_141722",
+      "model_name": "lightgbm",
+      "version": "20251129_141722",
+      "timestamp": "2025-11-29T14:17:22.349993",
+      "path": "models\\registry\\lightgbm_20251129_141722.joblib",
+      "metrics": {
+        "mape": 2.5080169216509622,
+        "correlation": 0.9415121257934316,
+        "rmape": 2.66381797211311,
+        "mae": 734.3931276906724,
+        "rmse": 959.1618073801311,
+        "r2": 0.8557841768651853
+      },
+      "metadata": {
+        "training_time": 0.310194,
+        "n_features": 52,
+        "n_train_samples": 2548,
+        "feature_names": [
+          "year",
+          "month",
+          "day",
+          "dayofweek",
+          "dayofyear",
+          "week",
+          "quarter",
+          "is_weekend",
+          "is_saturday",
+          "is_sunday",
+          "is_month_start",
+          "is_month_end",
+          "is_quarter_start",
+          "is_quarter_end",
+          "is_festivo",
+          "dayofweek_sin",
+          "dayofweek_cos",
+          "month_sin",
+          "month_cos",
+          "dayofyear_sin",
+          "dayofyear_cos",
+          "total_rolling_mean_7d",
+          "total_rolling_std_7d",
+          "total_rolling_min_7d",
+          "total_rolling_max_7d",
+          "total_rolling_mean_14d",
+          "total_rolling_std_14d",
+          "total_rolling_min_14d",
+          "total_rolling_max_14d",
+          "total_rolling_mean_28d",
+          "total_rolling_std_28d",
+          "total_rolling_min_28d",
+          "total_rolling_max_28d",
+          "is_rainy_season",
+          "is_january",
+          "is_december",
+          "week_of_month",
+          "temp_mean_lag1d",
+          "temp_std_lag1d",
+          "temp_min_lag1d",
+          "temp_max_lag1d",
+          "feels_like_mean_lag1d",
+          "feels_like_min_lag1d",
+          "feels_like_max_lag1d",
+          "humidity_mean_lag1d",
+          "humidity_min_lag1d",
+          "humidity_max_lag1d",
+          "temp_x_is_weekend",
+          "temp_x_is_festivo",
+          "dayofweek_x_festivo",
+          "month_x_festivo",
+          "weekend_x_month"
+        ],
+        "features_removed": [
+          "total_lag_1d",
+          "total_lag_7d",
+          "total_lag_14d",
+          "p8_lag_1d",
+          "p8_lag_7d",
+          "p12_lag_1d",
+          "p12_lag_7d",
+          "p18_lag_1d",
+          "p18_lag_7d",
+          "p20_lag_1d",
+          "p20_lag_7d",
+          "total_day_change",
+          "total_day_change_pct"
+        ],
+        "n_features_removed": 13,
+        "cv_results": {
+          "mean_rmape": 3.5222415798338447,
+          "std_rmape": 0.15761654888496524,
+          "mean_mape": 3.2035966515785925,
+          "std_mape": 0.16120697643846596,
+          "all_rmapes": [
+            3.7115449472955833,
+            3.325670118707494,
+            3.529509673498456
+          ],
+          "all_mapes": [
+            3.3947061824065936,
+            3.000387837013275,
+            3.2156959353159085
+          ]
+        }
+      },
+      "is_champion": false
+    },
+    "randomforest_20251129_141722": {
+      "model_id": "randomforest_20251129_141722",
+      "model_name": "randomforest",
+      "version": "20251129_141722",
+      "timestamp": "2025-11-29T14:17:22.497859",
+      "path": "models\\registry\\randomforest_20251129_141722.joblib",
+      "metrics": {
+        "mape": 2.9718583056711085,
+        "correlation": 0.9179336014870159,
+        "rmape": 3.2375525864363355,
+        "mae": 866.9579943842441,
+        "rmse": 1129.826879199817,
+        "r2": 0.7998972931008878
+      },
+      "metadata": {
+        "training_time": 0.735523,
+        "n_features": 52,
+        "n_train_samples": 2548,
+        "feature_names": [
+          "year",
+          "month",
+          "day",
+          "dayofweek",
+          "dayofyear",
+          "week",
+          "quarter",
+          "is_weekend",
+          "is_saturday",
+          "is_sunday",
+          "is_month_start",
+          "is_month_end",
+          "is_quarter_start",
+          "is_quarter_end",
+          "is_festivo",
+          "dayofweek_sin",
+          "dayofweek_cos",
+          "month_sin",
+          "month_cos",
+          "dayofyear_sin",
+          "dayofyear_cos",
+          "total_rolling_mean_7d",
+          "total_rolling_std_7d",
+          "total_rolling_min_7d",
+          "total_rolling_max_7d",
+          "total_rolling_mean_14d",
+          "total_rolling_std_14d",
+          "total_rolling_min_14d",
+          "total_rolling_max_14d",
+          "total_rolling_mean_28d",
+          "total_rolling_std_28d",
+          "total_rolling_min_28d",
+          "total_rolling_max_28d",
+          "is_rainy_season",
+          "is_january",
+          "is_december",
+          "week_of_month",
+          "temp_mean_lag1d",
+          "temp_std_lag1d",
+          "temp_min_lag1d",
+          "temp_max_lag1d",
+          "feels_like_mean_lag1d",
+          "feels_like_min_lag1d",
+          "feels_like_max_lag1d",
+          "humidity_mean_lag1d",
+          "humidity_min_lag1d",
+          "humidity_max_lag1d",
+          "temp_x_is_weekend",
+          "temp_x_is_festivo",
+          "dayofweek_x_festivo",
+          "month_x_festivo",
+          "weekend_x_month"
+        ],
+        "features_removed": [
+          "total_lag_1d",
+          "total_lag_7d",
+          "total_lag_14d",
+          "p8_lag_1d",
+          "p8_lag_7d",
+          "p12_lag_1d",
+          "p12_lag_7d",
+          "p18_lag_1d",
+          "p18_lag_7d",
+          "p20_lag_1d",
+          "p20_lag_7d",
+          "total_day_change",
+          "total_day_change_pct"
+        ],
+        "n_features_removed": 13,
+        "cv_results": {
+          "mean_rmape": 3.7375278537380425,
+          "std_rmape": 0.40100697481454306,
+          "mean_mape": 3.382873779706623,
+          "std_mape": 0.3381254311897381,
+          "all_rmapes": [
+            3.7511204547418555,
+            3.2397414090648606,
+            4.221721697407413
+          ],
+          "all_mapes": [
+            3.4105413433784455,
+            2.9556163770334174,
+            3.7824636187080056
+          ]
+        }
+      },
+      "is_champion": false
+    },
+    "xgboost_20251129_142042": {
+      "model_id": "xgboost_20251129_142042",
+      "model_name": "xgboost",
+      "version": "20251129_142042",
+      "timestamp": "2025-11-29T14:20:42.868214",
+      "path": "models\\registry\\xgboost_20251129_142042.joblib",
+      "metrics": {
+        "mape": 2.673184537344598,
+        "correlation": 0.9386071350091516,
+        "rmape": 2.848033471766155,
+        "mae": 789.2105380133231,
+        "rmse": 1023.8027865196827,
+        "r2": 0.8356908409615338
+      },
+      "metadata": {
+        "training_time": 2.476262,
+        "n_features": 52,
+        "n_train_samples": 2548,
+        "feature_names": [
+          "year",
+          "month",
+          "day",
+          "dayofweek",
+          "dayofyear",
+          "week",
+          "quarter",
+          "is_weekend",
+          "is_saturday",
+          "is_sunday",
+          "is_month_start",
+          "is_month_end",
+          "is_quarter_start",
+          "is_quarter_end",
+          "is_festivo",
+          "dayofweek_sin",
+          "dayofweek_cos",
+          "month_sin",
+          "month_cos",
+          "dayofyear_sin",
+          "dayofyear_cos",
+          "total_rolling_mean_7d",
+          "total_rolling_std_7d",
+          "total_rolling_min_7d",
+          "total_rolling_max_7d",
+          "total_rolling_mean_14d",
+          "total_rolling_std_14d",
+          "total_rolling_min_14d",
+          "total_rolling_max_14d",
+          "total_rolling_mean_28d",
+          "total_rolling_std_28d",
+          "total_rolling_min_28d",
+          "total_rolling_max_28d",
+          "is_rainy_season",
+          "is_january",
+          "is_december",
+          "week_of_month",
+          "temp_mean_lag1d",
+          "temp_std_lag1d",
+          "temp_min_lag1d",
+          "temp_max_lag1d",
+          "feels_like_mean_lag1d",
+          "feels_like_min_lag1d",
+          "feels_like_max_lag1d",
+          "humidity_mean_lag1d",
+          "humidity_min_lag1d",
+          "humidity_max_lag1d",
+          "temp_x_is_weekend",
+          "temp_x_is_festivo",
+          "dayofweek_x_festivo",
+          "month_x_festivo",
+          "weekend_x_month"
+        ],
+        "features_removed": [
+          "total_lag_1d",
+          "total_lag_7d",
+          "total_lag_14d",
+          "p8_lag_1d",
+          "p8_lag_7d",
+          "p12_lag_1d",
+          "p12_lag_7d",
+          "p18_lag_1d",
+          "p18_lag_7d",
+          "p20_lag_1d",
+          "p20_lag_7d",
+          "total_day_change",
+          "total_day_change_pct"
+        ],
+        "n_features_removed": 13,
+        "cv_results": {
+          "mean_rmape": 3.2607485233322553,
+          "std_rmape": 0.1971492819774043,
+          "mean_mape": 3.0013796494431113,
+          "std_mape": 0.1596140130331141,
+          "all_rmapes": [
+            3.208731805429281,
+            3.04953872347152,
+            3.5239750410959654
+          ],
+          "all_mapes": [
+            2.9744068239067087,
+            2.820780257097338,
+            3.2089518673252875
+          ]
+        }
+      },
+      "is_champion": false
+    },
+    "lightgbm_20251129_142042": {
+      "model_id": "lightgbm_20251129_142042",
+      "model_name": "lightgbm",
+      "version": "20251129_142042",
+      "timestamp": "2025-11-29T14:20:42.911995",
+      "path": "models\\registry\\lightgbm_20251129_142042.joblib",
+      "metrics": {
+        "mape": 2.5080169216509622,
+        "correlation": 0.9415121257934316,
+        "rmape": 2.66381797211311,
+        "mae": 734.3931276906724,
+        "rmse": 959.1618073801311,
+        "r2": 0.8557841768651853
+      },
+      "metadata": {
+        "training_time": 0.259648,
+        "n_features": 52,
+        "n_train_samples": 2548,
+        "feature_names": [
+          "year",
+          "month",
+          "day",
+          "dayofweek",
+          "dayofyear",
+          "week",
+          "quarter",
+          "is_weekend",
+          "is_saturday",
+          "is_sunday",
+          "is_month_start",
+          "is_month_end",
+          "is_quarter_start",
+          "is_quarter_end",
+          "is_festivo",
+          "dayofweek_sin",
+          "dayofweek_cos",
+          "month_sin",
+          "month_cos",
+          "dayofyear_sin",
+          "dayofyear_cos",
+          "total_rolling_mean_7d",
+          "total_rolling_std_7d",
+          "total_rolling_min_7d",
+          "total_rolling_max_7d",
+          "total_rolling_mean_14d",
+          "total_rolling_std_14d",
+          "total_rolling_min_14d",
+          "total_rolling_max_14d",
+          "total_rolling_mean_28d",
+          "total_rolling_std_28d",
+          "total_rolling_min_28d",
+          "total_rolling_max_28d",
+          "is_rainy_season",
+          "is_january",
+          "is_december",
+          "week_of_month",
+          "temp_mean_lag1d",
+          "temp_std_lag1d",
+          "temp_min_lag1d",
+          "temp_max_lag1d",
+          "feels_like_mean_lag1d",
+          "feels_like_min_lag1d",
+          "feels_like_max_lag1d",
+          "humidity_mean_lag1d",
+          "humidity_min_lag1d",
+          "humidity_max_lag1d",
+          "temp_x_is_weekend",
+          "temp_x_is_festivo",
+          "dayofweek_x_festivo",
+          "month_x_festivo",
+          "weekend_x_month"
+        ],
+        "features_removed": [
+          "total_lag_1d",
+          "total_lag_7d",
+          "total_lag_14d",
+          "p8_lag_1d",
+          "p8_lag_7d",
+          "p12_lag_1d",
+          "p12_lag_7d",
+          "p18_lag_1d",
+          "p18_lag_7d",
+          "p20_lag_1d",
+          "p20_lag_7d",
+          "total_day_change",
+          "total_day_change_pct"
+        ],
+        "n_features_removed": 13,
+        "cv_results": {
+          "mean_rmape": 3.5222415798338447,
+          "std_rmape": 0.15761654888496524,
+          "mean_mape": 3.2035966515785925,
+          "std_mape": 0.16120697643846596,
+          "all_rmapes": [
+            3.7115449472955833,
+            3.325670118707494,
+            3.529509673498456
+          ],
+          "all_mapes": [
+            3.3947061824065936,
+            3.000387837013275,
+            3.2156959353159085
+          ]
+        }
+      },
+      "is_champion": false
+    },
+    "randomforest_20251129_142042": {
+      "model_id": "randomforest_20251129_142042",
+      "model_name": "randomforest",
+      "version": "20251129_142042",
+      "timestamp": "2025-11-29T14:20:43.082150",
+      "path": "models\\registry\\randomforest_20251129_142042.joblib",
+      "metrics": {
+        "mape": 2.971858305671107,
+        "correlation": 0.917933601487016,
+        "rmape": 3.2375525864363337,
+        "mae": 866.9579943842438,
+        "rmse": 1129.8268791998166,
+        "r2": 0.7998972931008879
+      },
+      "metadata": {
+        "training_time": 0.711713,
+        "n_features": 52,
+        "n_train_samples": 2548,
+        "feature_names": [
+          "year",
+          "month",
+          "day",
+          "dayofweek",
+          "dayofyear",
+          "week",
+          "quarter",
+          "is_weekend",
+          "is_saturday",
+          "is_sunday",
+          "is_month_start",
+          "is_month_end",
+          "is_quarter_start",
+          "is_quarter_end",
+          "is_festivo",
+          "dayofweek_sin",
+          "dayofweek_cos",
+          "month_sin",
+          "month_cos",
+          "dayofyear_sin",
+          "dayofyear_cos",
+          "total_rolling_mean_7d",
+          "total_rolling_std_7d",
+          "total_rolling_min_7d",
+          "total_rolling_max_7d",
+          "total_rolling_mean_14d",
+          "total_rolling_std_14d",
+          "total_rolling_min_14d",
+          "total_rolling_max_14d",
+          "total_rolling_mean_28d",
+          "total_rolling_std_28d",
+          "total_rolling_min_28d",
+          "total_rolling_max_28d",
+          "is_rainy_season",
+          "is_january",
+          "is_december",
+          "week_of_month",
+          "temp_mean_lag1d",
+          "temp_std_lag1d",
+          "temp_min_lag1d",
+          "temp_max_lag1d",
+          "feels_like_mean_lag1d",
+          "feels_like_min_lag1d",
+          "feels_like_max_lag1d",
+          "humidity_mean_lag1d",
+          "humidity_min_lag1d",
+          "humidity_max_lag1d",
+          "temp_x_is_weekend",
+          "temp_x_is_festivo",
+          "dayofweek_x_festivo",
+          "month_x_festivo",
+          "weekend_x_month"
+        ],
+        "features_removed": [
+          "total_lag_1d",
+          "total_lag_7d",
+          "total_lag_14d",
+          "p8_lag_1d",
+          "p8_lag_7d",
+          "p12_lag_1d",
+          "p12_lag_7d",
+          "p18_lag_1d",
+          "p18_lag_7d",
+          "p20_lag_1d",
+          "p20_lag_7d",
+          "total_day_change",
+          "total_day_change_pct"
+        ],
+        "n_features_removed": 13,
+        "cv_results": {
+          "mean_rmape": 3.7375278537380425,
+          "std_rmape": 0.40100697481454306,
+          "mean_mape": 3.3828737797066224,
+          "std_mape": 0.3381254311897383,
+          "all_rmapes": [
+            3.751120454741855,
+            3.2397414090648597,
+            4.221721697407412
+          ],
+          "all_mapes": [
+            3.4105413433784455,
+            2.955616377033416,
+            3.7824636187080047
+          ]
+        }
+      },
+      "is_champion": false
+    },
+    "xgboost_20251129_142256": {
+      "model_id": "xgboost_20251129_142256",
+      "model_name": "xgboost",
+      "version": "20251129_142256",
+      "timestamp": "2025-11-29T14:22:56.410450",
+      "path": "models\\registry\\xgboost_20251129_142256.joblib",
+      "metrics": {
+        "mape": 2.673184537344598,
+        "correlation": 0.9386071350091516,
+        "rmape": 2.848033471766155,
+        "mae": 789.2105380133231,
+        "rmse": 1023.8027865196827,
+        "r2": 0.8356908409615338
+      },
+      "metadata": {
+        "training_time": 2.475687,
+        "n_features": 52,
+        "n_train_samples": 2548,
+        "feature_names": [
+          "year",
+          "month",
+          "day",
+          "dayofweek",
+          "dayofyear",
+          "week",
+          "quarter",
+          "is_weekend",
+          "is_saturday",
+          "is_sunday",
+          "is_month_start",
+          "is_month_end",
+          "is_quarter_start",
+          "is_quarter_end",
+          "is_festivo",
+          "dayofweek_sin",
+          "dayofweek_cos",
+          "month_sin",
+          "month_cos",
+          "dayofyear_sin",
+          "dayofyear_cos",
+          "total_rolling_mean_7d",
+          "total_rolling_std_7d",
+          "total_rolling_min_7d",
+          "total_rolling_max_7d",
+          "total_rolling_mean_14d",
+          "total_rolling_std_14d",
+          "total_rolling_min_14d",
+          "total_rolling_max_14d",
+          "total_rolling_mean_28d",
+          "total_rolling_std_28d",
+          "total_rolling_min_28d",
+          "total_rolling_max_28d",
+          "is_rainy_season",
+          "is_january",
+          "is_december",
+          "week_of_month",
+          "temp_mean_lag1d",
+          "temp_std_lag1d",
+          "temp_min_lag1d",
+          "temp_max_lag1d",
+          "feels_like_mean_lag1d",
+          "feels_like_min_lag1d",
+          "feels_like_max_lag1d",
+          "humidity_mean_lag1d",
+          "humidity_min_lag1d",
+          "humidity_max_lag1d",
+          "temp_x_is_weekend",
+          "temp_x_is_festivo",
+          "dayofweek_x_festivo",
+          "month_x_festivo",
+          "weekend_x_month"
+        ],
+        "features_removed": [
+          "total_lag_1d",
+          "total_lag_7d",
+          "total_lag_14d",
+          "p8_lag_1d",
+          "p8_lag_7d",
+          "p12_lag_1d",
+          "p12_lag_7d",
+          "p18_lag_1d",
+          "p18_lag_7d",
+          "p20_lag_1d",
+          "p20_lag_7d",
+          "total_day_change",
+          "total_day_change_pct"
+        ],
+        "n_features_removed": 13,
+        "cv_results": {
+          "mean_rmape": 3.2607485233322553,
+          "std_rmape": 0.1971492819774043,
+          "mean_mape": 3.0013796494431113,
+          "std_mape": 0.1596140130331141,
+          "all_rmapes": [
+            3.208731805429281,
+            3.04953872347152,
+            3.5239750410959654
+          ],
+          "all_mapes": [
+            2.9744068239067087,
+            2.820780257097338,
+            3.2089518673252875
+          ]
+        }
+      },
+      "is_champion": false
+    },
+    "lightgbm_20251129_142256": {
+      "model_id": "lightgbm_20251129_142256",
+      "model_name": "lightgbm",
+      "version": "20251129_142256",
+      "timestamp": "2025-11-29T14:22:56.448086",
+      "path": "models\\registry\\lightgbm_20251129_142256.joblib",
+      "metrics": {
+        "mape": 2.5080169216509622,
+        "correlation": 0.9415121257934316,
+        "rmape": 2.66381797211311,
+        "mae": 734.3931276906724,
+        "rmse": 959.1618073801311,
+        "r2": 0.8557841768651853
+      },
+      "metadata": {
+        "training_time": 0.31285,
+        "n_features": 52,
+        "n_train_samples": 2548,
+        "feature_names": [
+          "year",
+          "month",
+          "day",
+          "dayofweek",
+          "dayofyear",
+          "week",
+          "quarter",
+          "is_weekend",
+          "is_saturday",
+          "is_sunday",
+          "is_month_start",
+          "is_month_end",
+          "is_quarter_start",
+          "is_quarter_end",
+          "is_festivo",
+          "dayofweek_sin",
+          "dayofweek_cos",
+          "month_sin",
+          "month_cos",
+          "dayofyear_sin",
+          "dayofyear_cos",
+          "total_rolling_mean_7d",
+          "total_rolling_std_7d",
+          "total_rolling_min_7d",
+          "total_rolling_max_7d",
+          "total_rolling_mean_14d",
+          "total_rolling_std_14d",
+          "total_rolling_min_14d",
+          "total_rolling_max_14d",
+          "total_rolling_mean_28d",
+          "total_rolling_std_28d",
+          "total_rolling_min_28d",
+          "total_rolling_max_28d",
+          "is_rainy_season",
+          "is_january",
+          "is_december",
+          "week_of_month",
+          "temp_mean_lag1d",
+          "temp_std_lag1d",
+          "temp_min_lag1d",
+          "temp_max_lag1d",
+          "feels_like_mean_lag1d",
+          "feels_like_min_lag1d",
+          "feels_like_max_lag1d",
+          "humidity_mean_lag1d",
+          "humidity_min_lag1d",
+          "humidity_max_lag1d",
+          "temp_x_is_weekend",
+          "temp_x_is_festivo",
+          "dayofweek_x_festivo",
+          "month_x_festivo",
+          "weekend_x_month"
+        ],
+        "features_removed": [
+          "total_lag_1d",
+          "total_lag_7d",
+          "total_lag_14d",
+          "p8_lag_1d",
+          "p8_lag_7d",
+          "p12_lag_1d",
+          "p12_lag_7d",
+          "p18_lag_1d",
+          "p18_lag_7d",
+          "p20_lag_1d",
+          "p20_lag_7d",
+          "total_day_change",
+          "total_day_change_pct"
+        ],
+        "n_features_removed": 13,
+        "cv_results": {
+          "mean_rmape": 3.5222415798338447,
+          "std_rmape": 0.15761654888496524,
+          "mean_mape": 3.2035966515785925,
+          "std_mape": 0.16120697643846596,
+          "all_rmapes": [
+            3.7115449472955833,
+            3.325670118707494,
+            3.529509673498456
+          ],
+          "all_mapes": [
+            3.3947061824065936,
+            3.000387837013275,
+            3.2156959353159085
+          ]
+        }
+      },
+      "is_champion": false
+    },
+    "randomforest_20251129_142256": {
+      "model_id": "randomforest_20251129_142256",
+      "model_name": "randomforest",
+      "version": "20251129_142256",
+      "timestamp": "2025-11-29T14:22:56.594545",
+      "path": "models\\registry\\randomforest_20251129_142256.joblib",
+      "metrics": {
+        "mape": 2.971858305671107,
+        "correlation": 0.9179336014870159,
+        "rmape": 3.2375525864363337,
+        "mae": 866.9579943842441,
+        "rmse": 1129.8268791998169,
+        "r2": 0.7998972931008878
+      },
+      "metadata": {
+        "training_time": 0.804097,
+        "n_features": 52,
+        "n_train_samples": 2548,
+        "feature_names": [
+          "year",
+          "month",
+          "day",
+          "dayofweek",
+          "dayofyear",
+          "week",
+          "quarter",
+          "is_weekend",
+          "is_saturday",
+          "is_sunday",
+          "is_month_start",
+          "is_month_end",
+          "is_quarter_start",
+          "is_quarter_end",
+          "is_festivo",
+          "dayofweek_sin",
+          "dayofweek_cos",
+          "month_sin",
+          "month_cos",
+          "dayofyear_sin",
+          "dayofyear_cos",
+          "total_rolling_mean_7d",
+          "total_rolling_std_7d",
+          "total_rolling_min_7d",
+          "total_rolling_max_7d",
+          "total_rolling_mean_14d",
+          "total_rolling_std_14d",
+          "total_rolling_min_14d",
+          "total_rolling_max_14d",
+          "total_rolling_mean_28d",
+          "total_rolling_std_28d",
+          "total_rolling_min_28d",
+          "total_rolling_max_28d",
+          "is_rainy_season",
+          "is_january",
+          "is_december",
+          "week_of_month",
+          "temp_mean_lag1d",
+          "temp_std_lag1d",
+          "temp_min_lag1d",
+          "temp_max_lag1d",
+          "feels_like_mean_lag1d",
+          "feels_like_min_lag1d",
+          "feels_like_max_lag1d",
+          "humidity_mean_lag1d",
+          "humidity_min_lag1d",
+          "humidity_max_lag1d",
+          "temp_x_is_weekend",
+          "temp_x_is_festivo",
+          "dayofweek_x_festivo",
+          "month_x_festivo",
+          "weekend_x_month"
+        ],
+        "features_removed": [
+          "total_lag_1d",
+          "total_lag_7d",
+          "total_lag_14d",
+          "p8_lag_1d",
+          "p8_lag_7d",
+          "p12_lag_1d",
+          "p12_lag_7d",
+          "p18_lag_1d",
+          "p18_lag_7d",
+          "p20_lag_1d",
+          "p20_lag_7d",
+          "total_day_change",
+          "total_day_change_pct"
+        ],
+        "n_features_removed": 13,
+        "cv_results": {
+          "mean_rmape": 3.7375278537380425,
+          "std_rmape": 0.4010069748145425,
+          "mean_mape": 3.3828737797066224,
+          "std_mape": 0.338125431189738,
+          "all_rmapes": [
+            3.751120454741855,
+            3.239741409064861,
+            4.221721697407412
+          ],
+          "all_mapes": [
+            3.410541343378446,
+            2.955616377033417,
+            3.7824636187080047
+          ]
+        }
+      },
+      "is_champion": false
+    },
+    "xgboost_20251129_142608": {
+      "model_id": "xgboost_20251129_142608",
+      "model_name": "xgboost",
+      "version": "20251129_142608",
+      "timestamp": "2025-11-29T14:26:08.519999",
+      "path": "models\\registry\\xgboost_20251129_142608.joblib",
+      "metrics": {
+        "mape": 2.673184537344598,
+        "correlation": 0.9386071350091516,
+        "rmape": 2.848033471766155,
+        "mae": 789.2105380133231,
+        "rmse": 1023.8027865196827,
+        "r2": 0.8356908409615338
+      },
+      "metadata": {
+        "training_time": 2.638704,
+        "n_features": 52,
+        "n_train_samples": 2548,
+        "feature_names": [
+          "year",
+          "month",
+          "day",
+          "dayofweek",
+          "dayofyear",
+          "week",
+          "quarter",
+          "is_weekend",
+          "is_saturday",
+          "is_sunday",
+          "is_month_start",
+          "is_month_end",
+          "is_quarter_start",
+          "is_quarter_end",
+          "is_festivo",
+          "dayofweek_sin",
+          "dayofweek_cos",
+          "month_sin",
+          "month_cos",
+          "dayofyear_sin",
+          "dayofyear_cos",
+          "total_rolling_mean_7d",
+          "total_rolling_std_7d",
+          "total_rolling_min_7d",
+          "total_rolling_max_7d",
+          "total_rolling_mean_14d",
+          "total_rolling_std_14d",
+          "total_rolling_min_14d",
+          "total_rolling_max_14d",
+          "total_rolling_mean_28d",
+          "total_rolling_std_28d",
+          "total_rolling_min_28d",
+          "total_rolling_max_28d",
+          "is_rainy_season",
+          "is_january",
+          "is_december",
+          "week_of_month",
+          "temp_mean_lag1d",
+          "temp_std_lag1d",
+          "temp_min_lag1d",
+          "temp_max_lag1d",
+          "feels_like_mean_lag1d",
+          "feels_like_min_lag1d",
+          "feels_like_max_lag1d",
+          "humidity_mean_lag1d",
+          "humidity_min_lag1d",
+          "humidity_max_lag1d",
+          "temp_x_is_weekend",
+          "temp_x_is_festivo",
+          "dayofweek_x_festivo",
+          "month_x_festivo",
+          "weekend_x_month"
+        ],
+        "features_removed": [
+          "total_lag_1d",
+          "total_lag_7d",
+          "total_lag_14d",
+          "p8_lag_1d",
+          "p8_lag_7d",
+          "p12_lag_1d",
+          "p12_lag_7d",
+          "p18_lag_1d",
+          "p18_lag_7d",
+          "p20_lag_1d",
+          "p20_lag_7d",
+          "total_day_change",
+          "total_day_change_pct"
+        ],
+        "n_features_removed": 13,
+        "cv_results": {
+          "mean_rmape": 3.2607485233322553,
+          "std_rmape": 0.1971492819774043,
+          "mean_mape": 3.0013796494431113,
+          "std_mape": 0.1596140130331141,
+          "all_rmapes": [
+            3.208731805429281,
+            3.04953872347152,
+            3.5239750410959654
+          ],
+          "all_mapes": [
+            2.9744068239067087,
+            2.820780257097338,
+            3.2089518673252875
+          ]
+        }
+      },
+      "is_champion": false
+    },
+    "lightgbm_20251129_142608": {
+      "model_id": "lightgbm_20251129_142608",
+      "model_name": "lightgbm",
+      "version": "20251129_142608",
+      "timestamp": "2025-11-29T14:26:08.558098",
+      "path": "models\\registry\\lightgbm_20251129_142608.joblib",
+      "metrics": {
+        "mape": 2.5080169216509622,
+        "correlation": 0.9415121257934316,
+        "rmape": 2.66381797211311,
+        "mae": 734.3931276906724,
+        "rmse": 959.1618073801311,
+        "r2": 0.8557841768651853
+      },
+      "metadata": {
+        "training_time": 0.275782,
+        "n_features": 52,
+        "n_train_samples": 2548,
+        "feature_names": [
+          "year",
+          "month",
+          "day",
+          "dayofweek",
+          "dayofyear",
+          "week",
+          "quarter",
+          "is_weekend",
+          "is_saturday",
+          "is_sunday",
+          "is_month_start",
+          "is_month_end",
+          "is_quarter_start",
+          "is_quarter_end",
+          "is_festivo",
+          "dayofweek_sin",
+          "dayofweek_cos",
+          "month_sin",
+          "month_cos",
+          "dayofyear_sin",
+          "dayofyear_cos",
+          "total_rolling_mean_7d",
+          "total_rolling_std_7d",
+          "total_rolling_min_7d",
+          "total_rolling_max_7d",
+          "total_rolling_mean_14d",
+          "total_rolling_std_14d",
+          "total_rolling_min_14d",
+          "total_rolling_max_14d",
+          "total_rolling_mean_28d",
+          "total_rolling_std_28d",
+          "total_rolling_min_28d",
+          "total_rolling_max_28d",
+          "is_rainy_season",
+          "is_january",
+          "is_december",
+          "week_of_month",
+          "temp_mean_lag1d",
+          "temp_std_lag1d",
+          "temp_min_lag1d",
+          "temp_max_lag1d",
+          "feels_like_mean_lag1d",
+          "feels_like_min_lag1d",
+          "feels_like_max_lag1d",
+          "humidity_mean_lag1d",
+          "humidity_min_lag1d",
+          "humidity_max_lag1d",
+          "temp_x_is_weekend",
+          "temp_x_is_festivo",
+          "dayofweek_x_festivo",
+          "month_x_festivo",
+          "weekend_x_month"
+        ],
+        "features_removed": [
+          "total_lag_1d",
+          "total_lag_7d",
+          "total_lag_14d",
+          "p8_lag_1d",
+          "p8_lag_7d",
+          "p12_lag_1d",
+          "p12_lag_7d",
+          "p18_lag_1d",
+          "p18_lag_7d",
+          "p20_lag_1d",
+          "p20_lag_7d",
+          "total_day_change",
+          "total_day_change_pct"
+        ],
+        "n_features_removed": 13,
+        "cv_results": {
+          "mean_rmape": 3.5222415798338447,
+          "std_rmape": 0.15761654888496524,
+          "mean_mape": 3.2035966515785925,
+          "std_mape": 0.16120697643846596,
+          "all_rmapes": [
+            3.7115449472955833,
+            3.325670118707494,
+            3.529509673498456
+          ],
+          "all_mapes": [
+            3.3947061824065936,
+            3.000387837013275,
+            3.2156959353159085
+          ]
+        }
+      },
+      "is_champion": false
+    },
+    "randomforest_20251129_142608": {
+      "model_id": "randomforest_20251129_142608",
+      "model_name": "randomforest",
+      "version": "20251129_142608",
+      "timestamp": "2025-11-29T14:26:08.704668",
+      "path": "models\\registry\\randomforest_20251129_142608.joblib",
+      "metrics": {
+        "mape": 2.9718583056711076,
+        "correlation": 0.917933601487016,
+        "rmape": 3.237552586436334,
+        "mae": 866.9579943842439,
+        "rmse": 1129.8268791998169,
+        "r2": 0.7998972931008878
+      },
+      "metadata": {
+        "training_time": 0.805337,
+        "n_features": 52,
+        "n_train_samples": 2548,
+        "feature_names": [
+          "year",
+          "month",
+          "day",
+          "dayofweek",
+          "dayofyear",
+          "week",
+          "quarter",
+          "is_weekend",
+          "is_saturday",
+          "is_sunday",
+          "is_month_start",
+          "is_month_end",
+          "is_quarter_start",
+          "is_quarter_end",
+          "is_festivo",
+          "dayofweek_sin",
+          "dayofweek_cos",
+          "month_sin",
+          "month_cos",
+          "dayofyear_sin",
+          "dayofyear_cos",
+          "total_rolling_mean_7d",
+          "total_rolling_std_7d",
+          "total_rolling_min_7d",
+          "total_rolling_max_7d",
+          "total_rolling_mean_14d",
+          "total_rolling_std_14d",
+          "total_rolling_min_14d",
+          "total_rolling_max_14d",
+          "total_rolling_mean_28d",
+          "total_rolling_std_28d",
+          "total_rolling_min_28d",
+          "total_rolling_max_28d",
+          "is_rainy_season",
+          "is_january",
+          "is_december",
+          "week_of_month",
+          "temp_mean_lag1d",
+          "temp_std_lag1d",
+          "temp_min_lag1d",
+          "temp_max_lag1d",
+          "feels_like_mean_lag1d",
+          "feels_like_min_lag1d",
+          "feels_like_max_lag1d",
+          "humidity_mean_lag1d",
+          "humidity_min_lag1d",
+          "humidity_max_lag1d",
+          "temp_x_is_weekend",
+          "temp_x_is_festivo",
+          "dayofweek_x_festivo",
+          "month_x_festivo",
+          "weekend_x_month"
+        ],
+        "features_removed": [
+          "total_lag_1d",
+          "total_lag_7d",
+          "total_lag_14d",
+          "p8_lag_1d",
+          "p8_lag_7d",
+          "p12_lag_1d",
+          "p12_lag_7d",
+          "p18_lag_1d",
+          "p18_lag_7d",
+          "p20_lag_1d",
+          "p20_lag_7d",
+          "total_day_change",
+          "total_day_change_pct"
+        ],
+        "n_features_removed": 13,
+        "cv_results": {
+          "mean_rmape": 3.7375278537380425,
+          "std_rmape": 0.4010069748145432,
+          "mean_mape": 3.3828737797066224,
+          "std_mape": 0.3381254311897387,
+          "all_rmapes": [
+            3.7511204547418555,
+            3.2397414090648593,
+            4.221721697407412
+          ],
+          "all_mapes": [
+            3.410541343378446,
+            2.955616377033416,
+            3.7824636187080056
+          ]
+        }
+      },
+      "is_champion": false
+    },
+    "xgboost_20251129_144902": {
+      "model_id": "xgboost_20251129_144902",
+      "model_name": "xgboost",
+      "version": "20251129_144902",
+      "timestamp": "2025-11-29T14:49:02.462543",
+      "path": "models\\registry\\xgboost_20251129_144902.joblib",
+      "metrics": {
+        "mape": 2.673184537344598,
+        "correlation": 0.9386071350091516,
+        "rmape": 2.848033471766155,
+        "mae": 789.2105380133231,
+        "rmse": 1023.8027865196827,
+        "r2": 0.8356908409615338
+      },
+      "metadata": {
+        "training_time": 2.671908,
+        "n_features": 52,
+        "n_train_samples": 2548,
+        "feature_names": [
+          "year",
+          "month",
+          "day",
+          "dayofweek",
+          "dayofyear",
+          "week",
+          "quarter",
+          "is_weekend",
+          "is_saturday",
+          "is_sunday",
+          "is_month_start",
+          "is_month_end",
+          "is_quarter_start",
+          "is_quarter_end",
+          "is_festivo",
+          "dayofweek_sin",
+          "dayofweek_cos",
+          "month_sin",
+          "month_cos",
+          "dayofyear_sin",
+          "dayofyear_cos",
+          "total_rolling_mean_7d",
+          "total_rolling_std_7d",
+          "total_rolling_min_7d",
+          "total_rolling_max_7d",
+          "total_rolling_mean_14d",
+          "total_rolling_std_14d",
+          "total_rolling_min_14d",
+          "total_rolling_max_14d",
+          "total_rolling_mean_28d",
+          "total_rolling_std_28d",
+          "total_rolling_min_28d",
+          "total_rolling_max_28d",
+          "is_rainy_season",
+          "is_january",
+          "is_december",
+          "week_of_month",
+          "temp_mean_lag1d",
+          "temp_std_lag1d",
+          "temp_min_lag1d",
+          "temp_max_lag1d",
+          "feels_like_mean_lag1d",
+          "feels_like_min_lag1d",
+          "feels_like_max_lag1d",
+          "humidity_mean_lag1d",
+          "humidity_min_lag1d",
+          "humidity_max_lag1d",
+          "temp_x_is_weekend",
+          "temp_x_is_festivo",
+          "dayofweek_x_festivo",
+          "month_x_festivo",
+          "weekend_x_month"
+        ],
+        "features_removed": [
+          "total_lag_1d",
+          "total_lag_7d",
+          "total_lag_14d",
+          "p8_lag_1d",
+          "p8_lag_7d",
+          "p12_lag_1d",
+          "p12_lag_7d",
+          "p18_lag_1d",
+          "p18_lag_7d",
+          "p20_lag_1d",
+          "p20_lag_7d",
+          "total_day_change",
+          "total_day_change_pct"
+        ],
+        "n_features_removed": 13,
+        "cv_results": {
+          "mean_rmape": 3.2607485233322553,
+          "std_rmape": 0.1971492819774043,
+          "mean_mape": 3.0013796494431113,
+          "std_mape": 0.1596140130331141,
+          "all_rmapes": [
+            3.208731805429281,
+            3.04953872347152,
+            3.5239750410959654
+          ],
+          "all_mapes": [
+            2.9744068239067087,
+            2.820780257097338,
+            3.2089518673252875
+          ]
+        }
+      },
+      "is_champion": false
+    },
+    "lightgbm_20251129_144902": {
+      "model_id": "lightgbm_20251129_144902",
+      "model_name": "lightgbm",
+      "version": "20251129_144902",
+      "timestamp": "2025-11-29T14:49:02.506016",
+      "path": "models\\registry\\lightgbm_20251129_144902.joblib",
+      "metrics": {
+        "mape": 2.5080169216509622,
+        "correlation": 0.9415121257934316,
+        "rmape": 2.66381797211311,
+        "mae": 734.3931276906724,
+        "rmse": 959.1618073801311,
+        "r2": 0.8557841768651853
+      },
+      "metadata": {
+        "training_time": 0.252501,
+        "n_features": 52,
+        "n_train_samples": 2548,
+        "feature_names": [
+          "year",
+          "month",
+          "day",
+          "dayofweek",
+          "dayofyear",
+          "week",
+          "quarter",
+          "is_weekend",
+          "is_saturday",
+          "is_sunday",
+          "is_month_start",
+          "is_month_end",
+          "is_quarter_start",
+          "is_quarter_end",
+          "is_festivo",
+          "dayofweek_sin",
+          "dayofweek_cos",
+          "month_sin",
+          "month_cos",
+          "dayofyear_sin",
+          "dayofyear_cos",
+          "total_rolling_mean_7d",
+          "total_rolling_std_7d",
+          "total_rolling_min_7d",
+          "total_rolling_max_7d",
+          "total_rolling_mean_14d",
+          "total_rolling_std_14d",
+          "total_rolling_min_14d",
+          "total_rolling_max_14d",
+          "total_rolling_mean_28d",
+          "total_rolling_std_28d",
+          "total_rolling_min_28d",
+          "total_rolling_max_28d",
+          "is_rainy_season",
+          "is_january",
+          "is_december",
+          "week_of_month",
+          "temp_mean_lag1d",
+          "temp_std_lag1d",
+          "temp_min_lag1d",
+          "temp_max_lag1d",
+          "feels_like_mean_lag1d",
+          "feels_like_min_lag1d",
+          "feels_like_max_lag1d",
+          "humidity_mean_lag1d",
+          "humidity_min_lag1d",
+          "humidity_max_lag1d",
+          "temp_x_is_weekend",
+          "temp_x_is_festivo",
+          "dayofweek_x_festivo",
+          "month_x_festivo",
+          "weekend_x_month"
+        ],
+        "features_removed": [
+          "total_lag_1d",
+          "total_lag_7d",
+          "total_lag_14d",
+          "p8_lag_1d",
+          "p8_lag_7d",
+          "p12_lag_1d",
+          "p12_lag_7d",
+          "p18_lag_1d",
+          "p18_lag_7d",
+          "p20_lag_1d",
+          "p20_lag_7d",
+          "total_day_change",
+          "total_day_change_pct"
+        ],
+        "n_features_removed": 13,
+        "cv_results": {
+          "mean_rmape": 3.5222415798338447,
+          "std_rmape": 0.15761654888496524,
+          "mean_mape": 3.2035966515785925,
+          "std_mape": 0.16120697643846596,
+          "all_rmapes": [
+            3.7115449472955833,
+            3.325670118707494,
+            3.529509673498456
+          ],
+          "all_mapes": [
+            3.3947061824065936,
+            3.000387837013275,
+            3.2156959353159085
+          ]
+        }
+      },
+      "is_champion": true
+    },
+    "randomforest_20251129_144902": {
+      "model_id": "randomforest_20251129_144902",
+      "model_name": "randomforest",
+      "version": "20251129_144902",
+      "timestamp": "2025-11-29T14:49:02.666564",
+      "path": "models\\registry\\randomforest_20251129_144902.joblib",
+      "metrics": {
+        "mape": 2.9718583056711076,
+        "correlation": 0.9179336014870159,
+        "rmape": 3.2375525864363346,
+        "mae": 866.9579943842441,
+        "rmse": 1129.8268791998169,
+        "r2": 0.7998972931008878
+      },
+      "metadata": {
+        "training_time": 0.748837,
+        "n_features": 52,
+        "n_train_samples": 2548,
+        "feature_names": [
+          "year",
+          "month",
+          "day",
+          "dayofweek",
+          "dayofyear",
+          "week",
+          "quarter",
+          "is_weekend",
+          "is_saturday",
+          "is_sunday",
+          "is_month_start",
+          "is_month_end",
+          "is_quarter_start",
+          "is_quarter_end",
+          "is_festivo",
+          "dayofweek_sin",
+          "dayofweek_cos",
+          "month_sin",
+          "month_cos",
+          "dayofyear_sin",
+          "dayofyear_cos",
+          "total_rolling_mean_7d",
+          "total_rolling_std_7d",
+          "total_rolling_min_7d",
+          "total_rolling_max_7d",
+          "total_rolling_mean_14d",
+          "total_rolling_std_14d",
+          "total_rolling_min_14d",
+          "total_rolling_max_14d",
+          "total_rolling_mean_28d",
+          "total_rolling_std_28d",
+          "total_rolling_min_28d",
+          "total_rolling_max_28d",
+          "is_rainy_season",
+          "is_january",
+          "is_december",
+          "week_of_month",
+          "temp_mean_lag1d",
+          "temp_std_lag1d",
+          "temp_min_lag1d",
+          "temp_max_lag1d",
+          "feels_like_mean_lag1d",
+          "feels_like_min_lag1d",
+          "feels_like_max_lag1d",
+          "humidity_mean_lag1d",
+          "humidity_min_lag1d",
+          "humidity_max_lag1d",
+          "temp_x_is_weekend",
+          "temp_x_is_festivo",
+          "dayofweek_x_festivo",
+          "month_x_festivo",
+          "weekend_x_month"
+        ],
+        "features_removed": [
+          "total_lag_1d",
+          "total_lag_7d",
+          "total_lag_14d",
+          "p8_lag_1d",
+          "p8_lag_7d",
+          "p12_lag_1d",
+          "p12_lag_7d",
+          "p18_lag_1d",
+          "p18_lag_7d",
+          "p20_lag_1d",
+          "p20_lag_7d",
+          "total_day_change",
+          "total_day_change_pct"
+        ],
+        "n_features_removed": 13,
+        "cv_results": {
+          "mean_rmape": 3.7375278537380416,
+          "std_rmape": 0.4010069748145441,
+          "mean_mape": 3.382873779706621,
+          "std_mape": 0.3381254311897387,
+          "all_rmapes": [
+            3.7511204547418546,
+            3.239741409064858,
+            4.221721697407413
+          ],
+          "all_mapes": [
+            3.4105413433784446,
+            2.955616377033415,
+            3.7824636187080047
+          ]
+        }
+      },
+      "is_champion": false
+    }
+  },
+  "champion": "lightgbm_20251129_144902",
+  "history": [
+    {
+      "action": "register",
+      "model_id": "xgboost_20251120_161227",
+      "timestamp": "2025-11-20T16:12:27.177252"
+    },
+    {
+      "action": "register",
+      "model_id": "xgboost_20251120_161824",
+      "timestamp": "2025-11-20T16:18:24.728593"
+    },
+    {
+      "action": "register",
+      "model_id": "lightgbm_20251120_161824",
+      "timestamp": "2025-11-20T16:18:24.754335"
+    },
+    {
+      "action": "register",
+      "model_id": "randomforest_20251120_161824",
+      "timestamp": "2025-11-20T16:18:24.882525"
+    },
+    {
+      "action": "register",
+      "model_id": "xgboost_20251120_161837",
+      "timestamp": "2025-11-20T16:18:37.490436"
+    },
+    {
+      "action": "register",
+      "model_id": "lightgbm_20251120_161837",
+      "timestamp": "2025-11-20T16:18:37.519928"
+    },
+    {
+      "action": "register",
+      "model_id": "randomforest_20251120_161837",
+      "timestamp": "2025-11-20T16:18:37.665063"
+    },
+    {
+      "action": "register",
+      "model_id": "xgboost_20251120_161851",
+      "timestamp": "2025-11-20T16:18:51.457728"
+    },
+    {
+      "action": "register",
+      "model_id": "lightgbm_20251120_161851",
+      "timestamp": "2025-11-20T16:18:51.486309"
+    },
+    {
+      "action": "register",
+      "model_id": "randomforest_20251120_161851",
+      "timestamp": "2025-11-20T16:18:51.646464"
+    },
+    {
+      "action": "promote_champion",
+      "model_id": "xgboost_20251120_161227",
+      "reason": "Mejor rmape: 1.1954",
+      "timestamp": "2025-11-20T16:18:51.658407"
+    },
+    {
+      "action": "register",
+      "model_id": "xgboost_20251120_161937",
+      "timestamp": "2025-11-20T16:19:37.458878"
+    },
+    {
+      "action": "register",
+      "model_id": "lightgbm_20251120_161937",
+      "timestamp": "2025-11-20T16:19:37.490528"
+    },
+    {
+      "action": "register",
+      "model_id": "randomforest_20251120_161937",
+      "timestamp": "2025-11-20T16:19:37.626774"
+    },
+    {
+      "action": "promote_champion",
+      "model_id": "xgboost_20251120_161227",
+      "reason": "Mejor rmape: 1.1954",
+      "timestamp": "2025-11-20T16:19:37.644760"
+    },
+    {
+      "action": "register",
+      "model_id": "xgboost_20251129_141722",
+      "timestamp": "2025-11-29T14:17:22.315371"
+    },
+    {
+      "action": "register",
+      "model_id": "lightgbm_20251129_141722",
+      "timestamp": "2025-11-29T14:17:22.349993"
+    },
+    {
+      "action": "register",
+      "model_id": "randomforest_20251129_141722",
+      "timestamp": "2025-11-29T14:17:22.497859"
+    },
+    {
+      "action": "register",
+      "model_id": "xgboost_20251129_142042",
+      "timestamp": "2025-11-29T14:20:42.868214"
+    },
+    {
+      "action": "register",
+      "model_id": "lightgbm_20251129_142042",
+      "timestamp": "2025-11-29T14:20:42.911995"
+    },
+    {
+      "action": "register",
+      "model_id": "randomforest_20251129_142042",
+      "timestamp": "2025-11-29T14:20:43.082150"
+    },
+    {
+      "action": "register",
+      "model_id": "xgboost_20251129_142256",
+      "timestamp": "2025-11-29T14:22:56.410450"
+    },
+    {
+      "action": "register",
+      "model_id": "lightgbm_20251129_142256",
+      "timestamp": "2025-11-29T14:22:56.448086"
+    },
+    {
+      "action": "register",
+      "model_id": "randomforest_20251129_142256",
+      "timestamp": "2025-11-29T14:22:56.594545"
+    },
+    {
+      "action": "promote_champion",
+      "model_id": "lightgbm_20251129_142256",
+      "reason": "Manual promotion",
+      "timestamp": "2025-11-29T14:22:56.619075"
+    },
+    {
+      "action": "register",
+      "model_id": "xgboost_20251129_142608",
+      "timestamp": "2025-11-29T14:26:08.519999"
+    },
+    {
+      "action": "register",
+      "model_id": "lightgbm_20251129_142608",
+      "timestamp": "2025-11-29T14:26:08.558098"
+    },
+    {
+      "action": "register",
+      "model_id": "randomforest_20251129_142608",
+      "timestamp": "2025-11-29T14:26:08.704668"
+    },
+    {
+      "action": "promote_champion",
+      "model_id": "lightgbm_20251129_142608",
+      "reason": "Manual promotion",
+      "timestamp": "2025-11-29T14:26:08.731652"
+    },
+    {
+      "action": "register",
+      "model_id": "xgboost_20251129_144902",
+      "timestamp": "2025-11-29T14:49:02.462543"
+    },
+    {
+      "action": "register",
+      "model_id": "lightgbm_20251129_144902",
+      "timestamp": "2025-11-29T14:49:02.506016"
+    },
+    {
+      "action": "register",
+      "model_id": "randomforest_20251129_144902",
+      "timestamp": "2025-11-29T14:49:02.666564"
+    },
+    {
+      "action": "promote_champion",
+      "model_id": "lightgbm_20251129_144902",
+      "reason": "Manual promotion",
+      "timestamp": "2025-11-29T14:49:02.701852"
+    }
+  ]
+}
