@@ -49,18 +49,18 @@ app = FastAPI(
 
 class PredictRequest(BaseModel):
     """Schema para solicitud de predicción"""
-    power_data_path: str = Field(
-        ...,
-        description="Ruta al archivo CSV con datos históricos de demanda hasta el día anterior"
-    )
-    weather_data_path: Optional[str] = Field(
-        'data/raw/clima.csv',
-        description="Ruta al archivo CSV con datos meteorológicos (se usa por defecto data/raw/clima.csv si no se especifica)"
-    )
-    start_date: Optional[str] = Field(
-        None,
-        description="Fecha inicial para filtrar datos históricos (formato: YYYY-MM-DD)"
-    )
+    # power_data_path: str = Field(
+    #     ...,
+    #     description="Ruta al archivo CSV con datos históricos de demanda hasta el día anterior"
+    # )
+    # weather_data_path: Optional[str] = Field(
+    #     'data/raw/clima.csv',
+    #     description="Ruta al archivo CSV con datos meteorológicos (se usa por defecto data/raw/clima.csv si no se especifica)"
+    # )
+    # start_date: Optional[str] = Field(
+    #     None,
+    #     description="Fecha inicial para filtrar datos históricos (formato: YYYY-MM-DD)"
+    # )
     end_date: Optional[str] = Field(
         None,
         description="Fecha final de datos históricos (formato: YYYY-MM-DD)"
@@ -76,7 +76,7 @@ class PredictRequest(BaseModel):
         description="Forzar reentrenamiento del modelo aunque exista uno. Si es True, entrena los 3 modelos y selecciona automáticamente el mejor basado en rMAPE"
     )
 
-    @field_validator('start_date', 'end_date')
+    @field_validator( 'end_date')
     @classmethod
     def validate_date_format(cls, v: Optional[str]) -> Optional[str]:
         """Valida formato de fechas"""
@@ -459,9 +459,9 @@ async def predict_demand(request: PredictRequest):
 
         try:
             df_with_features, _ = run_automated_pipeline(
-                power_data_path=request.power_data_path,
-                weather_data_path=request.weather_data_path,
-                start_date=request.start_date,
+                power_data_path='data/raw/datos.csv',
+                weather_data_path='data/raw/clima.csv',
+                start_date='2015-01-01',
                 end_date=request.end_date,
                 output_dir=Path('data/features')
             )
@@ -524,8 +524,8 @@ async def predict_demand(request: PredictRequest):
 
         try:
             # Determinar ruta de datos climáticos RAW
-            climate_raw_path = request.weather_data_path if request.weather_data_path else 'data/raw/clima.csv'
-            
+            # climate_raw_path = request.weather_data_path if request.weather_data_path else 'data/raw/clima.csv'
+            climate_raw_path= 'data/raw/clima.csv'
             # CRITICO: Guardar datos procesados temporalmente
             temp_features_path = 'data/features/temp_api_features.csv'
             df_with_features.to_csv(temp_features_path, index=False)
