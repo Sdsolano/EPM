@@ -316,9 +316,8 @@ def train_model_if_needed(df_with_features: pd.DataFrame,
     logger.info(f"  R²: {best_results['val_metrics']['r2']:.4f}")
     logger.info(f"  MAE: {best_results['val_metrics']['mae']:.2f}")
 
-    # Guardar TODOS los modelos (para registro histórico)
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    saved_paths = trainer.save_all_models(timestamp=timestamp)
+    # Guardar TODOS los modelos en modo producción (sobrescribe archivos fijos)
+    saved_paths = trainer.save_all_models(overwrite=True)
 
     # Path del mejor modelo
     best_model_path = saved_paths[best_name]
