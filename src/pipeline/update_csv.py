@@ -71,7 +71,8 @@ def json_to_csv_power(data_json,ucp_name,variable="Demanda_Real",clasificador="N
 
     print("CSV generado correctamente.")
 
-
+# df = pd.read_csv('../../data/raw/clima.csv')
+# print(df.head())
 def regresar_nuevo_csv(ucp):
     df=pd.read_csv('../../data/raw/datos.csv')
     ultima_fecha=df['FECHA'].max()  
@@ -79,3 +80,387 @@ def regresar_nuevo_csv(ucp):
     url = f"{base_url}/cargarPeriodosxUCPDesdeFecha/{ucp}/{ultima_fecha}"
     response = requests.get(url)
     json_to_csv_power(response.json(),ucp_name=ucp)
+
+
+
+
+
+response_json = {
+    "success": 'true',
+    "message": "las variables climaticas de Atlantico entontradas",
+    "data": [
+        {
+            "fecha": "2019-06-29T05:00:00.000Z",
+            "p1_t": 33.4,
+            "p2_t": 34.5,
+            "p3_t": 35.9,
+            "p4_t": 37.5,
+            "p5_t": 38.3,
+            "p6_t": 38.3,
+            "p7_t": 36.9,
+            "p8_t": 36,
+            "p9_t": 34,
+            "p10_t": 31.6,
+            "p11_t": 30.4,
+            "p12_t": 31.2,
+            "p13_t": 30.2,
+            "p14_t": 29.5,
+            "p15_t": 30.4,
+            "p16_t": 29.1,
+            "p17_t": 29.5,
+            "p18_t": 29.9,
+            "p19_t": 29.2,
+            "p20_t": 29.3,
+            "p21_t": 28.2,
+            "p22_t": 28.6,
+            "p23_t": 29.9,
+            "p24_t": 31.2,
+            "p1_h": 74,
+            "p2_h": 69,
+            "p3_h": 62,
+            "p4_h": 58,
+            "p5_h": 55,
+            "p6_h": 55,
+            "p7_h": 62,
+            "p8_h": 62,
+            "p9_h": 69,
+            "p10_h": 78,
+            "p11_h": 78,
+            "p12_h": 78,
+            "p13_h": 73,
+            "p14_h": 78,
+            "p15_h": 83,
+            "p16_h": 78,
+            "p17_h": 78,
+            "p18_h": 78,
+            "p19_h": 73,
+            "p20_h": 78,
+            "p21_h": 83,
+            "p22_h": 83,
+            "p23_h": 83,
+            "p24_h": 78,
+            "p1_v": 18.5,
+            "p2_v": 24.1,
+            "p3_v": 20.4,
+            "p4_v": 18.5,
+            "p5_v": 16.7,
+            "p6_v": 14.8,
+            "p7_v": 25.9,
+            "p8_v": 29.6,
+            "p9_v": 22.2,
+            "p10_v": 20.4,
+            "p11_v": 25.9,
+            "p12_v": 16.7,
+            "p13_v": 14.8,
+            "p14_v": 16.7,
+            "p15_v": 18.5,
+            "p16_v": 20.4,
+            "p17_v": 16.7,
+            "p18_v": 13,
+            "p19_v": 14.8,
+            "p20_v": 18.5,
+            "p21_v": 18.5,
+            "p22_v": 14.8,
+            "p23_v": 7.4,
+            "p24_v": 11.1,
+            "ucp": "Atlantico",
+            "festivo": 'null',
+            "p1_i": 0,
+            "p2_i": 0,
+            "p3_i": 0,
+            "p4_i": 0,
+            "p5_i": 0,
+            "p6_i": 0,
+            "p7_i": 0,
+            "p8_i": 0,
+            "p9_i": 0,
+            "p10_i": 0,
+            "p11_i": 0,
+            "p12_i": 0,
+            "p13_i": 0,
+            "p14_i": 0,
+            "p15_i": 0,
+            "p16_i": 0,
+            "p17_i": 0,
+            "p18_i": 0,
+            "p19_i": 0,
+            "p20_i": 0,
+            "p21_i": 0,
+            "p22_i": 0,
+            "p23_i": 0,
+            "p24_i": 0
+        },
+        {
+            "fecha": "2019-06-30T05:00:00.000Z",
+            "p1_t": 33.4,
+            "p2_t": 34.5,
+            "p3_t": 35.9,
+            "p4_t": 37.5,
+            "p5_t": 38.3,
+            "p6_t": 38.3,
+            "p7_t": 36.9,
+            "p8_t": 36,
+            "p9_t": 34,
+            "p10_t": 31.6,
+            "p11_t": 30.4,
+            "p12_t": 31.2,
+            "p13_t": 30.2,
+            "p14_t": 29.5,
+            "p15_t": 30.4,
+            "p16_t": 29.1,
+            "p17_t": 29.5,
+            "p18_t": 29.9,
+            "p19_t": 29.2,
+            "p20_t": 29.3,
+            "p21_t": 28.2,
+            "p22_t": 28.6,
+            "p23_t": 29.9,
+            "p24_t": 31.2,
+            "p1_h": 74,
+            "p2_h": 69,
+            "p3_h": 62,
+            "p4_h": 58,
+            "p5_h": 55,
+            "p6_h": 55,
+            "p7_h": 62,
+            "p8_h": 62,
+            "p9_h": 69,
+            "p10_h": 78,
+            "p11_h": 78,
+            "p12_h": 78,
+            "p13_h": 73,
+            "p14_h": 78,
+            "p15_h": 83,
+            "p16_h": 78,
+            "p17_h": 78,
+            "p18_h": 78,
+            "p19_h": 73,
+            "p20_h": 78,
+            "p21_h": 83,
+            "p22_h": 83,
+            "p23_h": 83,
+            "p24_h": 78,
+            "p1_v": 18.5,
+            "p2_v": 24.1,
+            "p3_v": 20.4,
+            "p4_v": 18.5,
+            "p5_v": 16.7,
+            "p6_v": 14.8,
+            "p7_v": 25.9,
+            "p8_v": 29.6,
+            "p9_v": 22.2,
+            "p10_v": 20.4,
+            "p11_v": 25.9,
+            "p12_v": 16.7,
+            "p13_v": 14.8,
+            "p14_v": 16.7,
+            "p15_v": 18.5,
+            "p16_v": 20.4,
+            "p17_v": 16.7,
+            "p18_v": 13,
+            "p19_v": 14.8,
+            "p20_v": 18.5,
+            "p21_v": 18.5,
+            "p22_v": 14.8,
+            "p23_v": 7.4,
+            "p24_v": 11.1,
+            "ucp": "Atlantico",
+            "festivo": 'null',
+            "p1_i": 0,
+            "p2_i": 0,
+            "p3_i": 0,
+            "p4_i": 0,
+            "p5_i": 0,
+            "p6_i": 0,
+            "p7_i": 0,
+            "p8_i": 0,
+            "p9_i": 0,
+            "p10_i": 0,
+            "p11_i": 0,
+            "p12_i": 0,
+            "p13_i": 0,
+            "p14_i": 0,
+            "p15_i": 0,
+            "p16_i": 0,
+            "p17_i": 0,
+            "p18_i": 0,
+            "p19_i": 0,
+            "p20_i": 0,
+            "p21_i": 0,
+            "p22_i": 0,
+            "p23_i": 0,
+            "p24_i": 0
+        },
+        {
+            "fecha": "2019-07-01T05:00:00.000Z",
+            "p1_t": 33.4,
+            "p2_t": 34.5,
+            "p3_t": 35.9,
+            "p4_t": 37.5,
+            "p5_t": 38.3,
+            "p6_t": 38.3,
+            "p7_t": 36.9,
+            "p8_t": 36,
+            "p9_t": 34,
+            "p10_t": 31.6,
+            "p11_t": 30.4,
+            "p12_t": 31.2,
+            "p13_t": 30.2,
+            "p14_t": 29.5,
+            "p15_t": 30.4,
+            "p16_t": 29.1,
+            "p17_t": 29.5,
+            "p18_t": 29.9,
+            "p19_t": 29.2,
+            "p20_t": 29.3,
+            "p21_t": 28.2,
+            "p22_t": 28.6,
+            "p23_t": 29.9,
+            "p24_t": 31.2,
+            "p1_h": 74,
+            "p2_h": 69,
+            "p3_h": 62,
+            "p4_h": 58,
+            "p5_h": 55,
+            "p6_h": 55,
+            "p7_h": 62,
+            "p8_h": 62,
+            "p9_h": 69,
+            "p10_h": 78,
+            "p11_h": 78,
+            "p12_h": 78,
+            "p13_h": 73,
+            "p14_h": 78,
+            "p15_h": 83,
+            "p16_h": 78,
+            "p17_h": 78,
+            "p18_h": 78,
+            "p19_h": 73,
+            "p20_h": 78,
+            "p21_h": 83,
+            "p22_h": 83,
+            "p23_h": 83,
+            "p24_h": 78,
+            "p1_v": 18.5,
+            "p2_v": 24.1,
+            "p3_v": 20.4,
+            "p4_v": 18.5,
+            "p5_v": 16.7,
+            "p6_v": 14.8,
+            "p7_v": 25.9,
+            "p8_v": 29.6,
+            "p9_v": 22.2,
+            "p10_v": 20.4,
+            "p11_v": 25.9,
+            "p12_v": 16.7,
+            "p13_v": 14.8,
+            "p14_v": 16.7,
+            "p15_v": 18.5,
+            "p16_v": 20.4,
+            "p17_v": 16.7,
+            "p18_v": 13,
+            "p19_v": 14.8,
+            "p20_v": 18.5,
+            "p21_v": 18.5,
+            "p22_v": 14.8,
+            "p23_v": 7.4,
+            "p24_v": 11.1,
+            "ucp": "Atlantico",
+            "festivo": 'null',
+            "p1_i": 0,
+            "p2_i": 0,
+            "p3_i": 0,
+            "p4_i": 0,
+            "p5_i": 0,
+            "p6_i": 0,
+            "p7_i": 0,
+            "p8_i": 0,
+            "p9_i": 0,
+            "p10_i": 0,
+            "p11_i": 0,
+            "p12_i": 0,
+            "p13_i": 0,
+            "p14_i": 0,
+            "p15_i": 0,
+            "p16_i": 0,
+            "p17_i": 0,
+            "p18_i": 0,
+            "p19_i": 0,
+            "p20_i": 0,
+            "p21_i": 0,
+            "p22_i": 0,
+            "p23_i": 0,
+            "p24_i": 0
+        },
+   ]
+}
+# df viene de: df = pd.DataFrame(response_json["data"])
+
+
+
+def regresar_nuevo_csv_clima(response_json):
+    ruta='../../data/raw/clima2.csv'
+    df = pd.DataFrame(response_json["data"])
+    df["fecha"] = pd.to_datetime(df["fecha"])
+    filas = []
+    for _, row in df.iterrows():
+        fecha = row["fecha"]
+        
+        for p in range(1, 25):
+            
+            fila = {
+                "fecha": fecha.strftime("%Y-%m-%d"),
+                "periodo": p,
+                "p_t": row[f"p{p}_t"],
+                "p_h": row[f"p{p}_h"],
+                "p_v": row[f"p{p}_v"],
+                "p_i": row[f"p{p}_i"]
+            }
+            filas.append(fila)
+    df_final = pd.DataFrame(filas)
+    df_inicial= pd.read_csv(ruta)
+    print(df_inicial)
+    print(df_final)
+    df_concat= pd.concat([df_final,df_final],axis=0, ignore_index=True)
+    df_concat.to_csv(ruta, index=False)
+
+
+def req_clima_api(ucp,fecha_fin):
+    df=pd.read_csv('../../data/raw/clima2.csv')
+    fecha_inicio=df['fecha'].max()  
+    base_url = "http://localhost:8000"
+    url = f"{base_url}/cargarClimaXUCPDesdeHasta/{ucp}/{fecha_inicio}/{fecha_fin}"
+    print(fecha_inicio)
+    # response = requests.get(url)
+    # regresar_nuevo_csv_clima(response.json())
+
+#req_clima_api('Atlantico','2025-11-06')
+df=pd.read_csv('../../data/raw/clima.csv')
+
+df["dt_iso"] = (
+    df["dt_iso"]
+    .str.replace(" UTC", "", regex=False)
+    .pipe(pd.to_datetime, format="%Y-%m-%d %H:%M:%S %z")
+)
+
+# Crear columnas necesarias
+df["fecha"] = df["dt_iso"].dt.date
+df["hora"] = df["dt_iso"].dt.hour
+df["periodo"] = (df["hora"] + 1) 
+df_final = df[[
+    "fecha",
+    "periodo",
+    "wind_speed",
+    "rain_1h",
+    "temp",
+    "humidity"
+    
+]]
+df_renamed = df_final.rename(columns={
+    "wind_speed": "p_v",
+    "rain_1h": "p_i",
+    "temp": "p_t",
+    "humidity": "p_h"
+})
+df_renamed=df_renamed.fillna(0)
+df_renamed.to_csv('../../data/raw/clima_new.csv', index=False)
