@@ -20,7 +20,7 @@ from datetime import datetime
 import logging
 import traceback
 import pandas as pd
-
+from fastapi.concurrency import run_in_threadpool
 # Importar componentes del sistema
 from src.pipeline.orchestrator import run_automated_pipeline
 from src.models.trainer import ModelTrainer
@@ -460,7 +460,8 @@ async def predict_demand(request: PredictRequest):
         # PASO 1: EJECUTAR PIPELINE DE FEATURE ENGINEERING
         # ====================================================================
         logger.info("\n📊 PASO 1: Procesando datos históricos y creando features...")
-        full_update_csv(request.ucp)
+        await run_in_threadpool(full_update_csv, request.ucp)
+
         try:
             df_with_features, _ = run_automated_pipeline(
                 power_data_path='data/raw/datos.csv',

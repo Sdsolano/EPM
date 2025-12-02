@@ -3,6 +3,7 @@ import json
 from datetime import datetime, timedelta
 import requests
 import os
+from pathlib import Path
 #-- 1. Función para convertir JSON a CSV y guardarlo ---
 def json_to_csv_power(data_json,ucp_name,archivo,variable="Demanda_Real",clasificador="NORMAL"):
     df = pd.DataFrame(data_json["data"])
@@ -35,11 +36,13 @@ def json_to_csv_power(data_json,ucp_name,archivo,variable="Demanda_Real",clasifi
     df_final.drop_duplicates(subset=['FECHA'],inplace=True)
     # --- 7. Guardar CSV ---
     df_final.to_csv(archivo, index=False)
-
-    print("CSV generado correctamente.")
+    print("\n" + "="*80)
+    print(f"✅ CSV power")
+    print("\n" + "="*80)
 #-- 2. Función para solicitar datos y generar CSV ---
 def regresar_nuevo_csv(ucp):
-    path=f'../../data/raw/{ucp}/datos.csv'
+    BASE_DIR = Path(__file__).resolve().parent.parent.parent  # sube 2 niveles
+    path = BASE_DIR / "data" / "raw" / ucp / "datos.csv"
     if not os.path.exists(path):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         df=pd.DataFrame([],columns=["UCP","VARIABLE","FECHA","Clasificador interno","TIPO DIA"]+[f'P{i}' for i in range(1,25)]+["TOTAL"])
@@ -80,14 +83,16 @@ def regresar_nuevo_csv_clima(response_json,ruta):
             filas.append(fila)
     df_final = pd.DataFrame(filas)
     df_inicial= pd.read_csv(ruta)
-    print(df_inicial)
-    print(df_final)
     df_concat= pd.concat([df_inicial,df_final],axis=0, ignore_index=True)
     df_concat.drop_duplicates(inplace=True)
     df_concat.to_csv(ruta, index=False)
+    print("\n" + "="*80)
+    print(f"✅ CSV clima")
+    print("\n" + "="*80)
 #-- 4. Función para solicitar datos climáticos y generar CSV ---
 def req_clima_api(ucp):
-    path=f'../../data/raw/{ucp}/clima.csv'
+    BASE_DIR = Path(__file__).resolve().parent.parent.parent  # sube 2 niveles
+    path = BASE_DIR / "data" / "raw" / ucp / "clima.csv"
     if not os.path.exists(path):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         df=pd.DataFrame(columns=["fecha","periodo","p_t","p_h","p_v","p_i"])
@@ -114,5 +119,7 @@ def req_clima_api(ucp):
 def full_update_csv(ucp):
     regresar_nuevo_csv(ucp)
     req_clima_api(ucp)
-
-full_update_csv('Atlantico')
+    print("\n" + "="*80)
+    print(f"✅ CSV actualizado para UCP: {ucp}")
+    print("\n" + "="*80)
+#full_update_csv('Atlantico')
