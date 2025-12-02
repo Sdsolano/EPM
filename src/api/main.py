@@ -26,7 +26,7 @@ from src.pipeline.orchestrator import run_automated_pipeline
 from src.models.trainer import ModelTrainer
 from src.prediction.forecaster import ForecastPipeline
 from src.prediction.hourly import HourlyDisaggregationEngine
-
+from src.pipeline.update_csv import full_update_csv
 # Configuración de logging
 logging.basicConfig(
     level=logging.INFO,
@@ -61,6 +61,10 @@ class PredictRequest(BaseModel):
     #     None,
     #     description="Fecha inicial para filtrar datos históricos (formato: YYYY-MM-DD)"
     # )
+    ucp: str = Field(
+        None,
+        description="Selección de UCP para calculos"
+    )
     end_date: Optional[str] = Field(
         None,
         description="Fecha final de datos históricos (formato: YYYY-MM-DD)"
@@ -456,7 +460,7 @@ async def predict_demand(request: PredictRequest):
         # PASO 1: EJECUTAR PIPELINE DE FEATURE ENGINEERING
         # ====================================================================
         logger.info("\n📊 PASO 1: Procesando datos históricos y creando features...")
-
+        full_update_csv(request.ucp)
         try:
             df_with_features, _ = run_automated_pipeline(
                 power_data_path='data/raw/datos.csv',
