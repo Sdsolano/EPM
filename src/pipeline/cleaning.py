@@ -140,12 +140,39 @@ class PowerDataCleaner:
 
         # 7. Validar consistencia de datos
         df = self._validate_consistency(df)
-
+        
         # 8. Calcular estadísticas finales
         self._calculate_final_stats(df)
 
+        # 9. Validar evento de día
+        df = self._validate_event_day(df)
         logger.info(f"✓ Limpieza completada: {len(df)} registros válidos")
         return df, self.report
+
+    def _validate_event_day(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Valida que existe evento de día y completa valores vacíos."""
+        
+        # Si no existe la columna, la crea en 0
+        if 'Evento Día' not in df.columns:
+            self.report.add_issue(
+                'MISSING_EVENT_DAY',
+                "La columna 'Evento Día' no está presente en el dataset, agregando en 0 por defecto",
+                'WARNING'
+            )
+            df['Evento Día'] = 0
+        else:
+            # Si existe, llenar los valores vacíos / NaN con 0
+            if df['Evento Día'].isna().any() or (df['Evento Día'] == '').any():
+                self.report.add_issue(
+                    'EMPTY_EVENT_DAY_VALUES',
+                    "La columna 'Evento Día' contiene valores vacíos, rellenando con 0",
+                    'WARNING'
+                )
+                df['Evento Día'] = df['Evento Día'].replace('', 0).fillna(0)
+
+        return df
+
+
 
     def _validate_schema(self, df: pd.DataFrame) -> pd.DataFrame:
         """Valida que las columnas esperadas estén presentes"""

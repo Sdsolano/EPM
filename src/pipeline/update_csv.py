@@ -2,47 +2,13 @@ import pandas as pd
 import json
 from datetime import datetime, timedelta
 import requests
-# --- 1. JSON de entrada ---
-data_json = {
-    "success": True,
-    "message": "Historicos de Cartagena entontrados",
-    "data": [
-        {
-            "fecha": "2025-11-04T05:00:00.000Z",
-            "p1": 426.4, "p2": 413.6, "p3": 403, "p4": 390.3, "p5": 382.7, "p6": 370.8,
-            "p7": 356.1, "p8": 366, "p9": 387.7, "p10": 405.9, "p11": 415.7, "p12": 419.4,
-            "p13": 419.1, "p14": 421.3, "p15": 423.2, "p16": 419.3, "p17": 408, "p18": 398.9,
-            "p19": 411.3, "p20": 425.7, "p21": 426.9, "p22": 426.4, "p23": 430.8, "p24": 426.6,
-            "observacion": ""
-        },
-        {
-            "fecha": "2025-11-05T05:00:00.000Z",
-            "p1": 414.9, "p2": 400.7, "p3": 385.6, "p4": 380, "p5": 370.4, "p6": 357.9,
-            "p7": 338.7, "p8": 339, "p9": 347.8, "p10": 350.7, "p11": 360.5, "p12": 364.1,
-            "p13": 363.4, "p14": 369, "p15": 370.1, "p16": 357.2, "p17": 358.2, "p18": 359.6,
-            "p19": 377.5, "p20": 402.4, "p21": 404.7, "p22": 409.3, "p23": 411.6, "p24": 406.7,
-            "observacion": ""
-        },
-        {
-            "fecha": "2025-11-06T05:00:00.000Z",
-            "p1": 394.6, "p2": 381.3, "p3": 373.8, "p4": 366, "p5": 360.2, "p6": 351.1,
-            "p7": 340, "p8": 334.6, "p9": 339.4, "p10": 345, "p11": 353.3, "p12": 358.6,
-            "p13": 359.8, "p14": 364.4, "p15": 370.6, "p16": 359.7, "p17": 342.6, "p18": 337,
-            "p19": 374.7, "p20": 408.5, "p21": 414.9, "p22": 420.4, "p23": 424.9, "p24": 412,
-            "observacion": ""
-        }
-    ]
-}
-
-# --- 2. Convertir JSON a DataFrame ---
-def json_to_csv_power(data_json,ucp_name,variable="Demanda_Real",clasificador="NORMAL"):
-    archivo='../../data/raw/datos.csv'
+import os
+#-- 1. Función para convertir JSON a CSV y guardarlo ---
+def json_to_csv_power(data_json,ucp_name,archivo,variable="Demanda_Real",clasificador="NORMAL"):
     df = pd.DataFrame(data_json["data"])
-    
     # --- 3. Convertir fecha a YYYY-MM-DD ---
     df["FECHA"] = pd.to_datetime(df["fecha"]).dt.date
     df.drop(columns=["fecha"], inplace=True)
-
     # --- 4. Renombrar p1..p24 a P1..P24 ---
     df.rename(columns={f"p{i}": f"P{i}" for i in range(1, 25)}, inplace=True)
 
@@ -64,18 +30,89 @@ def json_to_csv_power(data_json,ucp_name,variable="Demanda_Real",clasificador="N
     df2 = df[final_cols]
     #df2 el generado del json, se le pega a df1 que es el historico original
     df1=pd.read_csv(archivo)
+    df1["FECHA"] = pd.to_datetime(df1["FECHA"]).dt.date
     df_final = pd.concat([df1, df2], axis=0, ignore_index=True)
-
+    df_final.drop_duplicates(subset=['FECHA'],inplace=True)
     # --- 7. Guardar CSV ---
     df_final.to_csv(archivo, index=False)
 
     print("CSV generado correctamente.")
-
-
+#-- 2. Función para solicitar datos y generar CSV ---
 def regresar_nuevo_csv(ucp):
-    df=pd.read_csv('../../data/raw/datos.csv')
-    ultima_fecha=df['FECHA'].max()  
-    base_url = "http://localhost:8000"
-    url = f"{base_url}/cargarPeriodosxUCPDesdeFecha/{ucp}/{ultima_fecha}"
-    response = requests.get(url)
-    json_to_csv_power(response.json(),ucp_name=ucp)
+    path=f'../../data/raw/{ucp}/datos.csv'
+    if not os.path.exists(path):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        df=pd.DataFrame([],columns=["UCP","VARIABLE","FECHA","Clasificador interno","TIPO DIA"]+[f'P{i}' for i in range(1,25)]+["TOTAL"])
+        df.to_csv(path, index=False)
+        base_url = "http://localhost:3000"
+        url = f"{base_url}/api/v1/admin/dashboard/configuracion/cargarPeriodosxUCPDesdeFecha/{ucp}/2005-11-06"
+        response = requests.get(url)
+        print(response.json())
+        json_to_csv_power(response.json(),ucp,path)
+    else:
+        df=pd.read_csv(path)
+        fecha_inicio=df['FECHA'].max()
+        if not fecha_inicio or pd.isna(fecha_inicio):
+            fecha_inicio='2005-11-06'
+        base_url = "http://localhost:3000"
+        url = f"{base_url}/api/v1/admin/dashboard/configuracion/cargarPeriodosxUCPDesdeFecha/{ucp}/{fecha_inicio}"
+        response = requests.get(url)
+        print(response.json())
+        json_to_csv_power(response.json(),ucp,path)
+#-- 3. Función para solicitar datos climáticos, pasar de json a CSV y guardarlo---
+def regresar_nuevo_csv_clima(response_json,ruta):
+    df = pd.DataFrame(response_json["data"])
+    df["fecha"] = pd.to_datetime(df["fecha"])
+    filas = []
+    for _, row in df.iterrows():
+        fecha = row["fecha"]
+        
+        for p in range(1, 25):
+            
+            fila = {
+                "fecha": fecha.strftime("%Y-%m-%d"),
+                "periodo": p,
+                "p_t": row[f"p{p}_t"],
+                "p_h": row[f"p{p}_h"],
+                "p_v": row[f"p{p}_v"],
+                "p_i": row[f"p{p}_i"]
+            }
+            filas.append(fila)
+    df_final = pd.DataFrame(filas)
+    df_inicial= pd.read_csv(ruta)
+    print(df_inicial)
+    print(df_final)
+    df_concat= pd.concat([df_inicial,df_final],axis=0, ignore_index=True)
+    df_concat.drop_duplicates(inplace=True)
+    df_concat.to_csv(ruta, index=False)
+#-- 4. Función para solicitar datos climáticos y generar CSV ---
+def req_clima_api(ucp):
+    path=f'../../data/raw/{ucp}/clima.csv'
+    if not os.path.exists(path):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        df=pd.DataFrame(columns=["fecha","periodo","p_t","p_h","p_v","p_i"])
+        df.to_csv(path, index=False)
+        base_url = "http://localhost:3000"
+        url = f"{base_url}/api/v1/admin/dashboard/configuracion/cargarVariablesClimaticasxUCPDesdeFecha/{ucp}/2005-11-06"
+        response = requests.get(url)
+        print(response.json())
+        regresar_nuevo_csv_clima(response.json(),path)
+    else:
+        df=pd.read_csv(path)
+        fecha_inicio=df['fecha'].max()
+        if not fecha_inicio or pd.isna(fecha_inicio):
+            fecha_inicio='2005-11-06'
+        base_url = "http://localhost:3000"
+        url = f"{base_url}/api/v1/admin/dashboard/configuracion/cargarVariablesClimaticasxUCPDesdeFecha/{ucp}/{fecha_inicio}"
+        response = requests.get(url)
+        print(response.json())
+        regresar_nuevo_csv_clima(response.json(),path)
+
+
+
+#todo el proceso
+def full_update_csv(ucp):
+    regresar_nuevo_csv(ucp)
+    req_clima_api(ucp)
+
+full_update_csv('Atlantico')
