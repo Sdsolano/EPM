@@ -54,8 +54,8 @@ class PredictRequest(BaseModel):
     #     description="Ruta al archivo CSV con datos históricos de demanda hasta el día anterior"
     # )
     # weather_data_path: Optional[str] = Field(
-    #     'data/raw/clima.csv',
-    #     description="Ruta al archivo CSV con datos meteorológicos (se usa por defecto data/raw/clima.csv si no se especifica)"
+    #     'data/raw/clima_new.csv',
+    #     description="Ruta al archivo CSV con datos meteorológicos API EPM (se usa por defecto data/raw/clima_new.csv si no se especifica)"
     # )
     # start_date: Optional[str] = Field(
     #     None,
@@ -463,7 +463,7 @@ async def predict_demand(request: PredictRequest):
         try:
             df_with_features, _ = run_automated_pipeline(
                 power_data_path='data/raw/datos.csv',
-                weather_data_path='data/raw/clima.csv',
+                weather_data_path='data/raw/clima_new.csv',
                 start_date='2015-01-01',
                 end_date=request.end_date,
                 output_dir=Path('data/features')
@@ -527,8 +527,8 @@ async def predict_demand(request: PredictRequest):
 
         try:
             # Determinar ruta de datos climáticos RAW
-            # climate_raw_path = request.weather_data_path if request.weather_data_path else 'data/raw/clima.csv'
-            climate_raw_path= 'data/raw/clima.csv'
+            # climate_raw_path = request.weather_data_path if request.weather_data_path else 'data/raw/clima_new.csv'
+            climate_raw_path= 'data/raw/clima_new.csv'
             # CRITICO: Guardar datos procesados temporalmente
             temp_features_path = 'data/features/temp_api_features.csv'
             df_with_features.to_csv(temp_features_path, index=False)

@@ -57,7 +57,7 @@ class ForecastPipeline:
                  historical_data_path: str = 'data/features/data_with_features_latest.csv',
                  festivos_path: str = 'data/calendario_festivos.json',
                  enable_hourly_disaggregation: bool = True,
-                 raw_climate_path: str = 'data/raw/clima.csv'):
+                 raw_climate_path: str = 'data/raw/clima_new.csv'):
         """
         Inicializa el pipeline
 

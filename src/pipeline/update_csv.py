@@ -87,7 +87,7 @@ def regresar_nuevo_csv_clima(response_json,ruta):
     df_concat.to_csv(ruta, index=False)
 #-- 4. Función para solicitar datos climáticos y generar CSV ---
 def req_clima_api(ucp):
-    path=f'../../data/raw/{ucp}/clima.csv'
+    path=f'../../data/raw/{ucp}/clima_new.csv'
     if not os.path.exists(path):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         df=pd.DataFrame(columns=["fecha","periodo","p_t","p_h","p_v","p_i"])
