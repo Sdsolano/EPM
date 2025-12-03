@@ -132,7 +132,7 @@ if predict_button:
     # Usar fecha fija para validación
     end_date_str = None
     if modo_validacion:
-        end_date_str = "2025-09-02"
+        end_date_str = "2025-03-01"
         st.info(
             f"📅 **Modo Validación:**\n"
             f"- Usando end_date fija: {end_date_str}\n"
@@ -146,7 +146,8 @@ if predict_button:
         "weather_data_path": weather_data_path,
         "start_date": start_date.strftime("%Y-%m-%d"),
         "n_days": n_days,
-        "force_retrain": force_retrain
+        "force_retrain": force_retrain,
+        "ucp": "Atlantico" 
     }
 
     # Agregar end_date solo si está en modo validación

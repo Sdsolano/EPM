@@ -254,11 +254,11 @@ class ForecastPipeline:
                 # CAMBIO: Buscar columnas de forma más flexible
                 all_cols = df_climate_raw_filtered.columns.tolist()
                 
-                # Filtrar columnas climáticas (cualquier columna con temp, humidity, feels_like)
+                # Filtrar columnas climáticas (API EPM: temp, humidity, wind_speed, rain)
                 # Excluir columnas con _lag, _x_ (son transformaciones)
                 clima_cols = [col for col in all_cols if
-                             any(keyword in col.lower() for keyword in 
-                                 ['temp', 'humidity', 'feels_like']) and
+                             any(keyword in col.lower() for keyword in
+                                 ['temp', 'humidity', 'wind_speed', 'rain']) and
                              '_lag' not in col and 
                              '_x_' not in col and
                              col != 'fecha']
@@ -277,17 +277,18 @@ class ForecastPipeline:
 
         # SEGUNDO: Buscar en histórico (features file)
         # Verificar si tenemos columnas climáticas en el histórico (incluyendo lag)
-        # Buscar columnas base (sin _lag1d) primero
+        # Buscar columnas base (sin _lag1d) primero - SOLO variables API EPM
         climate_cols_base = [col for col in self.df_historico.columns if
                             any(x in col for x in ['temp_mean', 'temp_min', 'temp_max', 'temp_std',
                                                    'humidity_mean', 'humidity_min', 'humidity_max',
-                                                   'feels_like_mean', 'feels_like_min', 'feels_like_max'])
+                                                   'wind_speed_mean', 'wind_speed_max',
+                                                   'rain_mean', 'rain_sum'])
                             and '_lag' not in col and '_x_' not in col]
 
         # Si no hay columnas base, buscar lag
         climate_cols_lag = [col for col in self.df_historico.columns if
                            col.endswith('_lag1d') and
-                           any(x in col for x in ['temp_', 'humidity_', 'feels_like_'])]
+                           any(x in col for x in ['temp_', 'humidity_', 'wind_speed_', 'rain_'])]
 
         if len(climate_cols_base) == 0 and len(climate_cols_lag) == 0:
             logger.warning(f"⚠ No se encontraron datos climáticos en el histórico")
@@ -368,9 +369,10 @@ class ForecastPipeline:
                 'humidity_mean': stats['humidity_mean'] + np.random.normal(0, 2),
                 'humidity_min': stats['humidity_min'],
                 'humidity_max': stats['humidity_max'],
-                'feels_like_mean': stats['feels_like_mean'] + np.random.normal(0, 1),
-                'feels_like_min': stats['feels_like_min'],
-                'feels_like_max': stats['feels_like_max']
+                'wind_speed_mean': stats.get('wind_speed_mean', 2.0),
+                'wind_speed_max': stats.get('wind_speed_max', 5.0),
+                'rain_mean': stats.get('rain_mean', 0.0),
+                'rain_sum': stats.get('rain_sum', 0.0)
             })
 
         return pd.DataFrame(forecasts)
@@ -378,7 +380,7 @@ class ForecastPipeline:
     def _calculate_historical_climate_stats(self) -> dict:
         """Calcula estadísticas climáticas históricas por mes"""
         # Verificar si tenemos datos climáticos en el histórico
-        climate_cols = [col for col in self.df_historico.columns if 'temp' in col or 'humidity' in col or 'feels_like' in col]
+        climate_cols = [col for col in self.df_historico.columns if 'temp' in col or 'humidity' in col or 'wind_speed' in col or 'rain' in col]
 
         if not climate_cols:
             logger.warning("No hay datos climáticos en el histórico. Usando valores por defecto.")
@@ -413,20 +415,22 @@ class ForecastPipeline:
                 'humidity_mean': get_base_value(month_data, 'humidity_mean') or 70.0,
                 'humidity_min': get_base_value(month_data, 'humidity_min') or 50.0,
                 'humidity_max': get_base_value(month_data, 'humidity_max') or 90.0,
-                'feels_like_mean': get_base_value(month_data, 'feels_like_mean') or 22.0,
-                'feels_like_min': get_base_value(month_data, 'feels_like_min') or 16.0,
-                'feels_like_max': get_base_value(month_data, 'feels_like_max') or 28.0
+                'wind_speed_mean': get_base_value(month_data, 'wind_speed_mean') or 2.0,
+                'wind_speed_max': get_base_value(month_data, 'wind_speed_max') or 5.0,
+                'rain_mean': get_base_value(month_data, 'rain_mean') or 0.0,
+                'rain_sum': get_base_value(month_data, 'rain_sum') or 0.0
             }
 
         return stats
 
     def _get_default_climate_stats(self) -> dict:
         """Estadísticas climáticas por defecto para Medellín"""
-        # Medellín: Clima templado, poca variación anual
+        # Medellín/Antioquia: Clima templado, poca variación anual (API EPM)
         base_stats = {
             'temp_mean': 22.0, 'temp_min': 16.0, 'temp_max': 28.0, 'temp_std': 2.5,
             'humidity_mean': 70.0, 'humidity_min': 50.0, 'humidity_max': 90.0,
-            'feels_like_mean': 22.0, 'feels_like_min': 16.0, 'feels_like_max': 28.0
+            'wind_speed_mean': 2.0, 'wind_speed_max': 5.0,
+            'rain_mean': 0.5, 'rain_sum': 2.0
         }
 
         # Ajustes leves por mes (temporada de lluvias: Abril-Mayo, Octubre-Noviembre)
@@ -446,9 +450,10 @@ class ForecastPipeline:
                 'humidity_mean': base_stats['humidity_mean'] + adj * 3,
                 'humidity_min': base_stats['humidity_min'],
                 'humidity_max': base_stats['humidity_max'],
-                'feels_like_mean': base_stats['feels_like_mean'] - adj,
-                'feels_like_min': base_stats['feels_like_min'] - adj,
-                'feels_like_max': base_stats['feels_like_max'] - adj * 0.5
+                'wind_speed_mean': base_stats['wind_speed_mean'] + adj * 0.5,
+                'wind_speed_max': base_stats['wind_speed_max'] + adj,
+                'rain_mean': base_stats['rain_mean'] + adj * 2,
+                'rain_sum': base_stats['rain_sum'] + adj * 5
             }
 
         return stats
@@ -504,18 +509,16 @@ class ForecastPipeline:
         features['dayofyear_cos'] = np.cos(2 * np.pi * features['dayofyear'] / 365)
 
         # ========================================
-        # B. FEATURES CLIMÁTICAS
+        # B. FEATURES CLIMÁTICAS (SOLO API EPM: temp, humidity, wind_speed, rain)
         # ========================================
-        features['temp_mean_lag1d'] = climate_forecast['temp_mean']
-        features['temp_min_lag1d'] = climate_forecast['temp_min']
-        features['temp_max_lag1d'] = climate_forecast['temp_max']
-        features['temp_std_lag1d'] = climate_forecast['temp_std']
-        features['humidity_mean_lag1d'] = climate_forecast['humidity_mean']
-        features['humidity_min_lag1d'] = climate_forecast['humidity_min']
-        features['humidity_max_lag1d'] = climate_forecast['humidity_max']
-        features['feels_like_mean_lag1d'] = climate_forecast['feels_like_mean']
-        features['feels_like_min_lag1d'] = climate_forecast['feels_like_min']
-        features['feels_like_max_lag1d'] = climate_forecast['feels_like_max']
+        # IMPORTANTE: Los nombres deben coincidir EXACTAMENTE con feature_engineering.py
+        features['temp_lag1d'] = climate_forecast.get('temp_mean', climate_forecast.get('temp', 22.0))
+        features['humidity_lag1d'] = climate_forecast.get('humidity_mean', climate_forecast.get('humidity', 70.0))
+        features['wind_speed_lag1d'] = climate_forecast.get('wind_speed_mean', 2.0)
+        features['rain_lag1d'] = climate_forecast.get('rain_sum', 0.0)
+
+        # Feature derivada: día lluvioso (> 1mm de lluvia)
+        features['is_rainy_day'] = int(features['rain_lag1d'] > 1.0)
 
         # ========================================
         # C. FEATURES DE LAG (demanda histórica)
@@ -644,8 +647,10 @@ class ForecastPipeline:
         # ========================================
         # F. FEATURES DE INTERACCIÓN
         # ========================================
-        features['temp_x_is_weekend'] = features['temp_mean_lag1d'] * features['is_weekend']
-        features['temp_x_is_festivo'] = features['temp_mean_lag1d'] * features['is_festivo']
+        # IMPORTANTE: Usar nombres coherentes con las features climáticas simplificadas
+        features['temp_x_is_weekend'] = features['temp_lag1d'] * features['is_weekend']
+        features['temp_x_is_festivo'] = features['temp_lag1d'] * features['is_festivo']
+        features['humidity_x_is_weekend'] = features['humidity_lag1d'] * features['is_weekend']
         features['dayofweek_x_festivo'] = features['dayofweek'] * features['is_festivo']
         features['month_x_festivo'] = features['month'] * features['is_festivo']
         features['weekend_x_month'] = features['is_weekend'] * features['month']
@@ -690,7 +695,22 @@ class ForecastPipeline:
             logger.info(f"📅 Día {day_idx + 1}/{n_days}: {fecha.strftime('%Y-%m-%d %A')}")
 
             # Obtener pronóstico del clima para este día
-            climate = climate_forecast_df[climate_forecast_df['fecha'] == fecha].iloc[0].to_dict()
+            # Normalizar la fecha a solo la parte de fecha (sin hora) para comparación robusta
+            fecha_normalized = pd.Timestamp(fecha.date())
+            climate_forecast_df['fecha_normalized'] = pd.to_datetime(climate_forecast_df['fecha']).dt.normalize()
+
+            climate_rows = climate_forecast_df[climate_forecast_df['fecha_normalized'] == fecha_normalized]
+
+            if len(climate_rows) == 0:
+                logger.error(f"❌ No se encontró pronóstico climático para {fecha.date()}")
+                logger.error(f"   Fechas disponibles en forecast: {climate_forecast_df['fecha'].head().tolist()}")
+                logger.error(f"   Rango: {climate_forecast_df['fecha'].min()} a {climate_forecast_df['fecha'].max()}")
+                raise ValueError(f"Falta pronóstico climático para {fecha.date()}")
+
+            climate = climate_rows.iloc[0].to_dict()
+            # Remover columna temporal
+            if 'fecha_normalized' in climate:
+                del climate['fecha_normalized']
 
             # Construir features (pasando ultimo_dia_historico para filtrar rolling stats)
             features = self.build_features_for_date(fecha, climate, df_temp, ultimo_dia_historico)

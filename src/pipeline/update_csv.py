@@ -115,4 +115,5 @@ def full_update_csv(ucp):
     regresar_nuevo_csv(ucp)
     req_clima_api(ucp)
 
-full_update_csv('Atlantico')
+# Descomentar para actualizar manualmente
+# full_update_csv('Atlantico')
