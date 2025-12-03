@@ -34,7 +34,8 @@ class HourlyDisaggregationEngine:
         self,
         normal_disaggregator: Optional[HourlyDisaggregator] = None,
         special_disaggregator: Optional[SpecialDaysDisaggregator] = None,
-        auto_load: bool = True
+        auto_load: bool = True,
+        models_dir: Optional[str] = None
     ):
         """
         Inicializa el motor de desagregación.
@@ -43,8 +44,10 @@ class HourlyDisaggregationEngine:
             normal_disaggregator: Desagregador para días normales (opcional)
             special_disaggregator: Desagregador para días especiales (opcional)
             auto_load: Si True, intenta cargar modelos guardados automáticamente
+            models_dir: Directorio donde buscar los modelos (ej: 'models/Atlantico'). Si None, usa MODELS_DIR
         """
         self.calendar_classifier = CalendarClassifier()
+        self.models_dir = Path(models_dir) if models_dir else Path(MODELS_DIR)
 
         # Cargar o usar desagregadores proporcionados
         if auto_load:
@@ -68,12 +71,12 @@ class HourlyDisaggregationEngine:
             return instance
 
         try:
-            filepath = Path(MODELS_DIR) / filename
+            filepath = self.models_dir / filename
             if filepath.exists():
-                logger.info(f"Cargando {filename}...")
+                logger.info(f"Cargando {filename} desde {filepath}...")
                 return cls.load(filepath)
             else:
-                logger.warning(f"No se encontró {filename}, creando instancia nueva (sin entrenar)")
+                logger.warning(f"No se encontró {filename} en {self.models_dir}, creando instancia nueva (sin entrenar)")
                 return cls()
         except Exception as e:
             logger.error(f"Error cargando {filename}: {e}")
@@ -218,7 +221,8 @@ class HourlyDisaggregationEngine:
         data_path: Optional[Path] = None,
         n_clusters_normal: int = 35,
         n_clusters_special: int = 15,
-        save: bool = True
+        save: bool = True,
+        output_dir: Optional[str] = None
     ) -> None:
         """
         Entrena ambos desagregadores con datos históricos.
@@ -228,6 +232,7 @@ class HourlyDisaggregationEngine:
             n_clusters_normal: Clusters para días normales
             n_clusters_special: Clusters para días especiales
             save: Si True, guarda modelos entrenados
+            output_dir: Directorio donde guardar modelos (ej: 'models/Atlantico'). Si None, usa MODELS_DIR
         """
         logger.info("=" * 80)
         logger.info("ENTRENAMIENTO COMPLETO DEL SISTEMA DE DESAGREGACIÓN")
@@ -241,13 +246,18 @@ class HourlyDisaggregationEngine:
         logger.info(f"Cargando datos desde {data_path}...")
         df = pd.read_csv(data_path)
 
+        # Determinar directorio de salida
+        save_dir = Path(output_dir) if output_dir else self.models_dir
+
         # Entrenar desagregador normal
         logger.info("\n1. Entrenando desagregador para días normales...")
         self.normal_disaggregator = HourlyDisaggregator(n_clusters=n_clusters_normal)
         self.normal_disaggregator.fit(df, date_column='FECHA')
 
         if save:
-            self.normal_disaggregator.save()
+            output_path = save_dir / "hourly_disaggregator.pkl"
+            self.normal_disaggregator.save(output_path)
+            logger.info(f"   ✓ Guardado en {output_path}")
 
         # Entrenar desagregador especial
         logger.info("\n2. Entrenando desagregador para días especiales...")
@@ -255,7 +265,9 @@ class HourlyDisaggregationEngine:
         self.special_disaggregator.fit(df, date_column='FECHA')
 
         if save:
-            self.special_disaggregator.save()
+            output_path = save_dir / "special_days_disaggregator.pkl"
+            self.special_disaggregator.save(output_path)
+            logger.info(f"   ✓ Guardado en {output_path}")
 
         logger.info("\n" + "=" * 80)
         logger.info("✓ SISTEMA DE DESAGREGACIÓN ENTRENADO COMPLETAMENTE")

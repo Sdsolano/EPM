@@ -197,33 +197,37 @@ class HealthResponse(BaseModel):
 # FUNCIONES AUXILIARES
 # ============================================================================
 
-def check_model_exists() -> Tuple[bool, Optional[Path]]:
+def check_model_exists(ucp: str) -> Tuple[bool, Optional[Path]]:
     """
-    Verifica si existe un modelo entrenado en el registro
+    Verifica si existe un modelo entrenado en el registro para un UCP específico
+
+    Args:
+        ucp: Nombre del UCP (ej: 'Atlantico', 'Oriente')
 
     Returns:
         Tupla (existe: bool, path: Optional[Path])
     """
-    models_dir = Path('models/trained')
-    registry_path = Path('models/registry/champion_model.joblib')
+    models_dir = Path(f'models/{ucp}/trained')
+    registry_path = Path(f'models/{ucp}/registry/champion_model.joblib')
 
     # Prioridad 1: Modelo campeón en registry
     if registry_path.exists():
-        logger.info(f"✓ Modelo campeón encontrado: {registry_path}")
+        logger.info(f"✓ Modelo campeón encontrado para {ucp}: {registry_path}")
         return True, registry_path
 
     # Prioridad 2: Último modelo entrenado (por timestamp)
     if models_dir.exists():
         model_files = sorted(models_dir.glob('*.joblib'), key=lambda p: p.stat().st_mtime, reverse=True)
         if model_files:
-            logger.info(f"✓ Último modelo entrenado encontrado: {model_files[0]}")
+            logger.info(f"✓ Último modelo entrenado encontrado para {ucp}: {model_files[0]}")
             return True, model_files[0]
 
-    logger.warning("⚠ No se encontró ningún modelo entrenado")
+    logger.warning(f"⚠ No se encontró ningún modelo entrenado para {ucp}")
     return False, None
 
 
 def train_model_if_needed(df_with_features: pd.DataFrame,
+                         ucp: str,
                          force_retrain: bool = False) -> Tuple[Path, Dict[str, Any]]:
     """
     Entrena los 3 modelos (XGBoost, LightGBM, RandomForest) y selecciona automáticamente el mejor
@@ -231,12 +235,13 @@ def train_model_if_needed(df_with_features: pd.DataFrame,
 
     Args:
         df_with_features: DataFrame con features procesados
+        ucp: Nombre del UCP (ej: 'Atlantico', 'Oriente')
         force_retrain: Forzar reentrenamiento
 
     Returns:
         Tupla (model_path: Path, metrics: Dict con métricas del mejor modelo)
     """
-    model_exists, model_path = check_model_exists()
+    model_exists, model_path = check_model_exists(ucp)
 
     if model_exists and not force_retrain:
         logger.info("✓ Usando modelo existente (no se requiere entrenamiento)")
@@ -291,7 +296,7 @@ def train_model_if_needed(df_with_features: pd.DataFrame,
     logger.info(f"  Validation: {len(X_val)} registros")
 
     # Entrenar TODOS los modelos
-    logger.info("\n🚀 Entrenando los 3 modelos (XGBoost, LightGBM, RandomForest)...")
+    logger.info(f"\n🚀 Entrenando los 3 modelos para {ucp} (XGBoost, LightGBM, RandomForest)...")
 
     trainer = ModelTrainer(
         optimize_hyperparams=False,  # Deshabilitado para velocidad
@@ -314,36 +319,39 @@ def train_model_if_needed(df_with_features: pd.DataFrame,
         use_validation=True
     )
 
-    logger.info(f"✓ Mejor modelo seleccionado: {best_name.upper()}")
+    logger.info(f"✓ Mejor modelo seleccionado para {ucp}: {best_name.upper()}")
     logger.info(f"  MAPE: {best_results['val_metrics']['mape']:.4f}%")
     logger.info(f"  rMAPE: {best_results['val_metrics']['rmape']:.4f}")
     logger.info(f"  R²: {best_results['val_metrics']['r2']:.4f}")
     logger.info(f"  MAE: {best_results['val_metrics']['mae']:.2f}")
 
-    # Guardar TODOS los modelos en modo producción (sobrescribe archivos fijos)
-    saved_paths = trainer.save_all_models(overwrite=True)
+    # Guardar TODOS los modelos en directorio específico del UCP
+    models_dir = Path(f'models/{ucp}/trained')
+    models_dir.mkdir(parents=True, exist_ok=True)
+
+    saved_paths = trainer.save_all_models(overwrite=True, output_dir=str(models_dir))
 
     # Path del mejor modelo
     best_model_path = saved_paths[best_name]
     # Asegurar que es un Path object
     best_model_path = Path(best_model_path) if isinstance(best_model_path, str) else best_model_path
 
-    # Guardar el MEJOR modelo como campeón en registry
-    registry_dir = Path('models/registry')
+    # Guardar el MEJOR modelo como campeón en registry del UCP
+    registry_dir = Path(f'models/{ucp}/registry')
     registry_dir.mkdir(parents=True, exist_ok=True)
     champion_path = registry_dir / 'champion_model.joblib'
 
     import shutil
     shutil.copy(best_model_path, champion_path)
 
-    logger.info(f"\n✓ Modelos guardados en: models/trained/")
+    logger.info(f"\n✓ Modelos guardados en: models/{ucp}/trained/")
     for name, path in saved_paths.items():
         status = "🏆 CAMPEÓN" if name == best_name else ""
         # Asegurar que path es un Path object
         path_obj = Path(path) if isinstance(path, str) else path
         logger.info(f"    {name}: {path_obj.name} {status}")
 
-    logger.info(f"✓ Modelo campeón actualizado: {champion_path}")
+    logger.info(f"✓ Modelo campeón actualizado para {ucp}: {champion_path}")
     logger.info("="*80)
 
     # Métricas del mejor modelo
@@ -366,35 +374,43 @@ def train_model_if_needed(df_with_features: pd.DataFrame,
     return champion_path, metrics
 
 
-def check_hourly_disaggregation_trained() -> bool:
+def check_hourly_disaggregation_trained(ucp: str) -> bool:
     """
-    Verifica si el sistema de desagregación horaria está entrenado
+    Verifica si el sistema de desagregación horaria está entrenado para un UCP específico
+
+    Args:
+        ucp: Nombre del UCP (ej: 'Atlantico', 'Oriente')
 
     Returns:
         bool: True si está entrenado
     """
-    normal_path = Path('models/hourly_disaggregator.pkl')
-    special_path = Path('models/special_days_disaggregator.pkl')
+    normal_path = Path(f'models/{ucp}/hourly_disaggregator.pkl')
+    special_path = Path(f'models/{ucp}/special_days_disaggregator.pkl')
 
     return normal_path.exists() and special_path.exists()
 
 
-def train_hourly_disaggregation_if_needed(df_with_features: pd.DataFrame):
+def train_hourly_disaggregation_if_needed(df_with_features: pd.DataFrame, ucp: str):
     """
-    Entrena sistema de desagregación horaria si no existe
+    Entrena sistema de desagregación horaria si no existe para un UCP específico
 
     Args:
         df_with_features: DataFrame con datos históricos y features
+        ucp: Nombre del UCP (ej: 'Atlantico', 'Oriente')
     """
-    if check_hourly_disaggregation_trained():
-        logger.info("✓ Sistema de desagregación horaria ya está entrenado")
+    if check_hourly_disaggregation_trained(ucp):
+        logger.info(f"✓ Sistema de desagregación horaria ya está entrenado para {ucp}")
         return
 
     logger.info("="*80)
-    logger.info("🔧 ENTRENANDO SISTEMA DE DESAGREGACIÓN HORARIA")
+    logger.info(f"🔧 ENTRENANDO SISTEMA DE DESAGREGACIÓN HORARIA PARA {ucp}")
     logger.info("="*80)
 
     try:
+        # Crear directorio para modelos del UCP
+        models_ucp_dir = Path(f'models/{ucp}')
+        models_ucp_dir.mkdir(parents=True, exist_ok=True)
+
         engine = HourlyDisaggregationEngine(auto_load=False)
 
         # Normalizar nombre de columna de fecha
@@ -403,25 +419,27 @@ def train_hourly_disaggregation_if_needed(df_with_features: pd.DataFrame):
             df_temp.rename(columns={'FECHA': 'fecha'}, inplace=True)
 
         # Guardar temporal para entrenamiento
-        temp_path = Path('data/features/temp_for_training.csv')
+        temp_path = Path(f'data/features/{ucp}/temp_for_training.csv')
+        temp_path.parent.mkdir(parents=True, exist_ok=True)
         df_temp.to_csv(temp_path, index=False)
 
         engine.train_all(
             data_path=temp_path,
             n_clusters_normal=35,
             n_clusters_special=15,
-            save=True
+            save=True,
+            output_dir=str(models_ucp_dir)
         )
 
         # Eliminar temporal
         if temp_path.exists():
             temp_path.unlink()
 
-        logger.info("✓ Sistema de desagregación horaria entrenado")
+        logger.info(f"✓ Sistema de desagregación horaria entrenado para {ucp}")
         logger.info("="*80)
 
     except Exception as e:
-        logger.error(f"Error entrenando desagregación horaria: {e}")
+        logger.error(f"Error entrenando desagregación horaria para {ucp}: {e}")
         logger.warning("Se usarán placeholders para distribución horaria")
 
 
@@ -458,18 +476,23 @@ async def predict_demand(request: PredictRequest):
         # ====================================================================
         # PASO 1: EJECUTAR PIPELINE DE FEATURE ENGINEERING
         # ====================================================================
-        logger.info("\n📊 PASO 1: Procesando datos históricos y creando features...")
+        logger.info(f"\n📊 PASO 1: Procesando datos históricos y creando features para {request.ucp}...")
         full_update_csv(request.ucp)
         try:
+            # Paths dinámicos basados en UCP
+            power_data_path = f'data/raw/{request.ucp}/datos.csv'
+            weather_data_path = f'data/raw/{request.ucp}/clima_new.csv'
+            output_dir = Path(f'data/features/{request.ucp}')
+
             df_with_features, _ = run_automated_pipeline(
-                power_data_path='data/raw/datos.csv',
-                weather_data_path='data/raw/clima_new.csv',
+                power_data_path=power_data_path,
+                weather_data_path=weather_data_path,
                 start_date='2015-01-01',
                 end_date=request.end_date,
-                output_dir=Path('data/features')
+                output_dir=output_dir
             )
 
-            logger.info(f"✓ Pipeline completado: {len(df_with_features)} registros con {len(df_with_features.columns)} columnas")
+            logger.info(f"✓ Pipeline completado para {request.ucp}: {len(df_with_features)} registros con {len(df_with_features.columns)} columnas")
 
         except FileNotFoundError as e:
             raise HTTPException(
@@ -485,11 +508,12 @@ async def predict_demand(request: PredictRequest):
         # ====================================================================
         # PASO 2: VERIFICAR/ENTRENAR MODELO
         # ====================================================================
-        logger.info("\n🤖 PASO 2: Verificando modelo de predicción...")
+        logger.info(f"\n🤖 PASO 2: Verificando modelo de predicción para {request.ucp}...")
 
         try:
             model_path, train_metrics = train_model_if_needed(
                 df_with_features=df_with_features,
+                ucp=request.ucp,
                 force_retrain=request.force_retrain
             )
 
@@ -512,10 +536,10 @@ async def predict_demand(request: PredictRequest):
         # ====================================================================
         # PASO 3: VERIFICAR/ENTRENAR SISTEMA DE DESAGREGACIÓN HORARIA
         # ====================================================================
-        logger.info("\n⏰ PASO 3: Verificando sistema de desagregación horaria...")
+        logger.info(f"\n⏰ PASO 3: Verificando sistema de desagregación horaria para {request.ucp}...")
 
         try:
-            train_hourly_disaggregation_if_needed(df_with_features)
+            train_hourly_disaggregation_if_needed(df_with_features, request.ucp)
         except Exception as e:
             logger.warning(f"⚠ Error en desagregación horaria: {e}")
             logger.warning("Se continuará con placeholders")
@@ -526,11 +550,11 @@ async def predict_demand(request: PredictRequest):
         logger.info(f"\n🔮 PASO 4: Generando predicciones para {request.n_days} días...")
 
         try:
-            # Determinar ruta de datos climáticos RAW
-            # climate_raw_path = request.weather_data_path if request.weather_data_path else 'data/raw/clima_new.csv'
-            climate_raw_path= 'data/raw/clima_new.csv'
-            # CRITICO: Guardar datos procesados temporalmente
-            temp_features_path = 'data/features/temp_api_features.csv'
+            # Determinar ruta de datos climáticos RAW específicos del UCP
+            climate_raw_path = f'data/raw/{request.ucp}/clima_new.csv'
+
+            # CRITICO: Guardar datos procesados temporalmente en directorio del UCP
+            temp_features_path = f'data/features/{request.ucp}/temp_api_features.csv'
             df_with_features.to_csv(temp_features_path, index=False)
             
             # Log datos guardados (detectar columna de fecha)
@@ -548,7 +572,8 @@ async def predict_demand(request: PredictRequest):
                 historical_data_path=temp_features_path,
                 festivos_path='config/festivos.json',
                 enable_hourly_disaggregation=True,  # ← Habilitado con nuevo modelo
-                raw_climate_path=climate_raw_path
+                raw_climate_path=climate_raw_path,
+                ucp=request.ucp  # ← Pasar UCP al pipeline
             )
 
             # Generar predicciones
@@ -650,7 +675,7 @@ async def predict_demand(request: PredictRequest):
 
 
 @app.get("/health", response_model=HealthResponse, status_code=status.HTTP_200_OK)
-async def health_check():
+async def health_check(ucp: Optional[str] = None):
     """
     Health check del sistema
 
@@ -659,39 +684,57 @@ async def health_check():
     - Sistema de desagregación horaria
     - Datos históricos
 
+    Args:
+        ucp: (Opcional) Nombre del UCP para verificar estado específico
+
     Returns:
         HealthResponse con estado de componentes
     """
     components = {}
 
-    # Verificar modelo
-    model_exists, model_path = check_model_exists()
-    components['prediction_model'] = {
-        'status': 'healthy' if model_exists else 'missing',
-        'path': str(model_path) if model_path else None,
-        'last_modified': model_path.stat().st_mtime if model_path and model_path.exists() else None
-    }
-
-    # Verificar desagregación horaria
-    hourly_trained = check_hourly_disaggregation_trained()
-    components['hourly_disaggregation'] = {
-        'status': 'healthy' if hourly_trained else 'missing',
-        'models': {
-            'normal': Path('models/hourly_disaggregator.pkl').exists(),
-            'special': Path('models/special_days_disaggregator.pkl').exists()
+    if ucp:
+        # Verificar modelo específico del UCP
+        model_exists, model_path = check_model_exists(ucp)
+        components['prediction_model'] = {
+            'status': 'healthy' if model_exists else 'missing',
+            'ucp': ucp,
+            'path': str(model_path) if model_path else None,
+            'last_modified': model_path.stat().st_mtime if model_path and model_path.exists() else None
         }
-    }
 
-    # Verificar datos históricos
-    features_path = Path('data/features/data_with_features_latest.csv')
-    components['historical_data'] = {
-        'status': 'healthy' if features_path.exists() else 'missing',
-        'path': str(features_path) if features_path.exists() else None,
-        'last_modified': features_path.stat().st_mtime if features_path.exists() else None
-    }
+        # Verificar desagregación horaria del UCP
+        hourly_trained = check_hourly_disaggregation_trained(ucp)
+        components['hourly_disaggregation'] = {
+            'status': 'healthy' if hourly_trained else 'missing',
+            'ucp': ucp,
+            'models': {
+                'normal': Path(f'models/{ucp}/hourly_disaggregator.pkl').exists(),
+                'special': Path(f'models/{ucp}/special_days_disaggregator.pkl').exists()
+            }
+        }
+
+        # Verificar datos históricos del UCP
+        features_path = Path(f'data/features/{ucp}/data_with_features_latest.csv')
+        components['historical_data'] = {
+            'status': 'healthy' if features_path.exists() else 'missing',
+            'ucp': ucp,
+            'path': str(features_path) if features_path.exists() else None,
+            'last_modified': features_path.stat().st_mtime if features_path.exists() else None
+        }
+    else:
+        # Verificar sistema general (retrocompatibilidad)
+        # Buscar todos los UCPs disponibles
+        models_base = Path('models')
+        ucps_disponibles = [d.name for d in models_base.iterdir() if d.is_dir() and (d / 'registry').exists()]
+
+        components['system'] = {
+            'status': 'healthy',
+            'ucps_disponibles': ucps_disponibles,
+            'total_ucps': len(ucps_disponibles)
+        }
 
     # Estado general
-    all_healthy = all(comp['status'] == 'healthy' for comp in components.values())
+    all_healthy = all(comp.get('status') == 'healthy' for comp in components.values())
 
     return HealthResponse(
         status='healthy' if all_healthy else 'degraded',
@@ -702,43 +745,73 @@ async def health_check():
 
 
 @app.get("/models", status_code=status.HTTP_200_OK)
-async def list_models():
+async def list_models(ucp: Optional[str] = None):
     """
     Lista modelos disponibles en el sistema
+
+    Args:
+        ucp: (Opcional) Nombre del UCP para listar modelos específicos
 
     Returns:
         Dict con información de modelos entrenados
     """
-    models_dir = Path('models/trained')
-    registry_path = Path('models/registry/champion_model.joblib')
+    if ucp:
+        # Listar modelos de un UCP específico
+        models_dir = Path(f'models/{ucp}/trained')
+        registry_path = Path(f'models/{ucp}/registry/champion_model.joblib')
 
-    models = []
+        models = []
 
-    # Listar modelos entrenados
-    if models_dir.exists():
-        for model_file in sorted(models_dir.glob('*.joblib'), key=lambda p: p.stat().st_mtime, reverse=True):
-            models.append({
-                'name': model_file.stem,
-                'path': str(model_file),
-                'size_mb': round(model_file.stat().st_size / (1024 * 1024), 2),
-                'created': datetime.fromtimestamp(model_file.stat().st_mtime).isoformat()
-            })
+        # Listar modelos entrenados del UCP
+        if models_dir.exists():
+            for model_file in sorted(models_dir.glob('*.joblib'), key=lambda p: p.stat().st_mtime, reverse=True):
+                models.append({
+                    'name': model_file.stem,
+                    'path': str(model_file),
+                    'size_mb': round(model_file.stat().st_size / (1024 * 1024), 2),
+                    'created': datetime.fromtimestamp(model_file.stat().st_mtime).isoformat()
+                })
 
-    # Modelo campeón
-    champion = None
-    if registry_path.exists():
-        champion = {
-            'name': 'champion_model',
-            'path': str(registry_path),
-            'size_mb': round(registry_path.stat().st_size / (1024 * 1024), 2),
-            'created': datetime.fromtimestamp(registry_path.stat().st_mtime).isoformat()
+        # Modelo campeón del UCP
+        champion = None
+        if registry_path.exists():
+            champion = {
+                'name': 'champion_model',
+                'path': str(registry_path),
+                'size_mb': round(registry_path.stat().st_size / (1024 * 1024), 2),
+                'created': datetime.fromtimestamp(registry_path.stat().st_mtime).isoformat()
+            }
+
+        return {
+            'ucp': ucp,
+            'total_models': len(models),
+            'champion': champion,
+            'models': models
         }
+    else:
+        # Listar todos los UCPs y sus modelos
+        models_base = Path('models')
+        ucps_info = []
 
-    return {
-        'total_models': len(models),
-        'champion': champion,
-        'models': models
-    }
+        if models_base.exists():
+            for ucp_dir in models_base.iterdir():
+                if ucp_dir.is_dir():
+                    registry_path = ucp_dir / 'registry' / 'champion_model.joblib'
+                    trained_dir = ucp_dir / 'trained'
+
+                    if registry_path.exists() or (trained_dir.exists() and list(trained_dir.glob('*.joblib'))):
+                        ucps_info.append({
+                            'ucp': ucp_dir.name,
+                            'has_champion': registry_path.exists(),
+                            'trained_models': len(list(trained_dir.glob('*.joblib'))) if trained_dir.exists() else 0,
+                            'champion_path': str(registry_path) if registry_path.exists() else None
+                        })
+
+        return {
+            'total_ucps': len(ucps_info),
+            'ucps': ucps_info,
+            'note': 'Use ?ucp=<name> to get detailed info for a specific UCP'
+        }
 
 
 @app.get("/", status_code=status.HTTP_200_OK)

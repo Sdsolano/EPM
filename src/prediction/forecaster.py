@@ -57,7 +57,8 @@ class ForecastPipeline:
                  historical_data_path: str = 'data/features/data_with_features_latest.csv',
                  festivos_path: str = 'data/calendario_festivos.json',
                  enable_hourly_disaggregation: bool = True,
-                 raw_climate_path: str = 'data/raw/clima_new.csv'):
+                 raw_climate_path: str = 'data/raw/clima_new.csv',
+                 ucp: str = None):
         """
         Inicializa el pipeline
 
@@ -67,12 +68,14 @@ class ForecastPipeline:
             festivos_path: Ruta al calendario de festivos
             enable_hourly_disaggregation: Si True, habilita desagregación horaria automática
             raw_climate_path: Ruta a datos climáticos RAW (para obtener datos reales más allá del entrenamiento)
+            ucp: Nombre del UCP (ej: 'Atlantico', 'Oriente') para cargar modelos específicos
         """
         self.model_path = model_path
         self.historical_data_path = historical_data_path
         self.festivos_path = festivos_path
         self.enable_hourly_disaggregation = enable_hourly_disaggregation
         self.raw_climate_path = raw_climate_path
+        self.ucp = ucp
 
         # Cargar modelo
         logger.info(f"Cargando modelo desde {model_path}")
@@ -136,10 +139,19 @@ class ForecastPipeline:
 
         # Sistema de desagregación horaria
         if self.enable_hourly_disaggregation and HourlyDisaggregationEngine is not None:
-            logger.info("Inicializando sistema de desagregación horaria...")
+            logger.info(f"Inicializando sistema de desagregación horaria{' para ' + self.ucp if self.ucp else ''}...")
             try:
-                self.hourly_engine = HourlyDisaggregationEngine(auto_load=True)
-                logger.info("✓ Sistema de desagregación horaria cargado")
+                # Cargar modelos desde directorio específico del UCP si está disponible
+                if self.ucp:
+                    models_dir = f'models/{self.ucp}'
+                    self.hourly_engine = HourlyDisaggregationEngine(
+                        auto_load=True,
+                        models_dir=models_dir
+                    )
+                    logger.info(f"✓ Sistema de desagregación horaria cargado para {self.ucp}")
+                else:
+                    self.hourly_engine = HourlyDisaggregationEngine(auto_load=True)
+                    logger.info("✓ Sistema de desagregación horaria cargado")
             except Exception as e:
                 logger.warning(f"⚠ No se pudo cargar sistema de desagregación: {e}")
                 logger.warning("  Se usarán placeholders para distribución horaria")

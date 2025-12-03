@@ -14,7 +14,8 @@
       "Bash(curl:*)",
       "Bash(cat:*)",
       "Bash(tasklist:*)",
-      "Read(//c/**)"
+      "Read(//c/**)",
+      "Bash(tee:*)"
     ],
     "deny": [],
     "ask": []
