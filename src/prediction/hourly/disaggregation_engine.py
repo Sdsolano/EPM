@@ -245,10 +245,15 @@ class HourlyDisaggregationEngine:
 
         logger.info(f"Cargando datos desde {data_path}...")
         df = pd.read_csv(data_path)
-
+        print('d'*50)
+        df.dropna(inplace=True)
+        print(df.head())
+        print('d'*50)
         # Determinar directorio de salida
         save_dir = Path(output_dir) if output_dir else self.models_dir
-
+        print('c'*20)
+        print(save_dir)
+        print('c'*20)
         # Entrenar desagregador normal
         logger.info("\n1. Entrenando desagregador para días normales...")
         self.normal_disaggregator = HourlyDisaggregator(n_clusters=n_clusters_normal)
@@ -256,6 +261,9 @@ class HourlyDisaggregationEngine:
 
         if save:
             output_path = save_dir / "hourly_disaggregator.pkl"
+            print('a'*20)
+            print(output_path)
+            print('a'*20)
             self.normal_disaggregator.save(output_path)
             logger.info(f"   ✓ Guardado en {output_path}")
 
@@ -266,6 +274,9 @@ class HourlyDisaggregationEngine:
 
         if save:
             output_path = save_dir / "special_days_disaggregator.pkl"
+            print('b'*20)
+            print(output_path)
+            print('b'*20)
             self.special_disaggregator.save(output_path)
             logger.info(f"   ✓ Guardado en {output_path}")
 

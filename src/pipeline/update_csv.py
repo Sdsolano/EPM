@@ -3,6 +3,7 @@ import json
 from datetime import datetime, timedelta
 import requests
 import os
+from pathlib import Path
 #-- 1. Función para convertir JSON a CSV y guardarlo ---
 def json_to_csv_power(data_json,ucp_name,archivo,variable="Demanda_Real",clasificador="NORMAL"):
     df = pd.DataFrame(data_json["data"])
@@ -39,7 +40,10 @@ def json_to_csv_power(data_json,ucp_name,archivo,variable="Demanda_Real",clasifi
     print("CSV generado correctamente.")
 #-- 2. Función para solicitar datos y generar CSV ---
 def regresar_nuevo_csv(ucp):
-    path=f'../../data/raw/{ucp}/datos.csv'
+    
+
+    path = Path(__file__).resolve().parent.parent.parent / "data" / "raw" / ucp / "datos.csv"
+
     if not os.path.exists(path):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         df=pd.DataFrame([],columns=["UCP","VARIABLE","FECHA","Clasificador interno","TIPO DIA"]+[f'P{i}' for i in range(1,25)]+["TOTAL"])
@@ -87,7 +91,8 @@ def regresar_nuevo_csv_clima(response_json,ruta):
     df_concat.to_csv(ruta, index=False)
 #-- 4. Función para solicitar datos climáticos y generar CSV ---
 def req_clima_api(ucp):
-    path=f'../../data/raw/{ucp}/clima_new.csv'
+    path = Path(__file__).resolve().parent.parent.parent / "data" / "raw" / ucp / "clima_new.csv"
+
     if not os.path.exists(path):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         df=pd.DataFrame(columns=["fecha","periodo","p_t","p_h","p_v","p_i"])
@@ -114,6 +119,6 @@ def req_clima_api(ucp):
 def full_update_csv(ucp):
     regresar_nuevo_csv(ucp)
     req_clima_api(ucp)
-
+    print("Proceso de actualización de CSV completado.")
 # Descomentar para actualizar manualmente
 # full_update_csv('Atlantico')

@@ -1,0 +1,201 @@
+{
+  "xgboost": {
+    "model_type": "xgboost",
+    "train_metrics": {
+      "mape": 1.3033434445644292,
+      "correlation": 0.9920531478798463,
+      "rmape": 1.3137838908629573,
+      "mae": 200.52015459735574,
+      "rmse": 265.50309658031716,
+      "r2": 0.9837281537933985
+    },
+    "training_time": 1.047,
+    "hyperparameters": {
+      "objective": "reg:squarederror",
+      "base_score": null,
+      "booster": null,
+      "callbacks": null,
+      "colsample_bylevel": null,
+      "colsample_bynode": null,
+      "colsample_bytree": 0.8,
+      "device": null,
+      "early_stopping_rounds": null,
+      "enable_categorical": false,
+      "eval_metric": null,
+      "feature_types": null,
+      "feature_weights": null,
+      "gamma": 0.1,
+      "grow_policy": null,
+      "importance_type": null,
+      "interaction_constraints": null,
+      "learning_rate": 0.05,
+      "max_bin": null,
+      "max_cat_threshold": null,
+      "max_cat_to_onehot": null,
+      "max_delta_step": null,
+      "max_depth": 6,
+      "max_leaves": null,
+      "min_child_weight": 3,
+      "missing": NaN,
+      "monotone_constraints": null,
+      "multi_strategy": null,
+      "n_estimators": 300,
+      "n_jobs": -1,
+      "num_parallel_tree": null,
+      "random_state": 42,
+      "reg_alpha": 0.1,
+      "reg_lambda": 1.0,
+      "sampling_method": null,
+      "scale_pos_weight": null,
+      "subsample": 0.8,
+      "tree_method": "hist",
+      "validate_parameters": null,
+      "verbosity": null
+    },
+    "n_features": 48,
+    "n_train_samples": 2080,
+    "val_metrics": {
+      "mape": 3.5624822885631042,
+      "correlation": 0.8382896619809603,
+      "rmape": 4.249703235209427,
+      "mae": 587.3508253358925,
+      "rmse": 754.56497277971,
+      "r2": 0.6884818922241761
+    },
+    "cv_results": {
+      "mean_rmape": 6.931749351607473,
+      "std_rmape": 3.241071472574047,
+      "mean_mape": 5.604152051706659,
+      "std_mape": 2.3887221310645876,
+      "all_rmapes": [
+        11.421238109462095,
+        5.48712024895144,
+        3.8868896964088813
+      ],
+      "all_mapes": [
+        8.915828797412495,
+        4.525884434796268,
+        3.3707429229112145
+      ]
+    }
+  },
+  "lightgbm": {
+    "model_type": "lightgbm",
+    "train_metrics": {
+      "mape": 2.28528525862725,
+      "correlation": 0.9737312699102761,
+      "rmape": 2.3469362946902446,
+      "mae": 347.66100250968066,
+      "rmse": 477.35422258741886,
+      "r2": 0.9474007941977945
+    },
+    "training_time": 0.281397,
+    "hyperparameters": {
+      "boosting_type": "gbdt",
+      "class_weight": null,
+      "colsample_bytree": 0.8,
+      "importance_type": "split",
+      "learning_rate": 0.05,
+      "max_depth": 6,
+      "min_child_samples": 20,
+      "min_child_weight": 0.001,
+      "min_split_gain": 0.0,
+      "n_estimators": 300,
+      "n_jobs": -1,
+      "num_leaves": 31,
+      "objective": null,
+      "random_state": 42,
+      "reg_alpha": 0.1,
+      "reg_lambda": 1.0,
+      "subsample": 0.8,
+      "subsample_for_bin": 200000,
+      "subsample_freq": 0,
+      "verbose": -1,
+      "force_col_wise": true
+    },
+    "n_features": 48,
+    "n_train_samples": 2080,
+    "val_metrics": {
+      "mape": 3.263413453310067,
+      "correlation": 0.8580732859943931,
+      "rmape": 3.8031873344340323,
+      "mae": 534.6575662976757,
+      "rmse": 702.9254898687572,
+      "r2": 0.7296610651984159
+    },
+    "cv_results": {
+      "mean_rmape": 6.872643365441998,
+      "std_rmape": 3.494519152123805,
+      "mean_mape": 5.505919107372033,
+      "std_mape": 2.475949255335236,
+      "all_rmapes": [
+        11.740818403364598,
+        5.175542960988529,
+        3.701568731972865
+      ],
+      "all_mapes": [
+        8.9519263703809,
+        4.320746796971402,
+        3.2450841547637936
+      ]
+    }
+  },
+  "randomforest": {
+    "model_type": "randomforest",
+    "train_metrics": {
+      "mape": 2.025507621428169,
+      "correlation": 0.9784758337476454,
+      "rmape": 2.070064023625707,
+      "mae": 302.4143637645789,
+      "rmse": 440.51561663914634,
+      "r2": 0.9552059564610771
+    },
+    "training_time": 0.620109,
+    "hyperparameters": {
+      "bootstrap": true,
+      "ccp_alpha": 0.0,
+      "criterion": "squared_error",
+      "max_depth": 15,
+      "max_features": "sqrt",
+      "max_leaf_nodes": null,
+      "max_samples": null,
+      "min_impurity_decrease": 0.0,
+      "min_samples_leaf": 2,
+      "min_samples_split": 5,
+      "min_weight_fraction_leaf": 0.0,
+      "monotonic_cst": null,
+      "n_estimators": 200,
+      "n_jobs": -1,
+      "oob_score": false,
+      "random_state": 42,
+      "verbose": 0,
+      "warm_start": false
+    },
+    "n_features": 48,
+    "n_train_samples": 2080,
+    "val_metrics": {
+      "mape": 3.4140989267423087,
+      "correlation": 0.8469076839840239,
+      "rmape": 4.031252746086446,
+      "mae": 558.5322087461435,
+      "rmse": 722.5957310975913,
+      "r2": 0.7143193687128744
+    },
+    "cv_results": {
+      "mean_rmape": 7.210651249852174,
+      "std_rmape": 3.1160446842385685,
+      "mean_mape": 5.937770529643473,
+      "std_mape": 2.415200473087284,
+      "all_rmapes": [
+        11.49179560277106,
+        5.974763539579813,
+        4.165394607205648
+      ],
+      "all_mapes": [
+        9.251194880236332,
+        4.99918389523476,
+        3.5629328134593248
+      ]
+    }
+  }
+}

@@ -27,6 +27,7 @@ from src.models.trainer import ModelTrainer
 from src.prediction.forecaster import ForecastPipeline
 from src.prediction.hourly import HourlyDisaggregationEngine
 from src.pipeline.update_csv import full_update_csv
+from fastapi.concurrency import run_in_threadpool
 # Configuración de logging
 logging.basicConfig(
     level=logging.INFO,
@@ -415,8 +416,8 @@ def train_hourly_disaggregation_if_needed(df_with_features: pd.DataFrame, ucp: s
 
         # Normalizar nombre de columna de fecha
         df_temp = df_with_features.copy()
-        if 'FECHA' in df_temp.columns:
-            df_temp.rename(columns={'FECHA': 'fecha'}, inplace=True)
+        # if 'FECHA' in df_temp.columns:
+        #     df_temp.rename(columns={'FECHA': 'fecha'}, inplace=True)
 
         # Guardar temporal para entrenamiento
         temp_path = Path(f'data/features/{ucp}/temp_for_training.csv')
@@ -477,7 +478,7 @@ async def predict_demand(request: PredictRequest):
         # PASO 1: EJECUTAR PIPELINE DE FEATURE ENGINEERING
         # ====================================================================
         logger.info(f"\n📊 PASO 1: Procesando datos históricos y creando features para {request.ucp}...")
-        full_update_csv(request.ucp)
+        await run_in_threadpool(full_update_csv, request.ucp)
         try:
             # Paths dinámicos basados en UCP
             power_data_path = f'data/raw/{request.ucp}/datos.csv'
@@ -539,7 +540,10 @@ async def predict_demand(request: PredictRequest):
         logger.info(f"\n⏰ PASO 3: Verificando sistema de desagregación horaria para {request.ucp}...")
 
         try:
+            logger.info(f"   Verificando si desagregación horaria está entrenada...")
             train_hourly_disaggregation_if_needed(df_with_features, request.ucp)
+            logger.info(f"Desagrecacion horaria se ejecuta")
+
         except Exception as e:
             logger.warning(f"⚠ Error en desagregación horaria: {e}")
             logger.warning("Se continuará con placeholders")
