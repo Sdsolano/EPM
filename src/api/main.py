@@ -155,6 +155,7 @@ class HourlyPrediction(BaseModel):
 
 class PredictResponse(BaseModel):
     """Schema para respuesta de predicción"""
+    should_retrain: bool = Field(..., description="Indica si se recomienda reentrenar el modelo")
     status: str = Field(..., description="Estado de la operación")
     message: str = Field(..., description="Mensaje descriptivo")
     metadata: Dict[str, Any] = Field(..., description="Metadata de la predicción")
@@ -554,6 +555,157 @@ async def predict_demand(request: PredictRequest):
         logger.info(f"\n🔮 PASO 4: Generando predicciones para {request.n_days} días...")
 
         try:
+
+
+
+
+
+
+
+
+
+
+
+
+            climate_raw_path = f'data/raw/{request.ucp}/clima_new.csv'
+
+
+
+
+
+
+            df_try_features = df_with_features.copy()
+            max_date = df_with_features['FECHA'].max()
+            cut_date = max_date - pd.Timedelta(days=30)
+
+            df_try_features = df_try_features[df_try_features['FECHA'] <= cut_date]        
+            temp_try_path = f'data/features/{request.ucp}/temp_api_features_try.csv'
+            df_try_features.to_csv(temp_try_path, index=False)
+            # Inicializar pipeline de predicción con datos RECIEN PROCESADOS
+            pipeline = ForecastPipeline(
+                model_path=str(model_path),
+                historical_data_path=temp_try_path,
+                festivos_path='config/festivos.json',
+                enable_hourly_disaggregation=True,  # ← Habilitado con nuevo modelo
+                raw_climate_path=climate_raw_path,
+                ucp=request.ucp  # ← Pasar UCP al pipeline
+            )
+            check_date=max_date - pd.Timedelta(days=29)
+            # Generar predicciones
+            predictions_df = pipeline.predict_next_n_days(n_days=30)
+            print('predictions_df'*40)
+            print(predictions_df)
+            
+            mape_check_df=df_with_features[df_with_features['FECHA'] >= check_date] 
+            print(mape_check_df)  
+            
+            import numpy as np
+            
+
+            # --- Alinear por fecha ---
+            pred = predictions_df.copy()
+            real = mape_check_df.copy()
+
+            pred['fecha'] = pd.to_datetime(pred['fecha'])
+            real['FECHA'] = pd.to_datetime(real['FECHA'])
+
+            # Unimos por fecha
+            df_merged = pred.merge(real, left_on='fecha', right_on='FECHA', how='inner')
+            print(df_merged.columns)
+            # ============================
+            # 1️⃣ MAPE TOTAL (demanda_predicha vs TOTAL)
+            # ============================
+            df_merged['abs_pct_error'] = np.abs(
+                (df_merged['demanda_predicha'] - df_merged['TOTAL']) *100/ df_merged['TOTAL']
+            )
+            # cols_xy = ["FECHA"]+[f'P{i}_x' for i in range(1, 25)] + [f'P{i}_y' for i in range(1, 25)]
+        
+
+            # def calcular_mape_por_dia(df):
+            #     resultados = []
+
+            #     for idx, row in df.iterrows():
+            #         fecha = row["FECHA"]
+
+            #         # Extraer columnas reales y predichas
+            #         reales = [row[f"P{h}_x"] for h in range(1,25)]
+            #         preds  = [row[f"P{h}_y"] for h in range(1,25)]
+
+            #         # Calcular MAPE hora por hora
+            #         errores = []
+            #         for r, p in zip(reales, preds):
+            #             if r == 0:
+            #                 errores.append(0)
+            #             else:
+            #                 errores.append(abs((r - p) / r))
+
+            #         mape_dia = np.mean(errores) * 100
+
+            #         resultados.append({
+            #             "FECHA": fecha,
+            #             "MAPE": mape_dia
+            #         })
+
+            #     return pd.DataFrame(resultados)
+
+            # df_mape = calcular_mape_por_dia(df_merged[cols_xy])
+            #print(df_mape)
+            print(df_merged[['abs_pct_error','demanda_predicha','TOTAL']])
+            # Condición: error mayor al 5%
+            cond = df_merged['abs_pct_error'] > 5
+            print(cond)
+            # Detectar si hay dos True consecutivos
+            hay_dos_seguidos = (cond & cond.shift(1)).any()
+
+            print("¿Hay dos errores seguidos > 5%?:", hay_dos_seguidos)
+            
+            mape_total = df_merged['abs_pct_error'].mean()
+            print("MAPE TOTAL:", mape_total)
+            print("MAPE TOTAL:", df_merged[['abs_pct_error','demanda_predicha','TOTAL']])
+
+            print('df_try_features'*40)
+            if hay_dos_seguidos or mape_total > 5:
+                should_retrain = True
+                logger.info(f"⚠ MAPE TOTAL: {mape_total:.2f}%. Se requiere reentrenamiento.")
+            else:
+                should_retrain = False
+                logger.info(f"✓ MAPE TOTAL: {mape_total:.2f}%. No se requiere reentrenamiento.")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
             # Determinar ruta de datos climáticos RAW específicos del UCP
             climate_raw_path = f'data/raw/{request.ucp}/clima_new.csv'
 
@@ -565,6 +717,7 @@ async def predict_demand(request: PredictRequest):
             if 'FECHA' in df_with_features.columns:
                 logger.info(f"   Última fecha en temp: {df_with_features['FECHA'].max()}")
             elif 'fecha' in df_with_features.columns:
+                print('fecha'*40)
                 logger.info(f"   Última fecha en temp: {df_with_features['fecha'].max()}")
             else:
                 logger.info(f"   Datos guardados en temp (sin columna fecha explícita)")
@@ -661,6 +814,7 @@ async def predict_demand(request: PredictRequest):
         logger.info("="*80 + "\n")
 
         return PredictResponse(
+            should_retrain=should_retrain,
             status="success",
             message=f"Predicción generada exitosamente para {request.n_days} días con granularidad horaria",
             metadata=metadata,
