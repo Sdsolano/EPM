@@ -155,7 +155,7 @@ class HourlyPrediction(BaseModel):
 
 class PredictResponse(BaseModel):
     """Schema para respuesta de predicción"""
-    should_retrain: bool = Field(..., description="Indica si se recomienda reentrenar el modelo")
+    should_retrain: str = Field(..., description="Indica si se recomienda reentrenar el modelo")
     status: str = Field(..., description="Estado de la operación")
     message: str = Field(..., description="Mensaje descriptivo")
     metadata: Dict[str, Any] = Field(..., description="Metadata de la predicción")
@@ -664,11 +664,16 @@ async def predict_demand(request: PredictRequest):
             print("MAPE TOTAL:", df_merged[['abs_pct_error','demanda_predicha','TOTAL']])
 
             print('df_try_features'*40)
-            if hay_dos_seguidos or mape_total > 5:
-                should_retrain = True
+            if mape_total > 5 and hay_dos_seguidos:
+                should_retrain = 'Error mensual superior al 5% y dos dias consecutivos con error superior al 5%'
+            
+            elif hay_dos_seguidos :
+                should_retrain = 'Dos dias consecutivos con error superior al 5%'
                 logger.info(f"⚠ MAPE TOTAL: {mape_total:.2f}%. Se requiere reentrenamiento.")
+            elif mape_total > 5:
+                should_retrain = 'Error mensual superior al 5%'
             else:
-                should_retrain = False
+                should_retrain = 'Error dentro de límites aceptables'
                 logger.info(f"✓ MAPE TOTAL: {mape_total:.2f}%. No se requiere reentrenamiento.")
 
 
