@@ -131,7 +131,8 @@ class SpecialDaysDisaggregator:
     def predict_hourly_profile(
         self,
         date: pd.Timestamp,
-        total_daily: float
+        total_daily: float,
+        return_normalized: bool = False
     ) -> Optional[np.ndarray]:
         """
         Predice la distribución horaria para un día especial.
@@ -139,9 +140,13 @@ class SpecialDaysDisaggregator:
         Args:
             date: Fecha del festivo
             total_daily: Demanda total del día
+            return_normalized: Si True, retorna también el patrón normalizado (senda)
 
         Returns:
-            Array de 24 elementos con distribución horaria, o None si no es especial
+            Si return_normalized=False:
+                Array de 24 elementos con distribución horaria, o None si no es especial
+            Si return_normalized=True:
+                Tupla (hourly_prediction, normalized_profile, cluster_id) o None
         """
         if not self.is_fitted:
             raise RuntimeError("El modelo no ha sido entrenado. Ejecute .fit() primero.")
@@ -165,7 +170,11 @@ class SpecialDaysDisaggregator:
         # Escalar por total diario
         hourly_prediction = normalized_profile * total_daily
 
-        return hourly_prediction
+        if return_normalized:
+            return hourly_prediction, normalized_profile, cluster_id
+        else:
+            # Mantener retrocompatibilidad
+            return hourly_prediction
 
     def get_special_days_list(self) -> pd.DataFrame:
         """

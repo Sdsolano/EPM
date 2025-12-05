@@ -74,10 +74,10 @@ class PipelineLogger:
         console_handler.setFormatter(formatter)
         logger.addHandler(console_handler)
 
-        # Handler de archivo
+        # Handler de archivo (sobrescribe archivo fijo)
         if self.log_to_file:
-            log_file = LOGS_DIR / f"{self.name}_{datetime.now().strftime('%Y%m%d')}.log"
-            file_handler = logging.FileHandler(log_file, encoding='utf-8')
+            log_file = LOGS_DIR / f"{self.name}_latest.log"
+            file_handler = logging.FileHandler(log_file, mode='w', encoding='utf-8')  # mode='w' sobrescribe
             file_handler.setLevel(logging.DEBUG)
             file_handler.setFormatter(formatter)
             logger.addHandler(file_handler)
@@ -377,10 +377,20 @@ class PipelineExecutionTracker:
             'logger_summary': self.logger.get_summary()
         }
 
-    def save_report(self):
-        """Guarda el reporte de ejecución"""
+    def save_report(self, keep_history: bool = False):
+        """
+        Guarda el reporte de ejecución
+
+        Args:
+            keep_history: Si True, usa timestamp. Si False, sobrescribe archivo fijo
+        """
         report = self.get_execution_report()
-        filename = f"pipeline_execution_{self.pipeline_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+
+        if keep_history:
+            filename = f"pipeline_execution_{self.pipeline_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        else:
+            filename = f"pipeline_execution_{self.pipeline_name}_latest.json"
+
         filepath = LOGS_DIR / filename
 
         with open(filepath, 'w', encoding='utf-8') as f:

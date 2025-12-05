@@ -22,7 +22,8 @@ except ImportError:
     HOUR_PERIODS = [f'P{i}' for i in range(1, 25)]
     ROLLING_WINDOWS = [7, 14, 28]
     DEMAND_LAGS = [1, 7, 14]
-    KEY_WEATHER_VARS = ['temp', 'humidity', 'feels_like', 'clouds_all', 'wind_speed']
+    # SOLO variables disponibles en la API de EPM (clima_new.csv)
+    KEY_WEATHER_VARS = ['temp', 'humidity', 'wind_speed', 'rain']
 
 # Configurar logging
 logging.basicConfig(
@@ -230,62 +231,66 @@ class FeatureEngineer:
     def _integrate_weather_features(self,
                                     power_df: pd.DataFrame,
                                     weather_df: pd.DataFrame) -> pd.DataFrame:
-        """Integra características climáticas con datos de demanda"""
+        """
+        Integra características climáticas con datos de demanda
+
+        Usa SOLO las 4 variables disponibles en la API de EPM:
+        - temp (p_t): Temperatura
+        - humidity (p_h): Humedad
+        - wind_speed (p_v): Velocidad del viento
+        - rain (p_i): Precipitación
+        """
         # Preparar datos meteorológicos
         weather = weather_df.copy()
 
-        # Detectar si los datos ya están en formato diario (con FECHA) o horario (con dt_iso)
-        if 'FECHA' in weather.columns:
-            # Ya tenemos datos diarios del conector
-            weather['FECHA_DATE'] = pd.to_datetime(weather['FECHA']).dt.date
-            weather_daily = weather.copy()
+        # El conector ya convierte los datos a formato diario
+        if 'FECHA' not in weather.columns:
+            raise ValueError("Los datos meteorológicos deben tener columna 'FECHA' después del conector")
 
-            # Renombrar para mantener consistencia con el resto del código
-            # El conector ya proporciona: temp_mean, temp_min, temp_max, temp_std, etc.
-            # No es necesario agregar nuevamente
-        elif 'dt_iso' in weather.columns:
-            # Datos horarios - necesitan agregación
-            weather['FECHA'] = pd.to_datetime(weather['dt_iso']).dt.date
-
-            # Agregar datos meteorológicos por día (promedios, min, max)
-            weather_daily = weather.groupby('FECHA').agg({
-                'temp': ['mean', 'min', 'max', 'std'],
-                'humidity': ['mean', 'min', 'max'],
-                'feels_like': ['mean', 'min', 'max'],
-                'wind_speed': ['mean', 'max'],
-                'clouds_all': 'mean',
-                'pressure': 'mean'
-            }).reset_index()
-
-            # Aplanar nombres de columnas
-            weather_daily.columns = ['_'.join(col).strip('_') for col in weather_daily.columns.values]
-            weather_daily.rename(columns={'FECHA': 'FECHA_DATE'}, inplace=True)
-        else:
-            raise ValueError("Datos meteorológicos deben contener columna 'FECHA' (diario) o 'dt_iso' (horario)")
-
+        weather['FECHA_DATE'] = pd.to_datetime(weather['FECHA']).dt.date
         power_df['FECHA_DATE'] = power_df['FECHA'].dt.date
 
         # Merge con datos de demanda
-        df = power_df.merge(weather_daily, on='FECHA_DATE', how='left')
+        df = power_df.merge(weather, on='FECHA_DATE', how='left', suffixes=('', '_weather'))
+
+        # Remover columna FECHA duplicada del merge
+        if 'FECHA_weather' in df.columns:
+            df = df.drop(columns=['FECHA_weather'])
 
         # Lags de variables climáticas (día anterior)
-        weather_cols = [col for col in df.columns if any(var in col for var in KEY_WEATHER_VARS)]
-        for col in weather_cols[:10]:  # Limitar para no crear demasiadas features
-            lag_col = f'{col}_lag1d'
-            df[lag_col] = df[col].shift(1)
-            self.feature_names.append(lag_col)
+        # SOLO usar las 4 variables disponibles: temp_mean, humidity_mean, wind_speed_mean, rain_mean
+        lag_weather_vars = {
+            'temp_mean': 'temp_lag1d',
+            'humidity_mean': 'humidity_lag1d',
+            'wind_speed_mean': 'wind_speed_lag1d',
+            'rain_mean': 'rain_lag1d'
+        }
 
-        # Features de interacción clima-calendario
+        for base_col, lag_col in lag_weather_vars.items():
+            if base_col in df.columns:
+                df[lag_col] = df[base_col].shift(1)
+                self.feature_names.append(lag_col)
+
+        # Features de interacción clima-calendario (SOLO con variables disponibles)
         if 'temp_mean' in df.columns:
             df['temp_x_is_weekend'] = df['temp_mean'] * df['is_weekend']
             df['temp_x_is_festivo'] = df['temp_mean'] * df.get('is_festivo', 0)
             self.feature_names.extend(['temp_x_is_weekend', 'temp_x_is_festivo'])
 
+        if 'humidity_mean' in df.columns:
+            df['humidity_x_is_weekend'] = df['humidity_mean'] * df['is_weekend']
+            self.feature_names.append('humidity_x_is_weekend')
+
+        if 'rain_sum' in df.columns:
+            df['is_rainy_day'] = (df['rain_sum'] > 1.0).astype(int)  # Más de 1mm = día lluvioso
+            self.feature_names.append('is_rainy_day')
+
         # Limpiar columna temporal
         df = df.drop(columns=['FECHA_DATE'])
 
         weather_feature_count = len([col for col in df.columns if any(var in col for var in KEY_WEATHER_VARS)])
-        logger.info(f"   ✓ {weather_feature_count} features climáticas integradas")
+        logger.info(f"   ✓ {weather_feature_count} features climáticas integradas (API EPM)")
+        logger.info(f"   Variables usadas: temp, humidity, wind_speed, rain")
 
         return df
 

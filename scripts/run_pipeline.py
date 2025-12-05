@@ -19,7 +19,7 @@ def main():
     # Configurar rutas
     base_dir = Path(__file__).parent.parent
     power_path = base_dir / "data" / "raw" / "datos.csv"
-    weather_path = base_dir / "data" / "raw" / "data_cleaned_weather.csv"
+    weather_path = base_dir / "data" / "raw" / "clima_new.csv"  # API EPM format
 
     # Verificar que los archivos existen
     if not power_path.exists():

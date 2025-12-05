@@ -27,6 +27,7 @@ from src.models.trainer import ModelTrainer
 from src.prediction.forecaster import ForecastPipeline
 from src.prediction.hourly import HourlyDisaggregationEngine
 from src.pipeline.update_csv import full_update_csv
+from fastapi.concurrency import run_in_threadpool
 # Configuración de logging
 logging.basicConfig(
     level=logging.INFO,
@@ -54,8 +55,8 @@ class PredictRequest(BaseModel):
     #     description="Ruta al archivo CSV con datos históricos de demanda hasta el día anterior"
     # )
     # weather_data_path: Optional[str] = Field(
-    #     'data/raw/clima.csv',
-    #     description="Ruta al archivo CSV con datos meteorológicos (se usa por defecto data/raw/clima.csv si no se especifica)"
+    #     'data/raw/clima_new.csv',
+    #     description="Ruta al archivo CSV con datos meteorológicos API EPM (se usa por defecto data/raw/clima_new.csv si no se especifica)"
     # )
     # start_date: Optional[str] = Field(
     #     None,
@@ -112,6 +113,7 @@ class HourlyPrediction(BaseModel):
     is_festivo: bool = Field(..., description="Si es día festivo")
     is_weekend: bool = Field(..., description="Si es fin de semana")
     metodo_desagregacion: str = Field(..., description="Método usado (normal/special)")
+    cluster_id: Optional[int] = Field(None, description="ID del cluster usado para desagregación")
     P1: float = Field(..., description="Período 1 (00:00-01:00) en MWh")
     P2: float = Field(..., description="Período 2 (01:00-02:00) en MWh")
     P3: float = Field(..., description="Período 3 (02:00-03:00) en MWh")
@@ -136,6 +138,30 @@ class HourlyPrediction(BaseModel):
     P22: float = Field(..., description="Período 22 (21:00-22:00) en MWh")
     P23: float = Field(..., description="Período 23 (22:00-23:00) en MWh")
     P24: float = Field(..., description="Período 24 (23:00-00:00) en MWh")
+    senda_P1: Optional[float] = Field(None, description="Senda normalizada P1 (patrón cluster 0-1)")
+    senda_P2: Optional[float] = Field(None, description="Senda normalizada P2 (patrón cluster 0-1)")
+    senda_P3: Optional[float] = Field(None, description="Senda normalizada P3 (patrón cluster 0-1)")
+    senda_P4: Optional[float] = Field(None, description="Senda normalizada P4 (patrón cluster 0-1)")
+    senda_P5: Optional[float] = Field(None, description="Senda normalizada P5 (patrón cluster 0-1)")
+    senda_P6: Optional[float] = Field(None, description="Senda normalizada P6 (patrón cluster 0-1)")
+    senda_P7: Optional[float] = Field(None, description="Senda normalizada P7 (patrón cluster 0-1)")
+    senda_P8: Optional[float] = Field(None, description="Senda normalizada P8 (patrón cluster 0-1)")
+    senda_P9: Optional[float] = Field(None, description="Senda normalizada P9 (patrón cluster 0-1)")
+    senda_P10: Optional[float] = Field(None, description="Senda normalizada P10 (patrón cluster 0-1)")
+    senda_P11: Optional[float] = Field(None, description="Senda normalizada P11 (patrón cluster 0-1)")
+    senda_P12: Optional[float] = Field(None, description="Senda normalizada P12 (patrón cluster 0-1)")
+    senda_P13: Optional[float] = Field(None, description="Senda normalizada P13 (patrón cluster 0-1)")
+    senda_P14: Optional[float] = Field(None, description="Senda normalizada P14 (patrón cluster 0-1)")
+    senda_P15: Optional[float] = Field(None, description="Senda normalizada P15 (patrón cluster 0-1)")
+    senda_P16: Optional[float] = Field(None, description="Senda normalizada P16 (patrón cluster 0-1)")
+    senda_P17: Optional[float] = Field(None, description="Senda normalizada P17 (patrón cluster 0-1)")
+    senda_P18: Optional[float] = Field(None, description="Senda normalizada P18 (patrón cluster 0-1)")
+    senda_P19: Optional[float] = Field(None, description="Senda normalizada P19 (patrón cluster 0-1)")
+    senda_P20: Optional[float] = Field(None, description="Senda normalizada P20 (patrón cluster 0-1)")
+    senda_P21: Optional[float] = Field(None, description="Senda normalizada P21 (patrón cluster 0-1)")
+    senda_P22: Optional[float] = Field(None, description="Senda normalizada P22 (patrón cluster 0-1)")
+    senda_P23: Optional[float] = Field(None, description="Senda normalizada P23 (patrón cluster 0-1)")
+    senda_P24: Optional[float] = Field(None, description="Senda normalizada P24 (patrón cluster 0-1)")
 
     class Config:
         schema_extra = {
@@ -154,6 +180,7 @@ class HourlyPrediction(BaseModel):
 
 class PredictResponse(BaseModel):
     """Schema para respuesta de predicción"""
+    should_retrain: str = Field(..., description="Indica si se recomienda reentrenar el modelo")
     status: str = Field(..., description="Estado de la operación")
     message: str = Field(..., description="Mensaje descriptivo")
     metadata: Dict[str, Any] = Field(..., description="Metadata de la predicción")
@@ -197,33 +224,37 @@ class HealthResponse(BaseModel):
 # FUNCIONES AUXILIARES
 # ============================================================================
 
-def check_model_exists() -> Tuple[bool, Optional[Path]]:
+def check_model_exists(ucp: str) -> Tuple[bool, Optional[Path]]:
     """
-    Verifica si existe un modelo entrenado en el registro
+    Verifica si existe un modelo entrenado en el registro para un UCP específico
+
+    Args:
+        ucp: Nombre del UCP (ej: 'Atlantico', 'Oriente')
 
     Returns:
         Tupla (existe: bool, path: Optional[Path])
     """
-    models_dir = Path('models/trained')
-    registry_path = Path('models/registry/champion_model.joblib')
+    models_dir = Path(f'models/{ucp}/trained')
+    registry_path = Path(f'models/{ucp}/registry/champion_model.joblib')
 
     # Prioridad 1: Modelo campeón en registry
     if registry_path.exists():
-        logger.info(f"✓ Modelo campeón encontrado: {registry_path}")
+        logger.info(f"✓ Modelo campeón encontrado para {ucp}: {registry_path}")
         return True, registry_path
 
     # Prioridad 2: Último modelo entrenado (por timestamp)
     if models_dir.exists():
         model_files = sorted(models_dir.glob('*.joblib'), key=lambda p: p.stat().st_mtime, reverse=True)
         if model_files:
-            logger.info(f"✓ Último modelo entrenado encontrado: {model_files[0]}")
+            logger.info(f"✓ Último modelo entrenado encontrado para {ucp}: {model_files[0]}")
             return True, model_files[0]
 
-    logger.warning("⚠ No se encontró ningún modelo entrenado")
+    logger.warning(f"⚠ No se encontró ningún modelo entrenado para {ucp}")
     return False, None
 
 
 def train_model_if_needed(df_with_features: pd.DataFrame,
+                         ucp: str,
                          force_retrain: bool = False) -> Tuple[Path, Dict[str, Any]]:
     """
     Entrena los 3 modelos (XGBoost, LightGBM, RandomForest) y selecciona automáticamente el mejor
@@ -231,12 +262,13 @@ def train_model_if_needed(df_with_features: pd.DataFrame,
 
     Args:
         df_with_features: DataFrame con features procesados
+        ucp: Nombre del UCP (ej: 'Atlantico', 'Oriente')
         force_retrain: Forzar reentrenamiento
 
     Returns:
         Tupla (model_path: Path, metrics: Dict con métricas del mejor modelo)
     """
-    model_exists, model_path = check_model_exists()
+    model_exists, model_path = check_model_exists(ucp)
 
     if model_exists and not force_retrain:
         logger.info("✓ Usando modelo existente (no se requiere entrenamiento)")
@@ -291,7 +323,7 @@ def train_model_if_needed(df_with_features: pd.DataFrame,
     logger.info(f"  Validation: {len(X_val)} registros")
 
     # Entrenar TODOS los modelos
-    logger.info("\n🚀 Entrenando los 3 modelos (XGBoost, LightGBM, RandomForest)...")
+    logger.info(f"\n🚀 Entrenando los 3 modelos para {ucp} (XGBoost, LightGBM, RandomForest)...")
 
     trainer = ModelTrainer(
         optimize_hyperparams=False,  # Deshabilitado para velocidad
@@ -314,37 +346,39 @@ def train_model_if_needed(df_with_features: pd.DataFrame,
         use_validation=True
     )
 
-    logger.info(f"✓ Mejor modelo seleccionado: {best_name.upper()}")
+    logger.info(f"✓ Mejor modelo seleccionado para {ucp}: {best_name.upper()}")
     logger.info(f"  MAPE: {best_results['val_metrics']['mape']:.4f}%")
     logger.info(f"  rMAPE: {best_results['val_metrics']['rmape']:.4f}")
     logger.info(f"  R²: {best_results['val_metrics']['r2']:.4f}")
     logger.info(f"  MAE: {best_results['val_metrics']['mae']:.2f}")
 
-    # Guardar TODOS los modelos (para registro histórico)
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    saved_paths = trainer.save_all_models(timestamp=timestamp)
+    # Guardar TODOS los modelos en directorio específico del UCP
+    models_dir = Path(f'models/{ucp}/trained')
+    models_dir.mkdir(parents=True, exist_ok=True)
+
+    saved_paths = trainer.save_all_models(overwrite=True, output_dir=str(models_dir))
 
     # Path del mejor modelo
     best_model_path = saved_paths[best_name]
     # Asegurar que es un Path object
     best_model_path = Path(best_model_path) if isinstance(best_model_path, str) else best_model_path
 
-    # Guardar el MEJOR modelo como campeón en registry
-    registry_dir = Path('models/registry')
+    # Guardar el MEJOR modelo como campeón en registry del UCP
+    registry_dir = Path(f'models/{ucp}/registry')
     registry_dir.mkdir(parents=True, exist_ok=True)
     champion_path = registry_dir / 'champion_model.joblib'
 
     import shutil
     shutil.copy(best_model_path, champion_path)
 
-    logger.info(f"\n✓ Modelos guardados en: models/trained/")
+    logger.info(f"\n✓ Modelos guardados en: models/{ucp}/trained/")
     for name, path in saved_paths.items():
         status = "🏆 CAMPEÓN" if name == best_name else ""
         # Asegurar que path es un Path object
         path_obj = Path(path) if isinstance(path, str) else path
         logger.info(f"    {name}: {path_obj.name} {status}")
 
-    logger.info(f"✓ Modelo campeón actualizado: {champion_path}")
+    logger.info(f"✓ Modelo campeón actualizado para {ucp}: {champion_path}")
     logger.info("="*80)
 
     # Métricas del mejor modelo
@@ -367,62 +401,72 @@ def train_model_if_needed(df_with_features: pd.DataFrame,
     return champion_path, metrics
 
 
-def check_hourly_disaggregation_trained() -> bool:
+def check_hourly_disaggregation_trained(ucp: str) -> bool:
     """
-    Verifica si el sistema de desagregación horaria está entrenado
+    Verifica si el sistema de desagregación horaria está entrenado para un UCP específico
+
+    Args:
+        ucp: Nombre del UCP (ej: 'Atlantico', 'Oriente')
 
     Returns:
         bool: True si está entrenado
     """
-    normal_path = Path('models/hourly_disaggregator.pkl')
-    special_path = Path('models/special_days_disaggregator.pkl')
+    normal_path = Path(f'models/{ucp}/hourly_disaggregator.pkl')
+    special_path = Path(f'models/{ucp}/special_days_disaggregator.pkl')
 
     return normal_path.exists() and special_path.exists()
 
 
-def train_hourly_disaggregation_if_needed(df_with_features: pd.DataFrame):
+def train_hourly_disaggregation_if_needed(df_with_features: pd.DataFrame, ucp: str):
     """
-    Entrena sistema de desagregación horaria si no existe
+    Entrena sistema de desagregación horaria si no existe para un UCP específico
 
     Args:
         df_with_features: DataFrame con datos históricos y features
+        ucp: Nombre del UCP (ej: 'Atlantico', 'Oriente')
     """
-    if check_hourly_disaggregation_trained():
-        logger.info("✓ Sistema de desagregación horaria ya está entrenado")
+    if check_hourly_disaggregation_trained(ucp):
+        logger.info(f"✓ Sistema de desagregación horaria ya está entrenado para {ucp}")
         return
 
     logger.info("="*80)
-    logger.info("🔧 ENTRENANDO SISTEMA DE DESAGREGACIÓN HORARIA")
+    logger.info(f"🔧 ENTRENANDO SISTEMA DE DESAGREGACIÓN HORARIA PARA {ucp}")
     logger.info("="*80)
 
     try:
+        # Crear directorio para modelos del UCP
+        models_ucp_dir = Path(f'models/{ucp}')
+        models_ucp_dir.mkdir(parents=True, exist_ok=True)
+
         engine = HourlyDisaggregationEngine(auto_load=False)
 
         # Normalizar nombre de columna de fecha
         df_temp = df_with_features.copy()
-        if 'FECHA' in df_temp.columns:
-            df_temp.rename(columns={'FECHA': 'fecha'}, inplace=True)
+        # if 'FECHA' in df_temp.columns:
+        #     df_temp.rename(columns={'FECHA': 'fecha'}, inplace=True)
 
         # Guardar temporal para entrenamiento
-        temp_path = Path('data/features/temp_for_training.csv')
+        temp_path = Path(f'data/features/{ucp}/temp_for_training.csv')
+        temp_path.parent.mkdir(parents=True, exist_ok=True)
         df_temp.to_csv(temp_path, index=False)
 
         engine.train_all(
             data_path=temp_path,
             n_clusters_normal=35,
             n_clusters_special=15,
-            save=True
+            save=True,
+            output_dir=str(models_ucp_dir)
         )
 
         # Eliminar temporal
         if temp_path.exists():
             temp_path.unlink()
 
-        logger.info("✓ Sistema de desagregación horaria entrenado")
+        logger.info(f"✓ Sistema de desagregación horaria entrenado para {ucp}")
         logger.info("="*80)
 
     except Exception as e:
-        logger.error(f"Error entrenando desagregación horaria: {e}")
+        logger.error(f"Error entrenando desagregación horaria para {ucp}: {e}")
         logger.warning("Se usarán placeholders para distribución horaria")
 
 
@@ -459,19 +503,23 @@ async def predict_demand(request: PredictRequest):
         # ====================================================================
         # PASO 1: EJECUTAR PIPELINE DE FEATURE ENGINEERING
         # ====================================================================
-        logger.info("\n📊 PASO 1: Procesando datos históricos y creando features...")
+        logger.info(f"\n📊 PASO 1: Procesando datos históricos y creando features para {request.ucp}...")
         await run_in_threadpool(full_update_csv, request.ucp)
-
         try:
+            # Paths dinámicos basados en UCP
+            power_data_path = f'data/raw/{request.ucp}/datos.csv'
+            weather_data_path = f'data/raw/{request.ucp}/clima_new.csv'
+            output_dir = Path(f'data/features/{request.ucp}')
+
             df_with_features, _ = run_automated_pipeline(
-                power_data_path='data/raw/datos.csv',
-                weather_data_path='data/raw/clima.csv',
+                power_data_path=power_data_path,
+                weather_data_path=weather_data_path,
                 start_date='2015-01-01',
                 end_date=request.end_date,
-                output_dir=Path('data/features')
+                output_dir=output_dir
             )
 
-            logger.info(f"✓ Pipeline completado: {len(df_with_features)} registros con {len(df_with_features.columns)} columnas")
+            logger.info(f"✓ Pipeline completado para {request.ucp}: {len(df_with_features)} registros con {len(df_with_features.columns)} columnas")
 
         except FileNotFoundError as e:
             raise HTTPException(
@@ -487,11 +535,12 @@ async def predict_demand(request: PredictRequest):
         # ====================================================================
         # PASO 2: VERIFICAR/ENTRENAR MODELO
         # ====================================================================
-        logger.info("\n🤖 PASO 2: Verificando modelo de predicción...")
+        logger.info(f"\n🤖 PASO 2: Verificando modelo de predicción para {request.ucp}...")
 
         try:
             model_path, train_metrics = train_model_if_needed(
                 df_with_features=df_with_features,
+                ucp=request.ucp,
                 force_retrain=request.force_retrain
             )
 
@@ -514,10 +563,13 @@ async def predict_demand(request: PredictRequest):
         # ====================================================================
         # PASO 3: VERIFICAR/ENTRENAR SISTEMA DE DESAGREGACIÓN HORARIA
         # ====================================================================
-        logger.info("\n⏰ PASO 3: Verificando sistema de desagregación horaria...")
+        logger.info(f"\n⏰ PASO 3: Verificando sistema de desagregación horaria para {request.ucp}...")
 
         try:
-            train_hourly_disaggregation_if_needed(df_with_features)
+            logger.info(f"   Verificando si desagregación horaria está entrenada...")
+            train_hourly_disaggregation_if_needed(df_with_features, request.ucp)
+            logger.info(f"Desagrecacion horaria se ejecuta")
+
         except Exception as e:
             logger.warning(f"⚠ Error en desagregación horaria: {e}")
             logger.warning("Se continuará con placeholders")
@@ -528,17 +580,174 @@ async def predict_demand(request: PredictRequest):
         logger.info(f"\n🔮 PASO 4: Generando predicciones para {request.n_days} días...")
 
         try:
-            # Determinar ruta de datos climáticos RAW
-            # climate_raw_path = request.weather_data_path if request.weather_data_path else 'data/raw/clima.csv'
-            climate_raw_path= 'data/raw/clima.csv'
-            # CRITICO: Guardar datos procesados temporalmente
-            temp_features_path = 'data/features/temp_api_features.csv'
+
+
+
+
+
+
+
+
+
+
+
+
+            climate_raw_path = f'data/raw/{request.ucp}/clima_new.csv'
+
+
+
+
+
+
+            df_try_features = df_with_features.copy()
+            max_date = df_with_features['FECHA'].max()
+            cut_date = max_date - pd.Timedelta(days=30)
+
+            df_try_features = df_try_features[df_try_features['FECHA'] <= cut_date]        
+            temp_try_path = f'data/features/{request.ucp}/temp_api_features_try.csv'
+            df_try_features.to_csv(temp_try_path, index=False)
+            # Inicializar pipeline de predicción con datos RECIEN PROCESADOS
+            pipeline = ForecastPipeline(
+                model_path=str(model_path),
+                historical_data_path=temp_try_path,
+                festivos_path='config/festivos.json',
+                enable_hourly_disaggregation=True,  # ← Habilitado con nuevo modelo
+                raw_climate_path=climate_raw_path,
+                ucp=request.ucp  # ← Pasar UCP al pipeline
+            )
+            check_date=max_date - pd.Timedelta(days=29)
+            # Generar predicciones
+            predictions_df = pipeline.predict_next_n_days(n_days=30)
+            print('predictions_df'*40)
+            print(predictions_df)
+            
+            mape_check_df=df_with_features[df_with_features['FECHA'] >= check_date] 
+            print(mape_check_df)  
+            
+            import numpy as np
+            
+
+            # --- Alinear por fecha ---
+            pred = predictions_df.copy()
+            real = mape_check_df.copy()
+
+            pred['fecha'] = pd.to_datetime(pred['fecha'])
+            real['FECHA'] = pd.to_datetime(real['FECHA'])
+
+            # Unimos por fecha
+            df_merged = pred.merge(real, left_on='fecha', right_on='FECHA', how='inner')
+            print(df_merged.columns)
+            # ============================
+            # 1️⃣ MAPE TOTAL (demanda_predicha vs TOTAL)
+            # ============================
+            df_merged['abs_pct_error'] = np.abs(
+                (df_merged['demanda_predicha'] - df_merged['TOTAL']) *100/ df_merged['TOTAL']
+            )
+            # cols_xy = ["FECHA"]+[f'P{i}_x' for i in range(1, 25)] + [f'P{i}_y' for i in range(1, 25)]
+        
+
+            # def calcular_mape_por_dia(df):
+            #     resultados = []
+
+            #     for idx, row in df.iterrows():
+            #         fecha = row["FECHA"]
+
+            #         # Extraer columnas reales y predichas
+            #         reales = [row[f"P{h}_x"] for h in range(1,25)]
+            #         preds  = [row[f"P{h}_y"] for h in range(1,25)]
+
+            #         # Calcular MAPE hora por hora
+            #         errores = []
+            #         for r, p in zip(reales, preds):
+            #             if r == 0:
+            #                 errores.append(0)
+            #             else:
+            #                 errores.append(abs((r - p) / r))
+
+            #         mape_dia = np.mean(errores) * 100
+
+            #         resultados.append({
+            #             "FECHA": fecha,
+            #             "MAPE": mape_dia
+            #         })
+
+            #     return pd.DataFrame(resultados)
+
+            # df_mape = calcular_mape_por_dia(df_merged[cols_xy])
+            #print(df_mape)
+            print(df_merged[['abs_pct_error','demanda_predicha','TOTAL']])
+            # Condición: error mayor al 5%
+            cond = df_merged['abs_pct_error'] > 5
+            print(cond)
+            # Detectar si hay dos True consecutivos
+            hay_dos_seguidos = (cond & cond.shift(1)).any()
+
+            print("¿Hay dos errores seguidos > 5%?:", hay_dos_seguidos)
+            
+            mape_total = df_merged['abs_pct_error'].mean()
+            print("MAPE TOTAL:", mape_total)
+            print("MAPE TOTAL:", df_merged[['abs_pct_error','demanda_predicha','TOTAL']])
+
+            print('df_try_features'*40)
+            if mape_total > 5 and hay_dos_seguidos:
+                should_retrain = 'Error mensual superior al 5% y dos dias consecutivos con error superior al 5%'
+            
+            elif hay_dos_seguidos :
+                should_retrain = 'Dos dias consecutivos con error superior al 5%'
+                logger.info(f"⚠ MAPE TOTAL: {mape_total:.2f}%. Se requiere reentrenamiento.")
+            elif mape_total > 5:
+                should_retrain = 'Error mensual superior al 5%'
+            else:
+                should_retrain = 'Error dentro de límites aceptables'
+                logger.info(f"✓ MAPE TOTAL: {mape_total:.2f}%. No se requiere reentrenamiento.")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            # Determinar ruta de datos climáticos RAW específicos del UCP
+            climate_raw_path = f'data/raw/{request.ucp}/clima_new.csv'
+
+            # CRITICO: Guardar datos procesados temporalmente en directorio del UCP
+            temp_features_path = f'data/features/{request.ucp}/temp_api_features.csv'
             df_with_features.to_csv(temp_features_path, index=False)
             
             # Log datos guardados (detectar columna de fecha)
             if 'FECHA' in df_with_features.columns:
                 logger.info(f"   Última fecha en temp: {df_with_features['FECHA'].max()}")
             elif 'fecha' in df_with_features.columns:
+                print('fecha'*40)
                 logger.info(f"   Última fecha en temp: {df_with_features['fecha'].max()}")
             else:
                 logger.info(f"   Datos guardados en temp (sin columna fecha explícita)")
@@ -550,7 +759,8 @@ async def predict_demand(request: PredictRequest):
                 historical_data_path=temp_features_path,
                 festivos_path='config/festivos.json',
                 enable_hourly_disaggregation=True,  # ← Habilitado con nuevo modelo
-                raw_climate_path=climate_raw_path
+                raw_climate_path=climate_raw_path,
+                ucp=request.ucp  # ← Pasar UCP al pipeline
             )
 
             # Generar predicciones
@@ -585,7 +795,7 @@ async def predict_demand(request: PredictRequest):
                 fecha = pd.to_datetime(row['fecha'])
 
                 # Determinar método de desagregación usado
-                metodo = 'special' if row.get('is_festivo', False) else 'normal'
+                metodo = row.get('metodo_desagregacion', 'special' if row.get('is_festivo', False) else 'normal')
 
                 prediction = {
                     'fecha': fecha.strftime('%Y-%m-%d'),
@@ -594,7 +804,9 @@ async def predict_demand(request: PredictRequest):
                     'is_festivo': bool(row.get('is_festivo', False)),
                     'is_weekend': bool(row.get('is_weekend', False)),
                     'metodo_desagregacion': metodo,
-                    **{f'P{i}': round(float(row.get(f'P{i}', 0)), 2) for i in range(1, 25)}
+                    'cluster_id': int(row['cluster_id']) if pd.notna(row.get('cluster_id')) else None,
+                    **{f'P{i}': round(float(row.get(f'P{i}', 0)), 2) for i in range(1, 25)},
+                    **{f'senda_P{i}': round(float(row.get(f'senda_P{i}', 0)), 6) if pd.notna(row.get(f'senda_P{i}')) else None for i in range(1, 25)}
                 }
 
                 predictions_list.append(prediction)
@@ -634,6 +846,7 @@ async def predict_demand(request: PredictRequest):
         logger.info("="*80 + "\n")
 
         return PredictResponse(
+            should_retrain=should_retrain,
             status="success",
             message=f"Predicción generada exitosamente para {request.n_days} días con granularidad horaria",
             metadata=metadata,
@@ -652,7 +865,7 @@ async def predict_demand(request: PredictRequest):
 
 
 @app.get("/health", response_model=HealthResponse, status_code=status.HTTP_200_OK)
-async def health_check():
+async def health_check(ucp: Optional[str] = None):
     """
     Health check del sistema
 
@@ -661,39 +874,57 @@ async def health_check():
     - Sistema de desagregación horaria
     - Datos históricos
 
+    Args:
+        ucp: (Opcional) Nombre del UCP para verificar estado específico
+
     Returns:
         HealthResponse con estado de componentes
     """
     components = {}
 
-    # Verificar modelo
-    model_exists, model_path = check_model_exists()
-    components['prediction_model'] = {
-        'status': 'healthy' if model_exists else 'missing',
-        'path': str(model_path) if model_path else None,
-        'last_modified': model_path.stat().st_mtime if model_path and model_path.exists() else None
-    }
-
-    # Verificar desagregación horaria
-    hourly_trained = check_hourly_disaggregation_trained()
-    components['hourly_disaggregation'] = {
-        'status': 'healthy' if hourly_trained else 'missing',
-        'models': {
-            'normal': Path('models/hourly_disaggregator.pkl').exists(),
-            'special': Path('models/special_days_disaggregator.pkl').exists()
+    if ucp:
+        # Verificar modelo específico del UCP
+        model_exists, model_path = check_model_exists(ucp)
+        components['prediction_model'] = {
+            'status': 'healthy' if model_exists else 'missing',
+            'ucp': ucp,
+            'path': str(model_path) if model_path else None,
+            'last_modified': model_path.stat().st_mtime if model_path and model_path.exists() else None
         }
-    }
 
-    # Verificar datos históricos
-    features_path = Path('data/features/data_with_features_latest.csv')
-    components['historical_data'] = {
-        'status': 'healthy' if features_path.exists() else 'missing',
-        'path': str(features_path) if features_path.exists() else None,
-        'last_modified': features_path.stat().st_mtime if features_path.exists() else None
-    }
+        # Verificar desagregación horaria del UCP
+        hourly_trained = check_hourly_disaggregation_trained(ucp)
+        components['hourly_disaggregation'] = {
+            'status': 'healthy' if hourly_trained else 'missing',
+            'ucp': ucp,
+            'models': {
+                'normal': Path(f'models/{ucp}/hourly_disaggregator.pkl').exists(),
+                'special': Path(f'models/{ucp}/special_days_disaggregator.pkl').exists()
+            }
+        }
+
+        # Verificar datos históricos del UCP
+        features_path = Path(f'data/features/{ucp}/data_with_features_latest.csv')
+        components['historical_data'] = {
+            'status': 'healthy' if features_path.exists() else 'missing',
+            'ucp': ucp,
+            'path': str(features_path) if features_path.exists() else None,
+            'last_modified': features_path.stat().st_mtime if features_path.exists() else None
+        }
+    else:
+        # Verificar sistema general (retrocompatibilidad)
+        # Buscar todos los UCPs disponibles
+        models_base = Path('models')
+        ucps_disponibles = [d.name for d in models_base.iterdir() if d.is_dir() and (d / 'registry').exists()]
+
+        components['system'] = {
+            'status': 'healthy',
+            'ucps_disponibles': ucps_disponibles,
+            'total_ucps': len(ucps_disponibles)
+        }
 
     # Estado general
-    all_healthy = all(comp['status'] == 'healthy' for comp in components.values())
+    all_healthy = all(comp.get('status') == 'healthy' for comp in components.values())
 
     return HealthResponse(
         status='healthy' if all_healthy else 'degraded',
@@ -704,43 +935,73 @@ async def health_check():
 
 
 @app.get("/models", status_code=status.HTTP_200_OK)
-async def list_models():
+async def list_models(ucp: Optional[str] = None):
     """
     Lista modelos disponibles en el sistema
+
+    Args:
+        ucp: (Opcional) Nombre del UCP para listar modelos específicos
 
     Returns:
         Dict con información de modelos entrenados
     """
-    models_dir = Path('models/trained')
-    registry_path = Path('models/registry/champion_model.joblib')
+    if ucp:
+        # Listar modelos de un UCP específico
+        models_dir = Path(f'models/{ucp}/trained')
+        registry_path = Path(f'models/{ucp}/registry/champion_model.joblib')
 
-    models = []
+        models = []
 
-    # Listar modelos entrenados
-    if models_dir.exists():
-        for model_file in sorted(models_dir.glob('*.joblib'), key=lambda p: p.stat().st_mtime, reverse=True):
-            models.append({
-                'name': model_file.stem,
-                'path': str(model_file),
-                'size_mb': round(model_file.stat().st_size / (1024 * 1024), 2),
-                'created': datetime.fromtimestamp(model_file.stat().st_mtime).isoformat()
-            })
+        # Listar modelos entrenados del UCP
+        if models_dir.exists():
+            for model_file in sorted(models_dir.glob('*.joblib'), key=lambda p: p.stat().st_mtime, reverse=True):
+                models.append({
+                    'name': model_file.stem,
+                    'path': str(model_file),
+                    'size_mb': round(model_file.stat().st_size / (1024 * 1024), 2),
+                    'created': datetime.fromtimestamp(model_file.stat().st_mtime).isoformat()
+                })
 
-    # Modelo campeón
-    champion = None
-    if registry_path.exists():
-        champion = {
-            'name': 'champion_model',
-            'path': str(registry_path),
-            'size_mb': round(registry_path.stat().st_size / (1024 * 1024), 2),
-            'created': datetime.fromtimestamp(registry_path.stat().st_mtime).isoformat()
+        # Modelo campeón del UCP
+        champion = None
+        if registry_path.exists():
+            champion = {
+                'name': 'champion_model',
+                'path': str(registry_path),
+                'size_mb': round(registry_path.stat().st_size / (1024 * 1024), 2),
+                'created': datetime.fromtimestamp(registry_path.stat().st_mtime).isoformat()
+            }
+
+        return {
+            'ucp': ucp,
+            'total_models': len(models),
+            'champion': champion,
+            'models': models
         }
+    else:
+        # Listar todos los UCPs y sus modelos
+        models_base = Path('models')
+        ucps_info = []
 
-    return {
-        'total_models': len(models),
-        'champion': champion,
-        'models': models
-    }
+        if models_base.exists():
+            for ucp_dir in models_base.iterdir():
+                if ucp_dir.is_dir():
+                    registry_path = ucp_dir / 'registry' / 'champion_model.joblib'
+                    trained_dir = ucp_dir / 'trained'
+
+                    if registry_path.exists() or (trained_dir.exists() and list(trained_dir.glob('*.joblib'))):
+                        ucps_info.append({
+                            'ucp': ucp_dir.name,
+                            'has_champion': registry_path.exists(),
+                            'trained_models': len(list(trained_dir.glob('*.joblib'))) if trained_dir.exists() else 0,
+                            'champion_path': str(registry_path) if registry_path.exists() else None
+                        })
+
+        return {
+            'total_ucps': len(ucps_info),
+            'ucps': ucps_info,
+            'note': 'Use ?ucp=<name> to get detailed info for a specific UCP'
+        }
 
 
 @app.get("/", status_code=status.HTTP_200_OK)

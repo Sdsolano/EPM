@@ -24,6 +24,13 @@ except ImportError:
                     [f'P{i}' for i in range(1, 25)] + ['TOTAL']
     HOUR_PERIODS = [f'P{i}' for i in range(1, 25)]
     WORKING_DAYS = ["LUNES", "MARTES", "MIERCOLES", "MIÉRCOLES", "JUEVES", "VIERNES"]
+
+    # Columnas para datos meteorológicos API EPM (formato nuevo)
+    WEATHER_COLUMNS = ['FECHA', 'temp_mean', 'temp_min', 'temp_max', 'temp_std',
+                       'humidity_mean', 'humidity_min', 'humidity_max',
+                       'wind_speed_mean', 'wind_speed_max', 'rain_mean', 'rain_sum']
+    WEATHER_OPTIONAL_COLUMNS = ['rain_sum', 'wind_speed_max', 'temp_std']
+
     DATA_QUALITY_THRESHOLDS = {
         'max_missing_percentage': 0.05,
         'min_rows_per_day': 20,
@@ -387,13 +394,14 @@ class WeatherDataCleaner:
 
     def _convert_datatypes(self, df: pd.DataFrame) -> pd.DataFrame:
         """Convierte tipos de datos"""
-        # Convertir timestamp
-        if 'dt_iso' in df.columns:
-            df['dt_iso'] = pd.to_datetime(df['dt_iso'], errors='coerce')
+        # Convertir FECHA a datetime
+        if 'FECHA' in df.columns:
+            df['FECHA'] = pd.to_datetime(df['FECHA'], errors='coerce')
 
-        # Convertir variables numéricas
-        numeric_cols = ['temp', 'humidity', 'pressure', 'wind_speed', 'clouds_all',
-                        'feels_like', 'dew_point', 'temp_min', 'temp_max']
+        # Convertir variables numéricas del formato EPM
+        numeric_cols = ['temp_mean', 'temp_min', 'temp_max', 'temp_std',
+                        'humidity_mean', 'humidity_min', 'humidity_max',
+                        'wind_speed_mean', 'wind_speed_max', 'rain_mean', 'rain_sum']
 
         for col in numeric_cols:
             if col in df.columns:
@@ -405,8 +413,8 @@ class WeatherDataCleaner:
         """Maneja valores faltantes en datos meteorológicos"""
         initial_rows = len(df)
 
-        # Columnas críticas (no pueden ser nulas)
-        critical_cols = ['dt_iso', 'temp', 'humidity', 'pressure']
+        # Columnas críticas para formato EPM (no pueden ser nulas)
+        critical_cols = ['FECHA', 'temp_mean', 'humidity_mean']
         critical_cols = [col for col in critical_cols if col in df.columns]
 
         df = df.dropna(subset=critical_cols)
@@ -419,12 +427,12 @@ class WeatherDataCleaner:
 
     def _detect_outliers(self, df: pd.DataFrame) -> pd.DataFrame:
         """Detecta outliers en variables meteorológicas"""
-        # Rangos razonables para Medellín, Antioquia
+        # Rangos razonables para Medellín/Antioquia (formato EPM)
         ranges = {
-            'temp': (5, 40),  # °C
-            'humidity': (0, 100),  # %
-            'pressure': (900, 1100),  # hPa
-            'wind_speed': (0, 50),  # m/s
+            'temp_mean': (5, 40),  # °C
+            'humidity_mean': (0, 100),  # %
+            'wind_speed_mean': (0, 50),  # m/s
+            'rain_sum': (0, 300),  # mm/día
         }
 
         outliers_found = []

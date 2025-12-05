@@ -38,16 +38,15 @@ POWER_COLUMNS = [
 # Periodos horarios
 HOUR_PERIODS = [f'P{i}' for i in range(1, 25)]
 
-# Columnas esperadas para datos meteorológicos (weather)
+# Columnas esperadas para datos meteorológicos (weather) - Formato API EPM
 WEATHER_COLUMNS = [
-    'dt', 'dt_iso', 'timezone', 'city_name', 'lat', 'lon', 'temp',
-    'visibility', 'dew_point', 'feels_like', 'temp_min', 'temp_max',
-    'pressure', 'humidity', 'wind_speed', 'wind_deg', 'clouds_all',
-    'weather_id', 'weather_main', 'weather_description', 'weather_icon'
+    'FECHA', 'temp_mean', 'temp_min', 'temp_max', 'temp_std',
+    'humidity_mean', 'humidity_min', 'humidity_max',
+    'wind_speed_mean', 'wind_speed_max', 'rain_mean', 'rain_sum'
 ]
 
 # Columnas opcionales de weather (pueden tener NaN)
-WEATHER_OPTIONAL_COLUMNS = ['wind_gust', 'rain_1h', 'rain_3h']
+WEATHER_OPTIONAL_COLUMNS = ['rain_sum', 'wind_speed_max', 'temp_std']
 
 # ============== CONFIGURACIÓN DE LIMPIEZA ==============
 
@@ -68,8 +67,8 @@ ROLLING_WINDOWS = [7, 14, 28]  # 1 semana, 2 semanas, 4 semanas
 # Lags para variables de demanda (en días)
 DEMAND_LAGS = [1, 7, 14]  # día anterior, semana anterior, 2 semanas
 
-# Variables meteorológicas clave para features
-KEY_WEATHER_VARS = ['temp', 'humidity', 'feels_like', 'clouds_all', 'wind_speed']
+# Variables meteorológicas clave para features - API EPM
+KEY_WEATHER_VARS = ['temp', 'humidity', 'wind_speed', 'rain']
 
 # ============== CONFIGURACIÓN DE VALIDACIÓN ==============
 

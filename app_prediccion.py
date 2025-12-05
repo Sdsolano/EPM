@@ -129,20 +129,14 @@ if predict_button:
         st.error("No se pudieron cargar los datos históricos")
         st.stop()
 
-    # Calcular fecha de corte si está en modo validación
+    # Usar fecha fija para validación
     end_date_str = None
     if modo_validacion:
-        # Encontrar la última fecha disponible
-        ultima_fecha = pd.to_datetime(df_historico_full['FECHA']).max()
-        # Restar n_days para excluir esos días del entrenamiento
-        fecha_corte = ultima_fecha - timedelta(days=n_days)
-        end_date_str = fecha_corte.strftime("%Y-%m-%d")
-
+        end_date_str = "2025-03-01"
         st.info(
             f"📅 **Modo Validación:**\n"
-            f"- Última fecha histórica: {ultima_fecha.strftime('%Y-%m-%d')}\n"
-            f"- Entrenando hasta: {end_date_str}\n"
-            f"- Prediciendo: {n_days} días ({fecha_corte.strftime('%Y-%m-%d')} a {ultima_fecha.strftime('%Y-%m-%d')})\n"
+            f"- Usando end_date fija: {end_date_str}\n"
+            f"- Prediciendo {n_days} días desde esa fecha.\n"
             f"- Esto permite comparar predicciones vs datos reales"
         )
 
@@ -152,7 +146,8 @@ if predict_button:
         "weather_data_path": weather_data_path,
         "start_date": start_date.strftime("%Y-%m-%d"),
         "n_days": n_days,
-        "force_retrain": force_retrain
+        "force_retrain": force_retrain,
+        "ucp": "Atlantico" 
     }
 
     # Agregar end_date solo si está en modo validación

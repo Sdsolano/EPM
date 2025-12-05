@@ -44,14 +44,8 @@ class HourlyDisaggregator:
     def fit(self, df: pd.DataFrame, date_column: str = 'FECHA') -> 'HourlyDisaggregator':
         """
         Entrena el modelo de clustering con datos históricos.
-
-        Args:
-            df: DataFrame con columnas FECHA, P1-P24
-            date_column: Nombre de la columna de fechas
-
-        Returns:
-            self (patrón sklearn)
         """
+
         logger.info(f"Entrenando desagregador horario con {len(df)} días históricos...")
 
         # Validar columnas
@@ -63,15 +57,37 @@ class HourlyDisaggregator:
         # Preparar datos
         df = df.copy()
         df[date_column] = pd.to_datetime(df[date_column])
+        df.dropna(inplace=True)
 
         # Matriz día × 24 períodos
         X = df[period_cols].values
+        X = np.asarray(X)
 
-        # Normalizar cada día (para que sume 1)
-        daily_totals = X.sum(axis=1).reshape(-1, 1)
-        X_normalized = X / daily_totals
+        # Asegurar matriz 2D
+        if X.ndim > 2:
+            X = X.reshape(X.shape[0], -1)
 
-        # Clustering K-Means
+        # Sumas por día
+        daily_totals = X.sum(axis=1)
+
+        # Filtrar días inválidos (totales cero o NaN)
+        valid_mask = (~np.isnan(daily_totals)) & (daily_totals != 0)
+
+        X = X[valid_mask]
+        daily_totals = daily_totals[valid_mask]
+        df = df.loc[df.index[valid_mask]]
+
+        # Normalización segura
+        X_normalized = X / daily_totals[:, None]
+
+        # Eliminar inf / -inf / NaN por precaución
+        X_normalized = np.where(np.isinf(X_normalized), np.nan, X_normalized)
+        valid_mask2 = ~np.isnan(X_normalized).any(axis=1)
+
+        X_normalized = X_normalized[valid_mask2]
+        df = df.loc[df.index[valid_mask2]]
+
+        # K-Means
         logger.info(f"Ejecutando K-Means con k={self.n_clusters}...")
         self.kmeans = KMeans(
             n_clusters=self.n_clusters,
@@ -80,11 +96,11 @@ class HourlyDisaggregator:
         )
         cluster_labels = self.kmeans.fit_predict(X_normalized)
 
-        # Guardar labels en DataFrame
+        # Guardar labels
         df['cluster'] = cluster_labels
-        df['dayofweek'] = df[date_column].dt.dayofweek  # 0=Lun, 6=Dom
+        df['dayofweek'] = df[date_column].dt.dayofweek
 
-        # Calcular perfiles promedio normalizados por cluster
+        # Perfiles promedio por cluster
         cluster_profiles_raw = df.groupby('cluster')[period_cols].mean()
         cluster_sums = cluster_profiles_raw.sum(axis=1)
         self.cluster_profiles = cluster_profiles_raw.div(cluster_sums, axis=0)
@@ -100,20 +116,26 @@ class HourlyDisaggregator:
 
         return self
 
+
     def predict_hourly_profile(
         self,
         date: pd.Timestamp,
-        total_daily: float
-    ) -> np.ndarray:
+        total_daily: float,
+        return_normalized: bool = False
+    ) -> Tuple[np.ndarray, Optional[np.ndarray], Optional[int]]:
         """
         Predice la distribución horaria para una fecha y total diario.
 
         Args:
             date: Fecha del día a predecir
             total_daily: Demanda total del día (en MWh o unidad correspondiente)
+            return_normalized: Si True, retorna también el patrón normalizado (senda)
 
         Returns:
-            Array de 24 elementos con la distribución horaria (P1-P24)
+            Si return_normalized=False:
+                Array de 24 elementos con la distribución horaria (P1-P24)
+            Si return_normalized=True:
+                Tupla (hourly_prediction, normalized_profile, cluster_id)
         """
         if not self.is_fitted:
             raise RuntimeError("El modelo no ha sido entrenado. Ejecute .fit() primero.")
@@ -133,7 +155,11 @@ class HourlyDisaggregator:
         # Escalar por el total diario
         hourly_prediction = normalized_profile * total_daily
 
-        return hourly_prediction
+        if return_normalized:
+            return hourly_prediction, normalized_profile, cluster_id
+        else:
+            # Mantener retrocompatibilidad
+            return hourly_prediction
 
     def predict_batch(
         self,

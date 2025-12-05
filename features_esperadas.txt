@@ -1,0 +1,65 @@
+=== FEATURES ESPERADAS POR EL MODELO (61 features) ===
+Total: 61
+
+Listado completo:
+ 1. day
+ 2. dayofweek
+ 3. dayofweek_cos
+ 4. dayofweek_sin
+ 5. dayofweek_x_festivo
+ 6. dayofyear
+ 7. dayofyear_cos
+ 8. dayofyear_sin
+ 9. humidity_lag1d
+10. humidity_x_is_weekend
+11. is_december
+12. is_festivo
+13. is_january
+14. is_month_end
+15. is_month_start
+16. is_quarter_end
+17. is_quarter_start
+18. is_rainy_day
+19. is_rainy_season
+20. is_saturday
+21. is_sunday
+22. is_weekend
+23. month
+24. month_cos
+25. month_sin
+26. month_x_festivo
+27. p12_lag_1d
+28. p12_lag_7d
+29. p18_lag_1d
+30. p18_lag_7d
+31. p20_lag_1d
+32. p20_lag_7d
+33. p8_lag_1d
+34. p8_lag_7d
+35. quarter
+36. rain_lag1d
+37. temp_lag1d
+38. temp_x_is_festivo
+39. temp_x_is_weekend
+40. total_day_change
+41. total_day_change_pct
+42. total_lag_14d
+43. total_lag_1d
+44. total_lag_7d
+45. total_rolling_max_14d
+46. total_rolling_max_28d
+47. total_rolling_max_7d
+48. total_rolling_mean_14d
+49. total_rolling_mean_28d
+50. total_rolling_mean_7d
+51. total_rolling_min_14d
+52. total_rolling_min_28d
+53. total_rolling_min_7d
+54. total_rolling_std_14d
+55. total_rolling_std_28d
+56. total_rolling_std_7d
+57. week
+58. week_of_month
+59. weekend_x_month
+60. wind_speed_lag1d
+61. year

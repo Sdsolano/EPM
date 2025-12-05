@@ -232,25 +232,21 @@ class DataPipelineOrchestrator:
         try:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
 
-            # Guardar datos limpios
-            power_clean_path = PROCESSED_DATA_DIR / f"power_clean_{timestamp}.csv"
+            # Guardar datos limpios (nombres fijos, sobrescribe)
+            power_clean_path = PROCESSED_DATA_DIR / "power_clean_latest.csv"
             self.power_df_clean.to_csv(power_clean_path, index=False)
 
             if self.weather_df_clean is not None:
-                weather_clean_path = PROCESSED_DATA_DIR / f"weather_clean_{timestamp}.csv"
+                weather_clean_path = PROCESSED_DATA_DIR / "weather_clean_latest.csv"
                 self.weather_df_clean.to_csv(weather_clean_path, index=False)
 
-            # Guardar datos con features
-            features_path = self.output_dir / f"data_with_features_{timestamp}.csv"
-            self.df_with_features.to_csv(features_path, index=False)
-
-            # Guardar también como 'latest' para facilitar acceso
+            # Guardar datos con features (nombre fijo, sobrescribe)
             latest_features_path = self.output_dir / "data_with_features_latest.csv"
             self.df_with_features.to_csv(latest_features_path, index=False)
 
             metadata = {
                 'power_clean_path': str(power_clean_path),
-                'features_path': str(features_path),
+                'features_path': str(latest_features_path),
                 'latest_features_path': str(latest_features_path)
             }
 
@@ -299,8 +295,8 @@ class DataPipelineOrchestrator:
                 'stats': self.weather_quality_report.stats
             }
 
-        # Guardar reporte
-        report_path = self.tracker.save_report()
+        # Guardar reporte (modo producción: sobrescribe)
+        report_path = self.tracker.save_report(keep_history=False)
 
         return report
 

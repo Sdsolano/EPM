@@ -237,24 +237,46 @@ class ModelTrainer:
             self.training_results[best_model_name]
         )
 
-    def save_all_models(self, timestamp: str = None):
-        """Guarda todos los modelos entrenados"""
-        if timestamp is None:
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    def save_all_models(self, timestamp: str = None, overwrite: bool = True, output_dir: str = None):
+        """
+        Guarda todos los modelos entrenados
+
+        Args:
+            timestamp: Timestamp para el nombre del archivo (si overwrite=False)
+            overwrite: Si True, sobrescribe archivos fijos. Si False, usa timestamp
+            output_dir: Directorio donde guardar (ej: 'models/Atlantico/trained'). Si None, usa self.models_dir
+        """
+        # Usar output_dir si se proporciona, sino usar self.models_dir
+        save_dir = Path(output_dir) if output_dir else self.models_dir
+        save_dir.mkdir(parents=True, exist_ok=True)
 
         saved_paths = {}
 
         for model_name, model in self.trained_models.items():
-            save_path = self.models_dir / f"{model_name}_{timestamp}.joblib"
+            if overwrite:
+                # Modo producción: nombres fijos, sobrescribe
+                save_path = save_dir / f"{model_name}.joblib"
+            else:
+                # Modo desarrollo: usa timestamp
+                if timestamp is None:
+                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                save_path = save_dir / f"{model_name}_{timestamp}.joblib"
+
             model.save(save_path)
             saved_paths[model_name] = str(save_path)
 
         # Guardar resultados de entrenamiento
-        results_path = self.models_dir / f"training_results_{timestamp}.json"
+        if overwrite:
+            results_path = save_dir / "training_results.json"
+        else:
+            if timestamp is None:
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            results_path = save_dir / f"training_results_{timestamp}.json"
+
         with open(results_path, 'w') as f:
             json.dump(self.training_results, f, indent=2, default=str)
 
-        logger.info(f"\n✓ Todos los modelos guardados en {self.models_dir}")
+        logger.info(f"\n✓ Todos los modelos guardados en {save_dir}")
 
         return saved_paths
 

@@ -34,7 +34,8 @@ class HourlyDisaggregationEngine:
         self,
         normal_disaggregator: Optional[HourlyDisaggregator] = None,
         special_disaggregator: Optional[SpecialDaysDisaggregator] = None,
-        auto_load: bool = True
+        auto_load: bool = True,
+        models_dir: Optional[str] = None
     ):
         """
         Inicializa el motor de desagregación.
@@ -43,8 +44,10 @@ class HourlyDisaggregationEngine:
             normal_disaggregator: Desagregador para días normales (opcional)
             special_disaggregator: Desagregador para días especiales (opcional)
             auto_load: Si True, intenta cargar modelos guardados automáticamente
+            models_dir: Directorio donde buscar los modelos (ej: 'models/Atlantico'). Si None, usa MODELS_DIR
         """
         self.calendar_classifier = CalendarClassifier()
+        self.models_dir = Path(models_dir) if models_dir else Path(MODELS_DIR)
 
         # Cargar o usar desagregadores proporcionados
         if auto_load:
@@ -68,12 +71,12 @@ class HourlyDisaggregationEngine:
             return instance
 
         try:
-            filepath = Path(MODELS_DIR) / filename
+            filepath = self.models_dir / filename
             if filepath.exists():
-                logger.info(f"Cargando {filename}...")
+                logger.info(f"Cargando {filename} desde {filepath}...")
                 return cls.load(filepath)
             else:
-                logger.warning(f"No se encontró {filename}, creando instancia nueva (sin entrenar)")
+                logger.warning(f"No se encontró {filename} en {self.models_dir}, creando instancia nueva (sin entrenar)")
                 return cls()
         except Exception as e:
             logger.error(f"Error cargando {filename}: {e}")
@@ -83,7 +86,8 @@ class HourlyDisaggregationEngine:
         self,
         date: Union[str, pd.Timestamp],
         total_daily: float,
-        validate: bool = True
+        validate: bool = True,
+        return_senda: bool = True
     ) -> Dict:
         """
         Predice la distribución horaria para una fecha y total diario.
@@ -92,12 +96,15 @@ class HourlyDisaggregationEngine:
             date: Fecha del pronóstico
             total_daily: Demanda total del día (MWh)
             validate: Si True, valida que la suma sea correcta
+            return_senda: Si True, incluye patrón normalizado de referencia (senda)
 
         Returns:
             Dict con:
                 - date: Fecha
                 - total_daily: Total predicho
                 - hourly: Array con distribución horaria (P1-P24)
+                - senda_referencia: Array normalizado del cluster (0-1) [NUEVO]
+                - cluster_id: ID del cluster usado [NUEVO]
                 - method: Método usado ("special" o "normal")
                 - day_type: Tipo de día
                 - validation: Dict con información de validación
@@ -111,12 +118,24 @@ class HourlyDisaggregationEngine:
         # Seleccionar método
         if is_special:
             method = "special"
-            hourly = self.special_disaggregator.predict_hourly_profile(date, total_daily)
+            result = self.special_disaggregator.predict_hourly_profile(date, total_daily, return_normalized=return_senda)
+            if return_senda and result is not None:
+                hourly, senda_normalizada, cluster_id = result
+            else:
+                hourly = result
+                senda_normalizada = None
+                cluster_id = None
         else:
             method = "normal"
             if not self.normal_disaggregator.is_fitted:
                 raise RuntimeError("El desagregador normal no está entrenado")
-            hourly = self.normal_disaggregator.predict_hourly_profile(date, total_daily)
+            result = self.normal_disaggregator.predict_hourly_profile(date, total_daily, return_normalized=return_senda)
+            if return_senda:
+                hourly, senda_normalizada, cluster_id = result
+            else:
+                hourly = result
+                senda_normalizada = None
+                cluster_id = None
 
         # Validación
         validation = {
@@ -133,7 +152,7 @@ class HourlyDisaggregationEngine:
                 f"suma={validation['sum']:.4f}, esperado={total_daily:.4f}"
             )
 
-        return {
+        response = {
             'date': date,
             'total_daily': total_daily,
             'hourly': hourly,
@@ -145,6 +164,13 @@ class HourlyDisaggregationEngine:
             'season': day_info['temporada'],
             'validation': validation
         }
+
+        # Agregar senda si se solicitó
+        if return_senda and senda_normalizada is not None:
+            response['senda_referencia'] = senda_normalizada
+            response['cluster_id'] = int(cluster_id)
+
+        return response
 
     def predict_batch(
         self,
@@ -218,7 +244,8 @@ class HourlyDisaggregationEngine:
         data_path: Optional[Path] = None,
         n_clusters_normal: int = 35,
         n_clusters_special: int = 15,
-        save: bool = True
+        save: bool = True,
+        output_dir: Optional[str] = None
     ) -> None:
         """
         Entrena ambos desagregadores con datos históricos.
@@ -228,6 +255,7 @@ class HourlyDisaggregationEngine:
             n_clusters_normal: Clusters para días normales
             n_clusters_special: Clusters para días especiales
             save: Si True, guarda modelos entrenados
+            output_dir: Directorio donde guardar modelos (ej: 'models/Atlantico'). Si None, usa MODELS_DIR
         """
         logger.info("=" * 80)
         logger.info("ENTRENAMIENTO COMPLETO DEL SISTEMA DE DESAGREGACIÓN")
@@ -240,14 +268,27 @@ class HourlyDisaggregationEngine:
 
         logger.info(f"Cargando datos desde {data_path}...")
         df = pd.read_csv(data_path)
-
+        print('d'*50)
+        df.dropna(inplace=True)
+        print(df.head())
+        print('d'*50)
+        # Determinar directorio de salida
+        save_dir = Path(output_dir) if output_dir else self.models_dir
+        print('c'*20)
+        print(save_dir)
+        print('c'*20)
         # Entrenar desagregador normal
         logger.info("\n1. Entrenando desagregador para días normales...")
         self.normal_disaggregator = HourlyDisaggregator(n_clusters=n_clusters_normal)
         self.normal_disaggregator.fit(df, date_column='FECHA')
 
         if save:
-            self.normal_disaggregator.save()
+            output_path = save_dir / "hourly_disaggregator.pkl"
+            print('a'*20)
+            print(output_path)
+            print('a'*20)
+            self.normal_disaggregator.save(output_path)
+            logger.info(f"   ✓ Guardado en {output_path}")
 
         # Entrenar desagregador especial
         logger.info("\n2. Entrenando desagregador para días especiales...")
@@ -255,7 +296,12 @@ class HourlyDisaggregationEngine:
         self.special_disaggregator.fit(df, date_column='FECHA')
 
         if save:
-            self.special_disaggregator.save()
+            output_path = save_dir / "special_days_disaggregator.pkl"
+            print('b'*20)
+            print(output_path)
+            print('b'*20)
+            self.special_disaggregator.save(output_path)
+            logger.info(f"   ✓ Guardado en {output_path}")
 
         logger.info("\n" + "=" * 80)
         logger.info("✓ SISTEMA DE DESAGREGACIÓN ENTRENADO COMPLETAMENTE")

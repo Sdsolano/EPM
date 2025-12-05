@@ -35,7 +35,7 @@
           ]
         }
       },
-      "is_champion": false
+      "is_champion": true
     },
     "xgboost_20251120_161824": {
       "model_id": "xgboost_20251120_161824",
@@ -1977,7 +1977,7 @@
           ]
         }
       },
-      "is_champion": true
+      "is_champion": false
     },
     "randomforest_20251129_144902": {
       "model_id": "randomforest_20251129_144902",
@@ -2085,9 +2085,120 @@
         }
       },
       "is_champion": false
+    },
+    "xgboost_20251202_174400": {
+      "model_id": "xgboost_20251202_174400",
+      "model_name": "xgboost",
+      "version": "20251202_174400",
+      "timestamp": "2025-12-02T17:44:00.207867",
+      "path": "models\\registry\\xgboost_20251202_174400.joblib",
+      "metrics": {
+        "mape": 2.453215370097124,
+        "correlation": 0.9438457513580825,
+        "rmape": 2.5991697971487793,
+        "mae": 725.8513667808621,
+        "rmse": 949.6734081632275,
+        "r2": 0.852824588013821
+      },
+      "metadata": {
+        "training_time": 2.650759,
+        "n_features": 48,
+        "n_train_samples": 2572,
+        "cv_results": {
+          "mean_rmape": 3.2887816724057557,
+          "std_rmape": 0.31206898573249797,
+          "mean_mape": 3.0307946009102387,
+          "std_mape": 0.2690383422143201,
+          "all_rmapes": [
+            3.0885579428612444,
+            3.0482861071656435,
+            3.7295009671903787
+          ],
+          "all_mapes": [
+            2.869528727156135,
+            2.8129858636801224,
+            3.409869211894457
+          ]
+        }
+      },
+      "is_champion": false
+    },
+    "lightgbm_20251202_174400": {
+      "model_id": "lightgbm_20251202_174400",
+      "model_name": "lightgbm",
+      "version": "20251202_174400",
+      "timestamp": "2025-12-02T17:44:00.258183",
+      "path": "models\\registry\\lightgbm_20251202_174400.joblib",
+      "metrics": {
+        "mape": 2.213476624561329,
+        "correlation": 0.9408115747166154,
+        "rmape": 2.3527310718174963,
+        "mae": 643.9903427830246,
+        "rmse": 890.662321170106,
+        "r2": 0.8705467775747944
+      },
+      "metadata": {
+        "training_time": 0.445435,
+        "n_features": 48,
+        "n_train_samples": 2572,
+        "cv_results": {
+          "mean_rmape": 3.443156528385862,
+          "std_rmape": 0.23869887073436802,
+          "mean_mape": 3.1362956078098647,
+          "std_mape": 0.21791788603493978,
+          "all_rmapes": [
+            3.3941595019253623,
+            3.1784056770821247,
+            3.7569044061501
+          ],
+          "all_mapes": [
+            3.1008465106146303,
+            2.8888978662998075,
+            3.4191424465151554
+          ]
+        }
+      },
+      "is_champion": false
+    },
+    "randomforest_20251202_174400": {
+      "model_id": "randomforest_20251202_174400",
+      "model_name": "randomforest",
+      "version": "20251202_174400",
+      "timestamp": "2025-12-02T17:44:00.421131",
+      "path": "models\\registry\\randomforest_20251202_174400.joblib",
+      "metrics": {
+        "mape": 2.573272760361358,
+        "correlation": 0.9291537472540669,
+        "rmape": 2.769480043497823,
+        "mae": 750.4779665509982,
+        "rmse": 1002.9280557137845,
+        "r2": 0.8358555262427688
+      },
+      "metadata": {
+        "training_time": 0.746107,
+        "n_features": 48,
+        "n_train_samples": 2572,
+        "cv_results": {
+          "mean_rmape": 3.85062602583972,
+          "std_rmape": 0.6192951171843111,
+          "mean_mape": 3.466154713471726,
+          "std_mape": 0.5015494577384787,
+          "all_rmapes": [
+            3.6595540297646547,
+            3.205953754206201,
+            4.686370293548304
+          ],
+          "all_mapes": [
+            3.3295781472498467,
+            2.9316678154363918,
+            4.13721817772894
+          ]
+        }
+      },
+      "is_champion": false
     }
   },
-  "champion": "lightgbm_20251129_144902",
+  "champion": "xgboost_20251120_161227",
   "history": [
     {
       "action": "register",
@@ -2258,6 +2369,27 @@
       "model_id": "lightgbm_20251129_144902",
       "reason": "Manual promotion",
       "timestamp": "2025-11-29T14:49:02.701852"
+    },
+    {
+      "action": "register",
+      "model_id": "xgboost_20251202_174400",
+      "timestamp": "2025-12-02T17:44:00.207867"
+    },
+    {
+      "action": "register",
+      "model_id": "lightgbm_20251202_174400",
+      "timestamp": "2025-12-02T17:44:00.258183"
+    },
+    {
+      "action": "register",
+      "model_id": "randomforest_20251202_174400",
+      "timestamp": "2025-12-02T17:44:00.421131"
+    },
+    {
+      "action": "promote_champion",
+      "model_id": "xgboost_20251120_161227",
+      "reason": "Mejor rmape: 1.1954",
+      "timestamp": "2025-12-02T17:44:00.434408"
     }
   ]
 }
