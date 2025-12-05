@@ -743,18 +743,34 @@ class ForecastPipeline:
 
             # Desagregación horaria (si está habilitada)
             hourly_breakdown = {}
+            senda_breakdown = {}
+            cluster_id = None
+            metodo_desagregacion = 'placeholder'
+
             if self.hourly_engine is not None:
                 try:
-                    hourly_result = self.hourly_engine.predict_hourly(fecha, demanda_pred, validate=True)
+                    hourly_result = self.hourly_engine.predict_hourly(fecha, demanda_pred, validate=True, return_senda=True)
                     hourly_breakdown = {f'P{i}': hourly_result['hourly'][i-1] for i in range(1, 25)}
-                    logger.info(f"   ✓ Desagregación horaria: método={hourly_result['method']}")
+
+                    # Capturar senda de referencia si está disponible
+                    if 'senda_referencia' in hourly_result:
+                        senda_breakdown = {f'senda_P{i}': hourly_result['senda_referencia'][i-1] for i in range(1, 25)}
+
+                    # Capturar cluster_id si está disponible
+                    if 'cluster_id' in hourly_result:
+                        cluster_id = hourly_result['cluster_id']
+
+                    metodo_desagregacion = hourly_result['method']
+                    logger.info(f"   ✓ Desagregación horaria: método={metodo_desagregacion}, cluster={cluster_id}")
                 except Exception as e:
                     logger.warning(f"   ⚠ Error en desagregación horaria: {e}")
                     logger.warning(f"   Usando placeholders")
                     hourly_breakdown = self._get_placeholder_hourly(demanda_pred)
+                    metodo_desagregacion = 'placeholder'
             else:
                 # Placeholders si no hay desagregación
                 hourly_breakdown = self._get_placeholder_hourly(demanda_pred)
+                metodo_desagregacion = 'placeholder'
 
             # Guardar predicción
             prediction_record = {
@@ -764,7 +780,10 @@ class ForecastPipeline:
                 'is_weekend': features['is_weekend'],
                 'dayofweek': features['dayofweek'],
                 'temp_mean': climate['temp_mean'],
-                **hourly_breakdown  # Agregar P1-P24
+                'metodo_desagregacion': metodo_desagregacion,
+                'cluster_id': cluster_id,
+                **hourly_breakdown,  # Agregar P1-P24
+                **senda_breakdown   # Agregar senda_P1-senda_P24
             }
             predictions.append(prediction_record)
 

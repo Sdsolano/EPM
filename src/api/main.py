@@ -113,6 +113,7 @@ class HourlyPrediction(BaseModel):
     is_festivo: bool = Field(..., description="Si es día festivo")
     is_weekend: bool = Field(..., description="Si es fin de semana")
     metodo_desagregacion: str = Field(..., description="Método usado (normal/special)")
+    cluster_id: Optional[int] = Field(None, description="ID del cluster usado para desagregación")
     P1: float = Field(..., description="Período 1 (00:00-01:00) en MWh")
     P2: float = Field(..., description="Período 2 (01:00-02:00) en MWh")
     P3: float = Field(..., description="Período 3 (02:00-03:00) en MWh")
@@ -137,6 +138,30 @@ class HourlyPrediction(BaseModel):
     P22: float = Field(..., description="Período 22 (21:00-22:00) en MWh")
     P23: float = Field(..., description="Período 23 (22:00-23:00) en MWh")
     P24: float = Field(..., description="Período 24 (23:00-00:00) en MWh")
+    senda_P1: Optional[float] = Field(None, description="Senda normalizada P1 (patrón cluster 0-1)")
+    senda_P2: Optional[float] = Field(None, description="Senda normalizada P2 (patrón cluster 0-1)")
+    senda_P3: Optional[float] = Field(None, description="Senda normalizada P3 (patrón cluster 0-1)")
+    senda_P4: Optional[float] = Field(None, description="Senda normalizada P4 (patrón cluster 0-1)")
+    senda_P5: Optional[float] = Field(None, description="Senda normalizada P5 (patrón cluster 0-1)")
+    senda_P6: Optional[float] = Field(None, description="Senda normalizada P6 (patrón cluster 0-1)")
+    senda_P7: Optional[float] = Field(None, description="Senda normalizada P7 (patrón cluster 0-1)")
+    senda_P8: Optional[float] = Field(None, description="Senda normalizada P8 (patrón cluster 0-1)")
+    senda_P9: Optional[float] = Field(None, description="Senda normalizada P9 (patrón cluster 0-1)")
+    senda_P10: Optional[float] = Field(None, description="Senda normalizada P10 (patrón cluster 0-1)")
+    senda_P11: Optional[float] = Field(None, description="Senda normalizada P11 (patrón cluster 0-1)")
+    senda_P12: Optional[float] = Field(None, description="Senda normalizada P12 (patrón cluster 0-1)")
+    senda_P13: Optional[float] = Field(None, description="Senda normalizada P13 (patrón cluster 0-1)")
+    senda_P14: Optional[float] = Field(None, description="Senda normalizada P14 (patrón cluster 0-1)")
+    senda_P15: Optional[float] = Field(None, description="Senda normalizada P15 (patrón cluster 0-1)")
+    senda_P16: Optional[float] = Field(None, description="Senda normalizada P16 (patrón cluster 0-1)")
+    senda_P17: Optional[float] = Field(None, description="Senda normalizada P17 (patrón cluster 0-1)")
+    senda_P18: Optional[float] = Field(None, description="Senda normalizada P18 (patrón cluster 0-1)")
+    senda_P19: Optional[float] = Field(None, description="Senda normalizada P19 (patrón cluster 0-1)")
+    senda_P20: Optional[float] = Field(None, description="Senda normalizada P20 (patrón cluster 0-1)")
+    senda_P21: Optional[float] = Field(None, description="Senda normalizada P21 (patrón cluster 0-1)")
+    senda_P22: Optional[float] = Field(None, description="Senda normalizada P22 (patrón cluster 0-1)")
+    senda_P23: Optional[float] = Field(None, description="Senda normalizada P23 (patrón cluster 0-1)")
+    senda_P24: Optional[float] = Field(None, description="Senda normalizada P24 (patrón cluster 0-1)")
 
     class Config:
         schema_extra = {
@@ -770,7 +795,7 @@ async def predict_demand(request: PredictRequest):
                 fecha = pd.to_datetime(row['fecha'])
 
                 # Determinar método de desagregación usado
-                metodo = 'special' if row.get('is_festivo', False) else 'normal'
+                metodo = row.get('metodo_desagregacion', 'special' if row.get('is_festivo', False) else 'normal')
 
                 prediction = {
                     'fecha': fecha.strftime('%Y-%m-%d'),
@@ -779,7 +804,9 @@ async def predict_demand(request: PredictRequest):
                     'is_festivo': bool(row.get('is_festivo', False)),
                     'is_weekend': bool(row.get('is_weekend', False)),
                     'metodo_desagregacion': metodo,
-                    **{f'P{i}': round(float(row.get(f'P{i}', 0)), 2) for i in range(1, 25)}
+                    'cluster_id': int(row['cluster_id']) if pd.notna(row.get('cluster_id')) else None,
+                    **{f'P{i}': round(float(row.get(f'P{i}', 0)), 2) for i in range(1, 25)},
+                    **{f'senda_P{i}': round(float(row.get(f'senda_P{i}', 0)), 6) if pd.notna(row.get(f'senda_P{i}')) else None for i in range(1, 25)}
                 }
 
                 predictions_list.append(prediction)

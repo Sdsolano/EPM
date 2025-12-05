@@ -86,7 +86,8 @@ class HourlyDisaggregationEngine:
         self,
         date: Union[str, pd.Timestamp],
         total_daily: float,
-        validate: bool = True
+        validate: bool = True,
+        return_senda: bool = True
     ) -> Dict:
         """
         Predice la distribución horaria para una fecha y total diario.
@@ -95,12 +96,15 @@ class HourlyDisaggregationEngine:
             date: Fecha del pronóstico
             total_daily: Demanda total del día (MWh)
             validate: Si True, valida que la suma sea correcta
+            return_senda: Si True, incluye patrón normalizado de referencia (senda)
 
         Returns:
             Dict con:
                 - date: Fecha
                 - total_daily: Total predicho
                 - hourly: Array con distribución horaria (P1-P24)
+                - senda_referencia: Array normalizado del cluster (0-1) [NUEVO]
+                - cluster_id: ID del cluster usado [NUEVO]
                 - method: Método usado ("special" o "normal")
                 - day_type: Tipo de día
                 - validation: Dict con información de validación
@@ -114,12 +118,24 @@ class HourlyDisaggregationEngine:
         # Seleccionar método
         if is_special:
             method = "special"
-            hourly = self.special_disaggregator.predict_hourly_profile(date, total_daily)
+            result = self.special_disaggregator.predict_hourly_profile(date, total_daily, return_normalized=return_senda)
+            if return_senda and result is not None:
+                hourly, senda_normalizada, cluster_id = result
+            else:
+                hourly = result
+                senda_normalizada = None
+                cluster_id = None
         else:
             method = "normal"
             if not self.normal_disaggregator.is_fitted:
                 raise RuntimeError("El desagregador normal no está entrenado")
-            hourly = self.normal_disaggregator.predict_hourly_profile(date, total_daily)
+            result = self.normal_disaggregator.predict_hourly_profile(date, total_daily, return_normalized=return_senda)
+            if return_senda:
+                hourly, senda_normalizada, cluster_id = result
+            else:
+                hourly = result
+                senda_normalizada = None
+                cluster_id = None
 
         # Validación
         validation = {
@@ -136,7 +152,7 @@ class HourlyDisaggregationEngine:
                 f"suma={validation['sum']:.4f}, esperado={total_daily:.4f}"
             )
 
-        return {
+        response = {
             'date': date,
             'total_daily': total_daily,
             'hourly': hourly,
@@ -148,6 +164,13 @@ class HourlyDisaggregationEngine:
             'season': day_info['temporada'],
             'validation': validation
         }
+
+        # Agregar senda si se solicitó
+        if return_senda and senda_normalizada is not None:
+            response['senda_referencia'] = senda_normalizada
+            response['cluster_id'] = int(cluster_id)
+
+        return response
 
     def predict_batch(
         self,

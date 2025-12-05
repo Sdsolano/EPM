@@ -120,17 +120,22 @@ class HourlyDisaggregator:
     def predict_hourly_profile(
         self,
         date: pd.Timestamp,
-        total_daily: float
-    ) -> np.ndarray:
+        total_daily: float,
+        return_normalized: bool = False
+    ) -> Tuple[np.ndarray, Optional[np.ndarray], Optional[int]]:
         """
         Predice la distribución horaria para una fecha y total diario.
 
         Args:
             date: Fecha del día a predecir
             total_daily: Demanda total del día (en MWh o unidad correspondiente)
+            return_normalized: Si True, retorna también el patrón normalizado (senda)
 
         Returns:
-            Array de 24 elementos con la distribución horaria (P1-P24)
+            Si return_normalized=False:
+                Array de 24 elementos con la distribución horaria (P1-P24)
+            Si return_normalized=True:
+                Tupla (hourly_prediction, normalized_profile, cluster_id)
         """
         if not self.is_fitted:
             raise RuntimeError("El modelo no ha sido entrenado. Ejecute .fit() primero.")
@@ -150,7 +155,11 @@ class HourlyDisaggregator:
         # Escalar por el total diario
         hourly_prediction = normalized_profile * total_daily
 
-        return hourly_prediction
+        if return_normalized:
+            return hourly_prediction, normalized_profile, cluster_id
+        else:
+            # Mantener retrocompatibilidad
+            return hourly_prediction
 
     def predict_batch(
         self,
