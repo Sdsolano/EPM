@@ -24,7 +24,7 @@ def json_to_csv_power(data_json,ucp_name,archivo,variable="Demanda_Real",clasifi
 
     # --- 7. Obtener día de la semana en español ---
     # Esto devuelve nombres como: Monday→lunes, Tuesday→martes, etc.
-    df["TIPO DIA"] = pd.to_datetime(df["FECHA"]).dt.day_name(locale="es_ES")
+    df["TIPO DIA"] = pd.to_datetime(df["FECHA"]).dt.day_name(locale="es_ES.utf8")
 
     # --- 8. Reordenar columnas como tu CSV ---
     final_cols = ['UCP', 'VARIABLE', 'FECHA', 'Clasificador interno', 'TIPO DIA'] + cols_p + ["TOTAL"]
