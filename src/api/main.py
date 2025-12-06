@@ -1282,6 +1282,96 @@ async def health_check(ucp: Optional[str] = None):
     )
 
 
+@app.post("/retrain", status_code=status.HTTP_200_OK)
+async def retrain_model(ucp: str):
+    """
+    Trigger manual de reentrenamiento completo del modelo
+
+    Args:
+        ucp: Nombre del UCP a reentrenar (ej: 'Atlantico', 'Oriente')
+
+    Returns:
+        Dict con información del reentrenamiento
+
+    Flujo:
+    1. Actualiza datos del UCP (full_update_csv)
+    2. Ejecuta pipeline de feature engineering
+    3. Entrena los 3 modelos (XGBoost, LightGBM, RandomForest)
+    4. Selecciona automáticamente el mejor modelo (por rMAPE)
+    5. Promociona a producción como champion_model
+    6. Retorna métricas del nuevo modelo
+    """
+    try:
+        logger.info("="*80)
+        logger.info(f"🔧 INICIANDO REENTRENAMIENTO MANUAL PARA {ucp}")
+        logger.info("="*80)
+
+        # PASO 1: Actualizar datos CSV
+        logger.info(f"\n📊 PASO 1: Actualizando datos para {ucp}...")
+        await run_in_threadpool(full_update_csv, ucp)
+
+        # PASO 2: Ejecutar pipeline de feature engineering
+        logger.info(f"\n⚙️ PASO 2: Ejecutando pipeline de feature engineering...")
+
+        power_data_path = f'data/raw/{ucp}/datos.csv'
+        weather_data_path = f'data/raw/{ucp}/clima_new.csv'
+        output_dir = Path(f'data/features/{ucp}')
+
+        df_with_features, _ = run_automated_pipeline(
+            power_data_path=power_data_path,
+            weather_data_path=weather_data_path,
+            start_date='2015-01-01',
+            end_date=None,  # Hasta el día más reciente disponible
+            output_dir=output_dir
+        )
+
+        logger.info(f"✓ Pipeline completado: {len(df_with_features)} registros")
+
+        # PASO 3: Forzar reentrenamiento de modelos
+        logger.info(f"\n🤖 PASO 3: Reentrenando modelos para {ucp}...")
+
+        model_path, train_metrics = train_model_if_needed(
+            df_with_features=df_with_features,
+            ucp=ucp,
+            force_retrain=True  # ← FORZAR reentrenamiento
+        )
+
+        logger.info(f"✓ Reentrenamiento completado exitosamente")
+
+        # PASO 4: Retornar información del nuevo modelo
+        logger.info("\n" + "="*80)
+        logger.info("✅ REENTRENAMIENTO COMPLETADO")
+        logger.info("="*80)
+
+        return {
+            "status": "success",
+            "message": f"Modelo reentrenado exitosamente para {ucp}",
+            "ucp": ucp,
+            "modelo_champion": model_path.stem,
+            "modelo_path": str(model_path),
+            "fecha_reentrenamiento": datetime.now().isoformat(),
+            "datos_entrenamiento": {
+                "total_registros": len(df_with_features),
+                "fecha_inicio": df_with_features['FECHA'].min().strftime('%Y-%m-%d') if 'FECHA' in df_with_features.columns else None,
+                "fecha_fin": df_with_features['FECHA'].max().strftime('%Y-%m-%d') if 'FECHA' in df_with_features.columns else None
+            },
+            "metricas": train_metrics if train_metrics else "Modelo ya existía (no se reentrenó)"
+        }
+
+    except FileNotFoundError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Datos no encontrados para UCP '{ucp}': {str(e)}"
+        )
+    except Exception as e:
+        logger.error(f"Error en reentrenamiento: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error en reentrenamiento: {str(e)}"
+        )
+
+
 @app.get("/models", status_code=status.HTTP_200_OK)
 async def list_models(ucp: Optional[str] = None):
     """
@@ -1364,6 +1454,7 @@ async def root():
         "docs": "/docs",
         "endpoints": {
             "POST /predict": "Genera predicción de demanda con granularidad horaria",
+            "POST /retrain": "Reentrenamiento manual del modelo (actualiza datos + entrena nuevo modelo)",
             "GET /health": "Estado del sistema",
             "GET /models": "Lista de modelos disponibles"
         }
