@@ -186,18 +186,17 @@ class HourlyPrediction(BaseModel):
 
 class PredictResponse(BaseModel):
     """Schema para respuesta de predicción"""
-    should_retrain: bool = Field(..., description="Indica si se recomienda reentrenar el modelo (true/false)")
-    reason: str = Field(..., description="Razón por la cual se recomienda o no reentrenar")
     status: str = Field(..., description="Estado de la operación")
     message: str = Field(..., description="Mensaje descriptivo")
     metadata: Dict[str, Any] = Field(..., description="Metadata de la predicción")
     predictions: List[HourlyPrediction] = Field(..., description="Array de predicciones diarias con desagregación horaria")
+    should_retrain: bool = Field(..., description="Indica si se recomienda reentrenar el modelo (true/false)")
+    reason: str = Field(..., description="Razón por la cual se recomienda o no reentrenar")
+    events: Dict[str, str] = Field(..., description="Eventos futuros que podrían afectar la demanda energética (formato: {'YYYY-MM-DD': 'Nombre del evento'})")
 
     class Config:
         schema_extra = {
             "example": {
-                "should_retrain": False,
-                "reason": "Error dentro de límites aceptables (MAPE: 2.35%)",
                 "status": "success",
                 "message": "Predicción generada exitosamente para 30 días",
                 "metadata": {
@@ -216,7 +215,14 @@ class PredictResponse(BaseModel):
                         "r2": 0.946
                     }
                 },
-                "predictions": []  # Array de HourlyPrediction
+                "predictions": [],  # Array de HourlyPrediction
+                "should_retrain": False,
+                "reason": "Error dentro de límites aceptables (MAPE: 2.35%)",
+                "events": {
+                    "2024-12-25": "Navidad",
+                    "2024-12-31": "Fin de Año",
+                    "2025-01-01": "Año Nuevo"
+                }
             }
         }
 
@@ -229,9 +235,96 @@ class HealthResponse(BaseModel):
     components: Dict[str, Dict[str, Any]]
 
 
-# ============================================================================
-# FUNCIONES AUXILIARES
-# ============================================================================
+
+
+async def get_future_events_from_openai(
+    ucp: str,
+    fecha_inicio: str,
+    fecha_fin: str
+) -> Dict[str, str]:
+    """
+    Obtiene eventos futuros que podrían afectar la demanda energética usando OpenAI
+
+    Args:
+        ucp: Nombre del UCP (ej: 'Atlantico', 'Oriente')
+        fecha_inicio: Fecha inicio del periodo a predecir
+        fecha_fin: Fecha fin del periodo a predecir
+
+    Returns:
+        Dict[str, str]: Diccionario con formato {"YYYY-MM-DD": "Nombre del evento"}
+    """
+    try:
+        # Obtener API key desde variables de entorno
+        api_key = os.getenv('API_KEY')
+        if not api_key:
+            logger.warning("⚠ API_KEY no encontrada en .env, saltando búsqueda de eventos")
+            return {}
+
+        # Inicializar cliente de OpenAI
+        client = OpenAI(api_key=api_key)
+
+        prompt = f"""Busca en internet todos los eventos que podrían afectar la demanda de energía eléctrica en {ucp}, Colombia entre {fecha_inicio} y {fecha_fin}.
+
+Incluye:
+- Festivos nacionales y locales
+- Eventos masivos (conciertos, festivales, ferias)
+- Partidos de fútbol importantes
+- Eventos climáticos previstos
+- Paros o manifestaciones programadas
+- Elecciones o eventos políticos
+- Cualquier otro evento relevante
+
+IMPORTANTE: Responde ÚNICAMENTE en formato JSON así:
+{{
+  "YYYY-MM-DD": "Nombre breve del evento",
+  "YYYY-MM-DD": "Otro evento"
+}}
+
+REGLAS:
+- NO incluyas links, URLs ni referencias a fuentes
+- Solo nombres cortos y concisos (máximo 50 caracteres)
+- NO agregues explicaciones adicionales
+- Solo el JSON puro"""
+
+        logger.info(f"🔍 Buscando eventos futuros para {ucp} ({fecha_inicio} a {fecha_fin})...")
+
+        response = await run_in_threadpool(
+            lambda: client.responses.create(
+                model="gpt-5-mini",
+                input=[
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                tools=[
+                    {
+                        "type": "web_search"
+                    }
+                ]
+            )
+        )
+
+        events_json = response.output_text.strip()
+
+        # Limpiar respuesta (quitar markdown si existe)
+        if events_json.startswith("```json"):
+            events_json = events_json.replace("```json", "").replace("```", "").strip()
+        elif events_json.startswith("```"):
+            events_json = events_json.replace("```", "").strip()
+
+        # Parsear JSON
+        import json
+        events = json.loads(events_json)
+
+        logger.info(f"✓ Eventos encontrados: {len(events)}")
+        return events
+
+    except Exception as e:
+        logger.error(f"Error obteniendo eventos futuros: {e}")
+        logger.error(traceback.format_exc())
+        return {}
+
 
 async def analyze_error_with_openai(
     ucp: str,
@@ -1066,6 +1159,32 @@ async def predict_demand(request: PredictRequest):
             )
 
         # ====================================================================
+        # PASO 6: OBTENER EVENTOS FUTUROS
+        # ====================================================================
+        logger.info("\n📅 PASO 6: Obteniendo eventos futuros que podrían afectar la demanda...")
+
+        try:
+            # Obtener rango de fechas de las predicciones
+            fecha_inicio_pred = predictions_df['fecha'].min().strftime('%Y-%m-%d')
+            fecha_fin_pred = predictions_df['fecha'].max().strftime('%Y-%m-%d')
+
+            # Llamar a OpenAI para obtener eventos
+            events = await get_future_events_from_openai(
+                ucp=request.ucp,
+                fecha_inicio=fecha_inicio_pred,
+                fecha_fin=fecha_fin_pred
+            )
+
+            logger.info(f"✓ Eventos futuros identificados: {len(events)}")
+            if events:
+                for fecha_evento, nombre_evento in list(events.items())[:3]:  # Log primeros 3
+                    logger.info(f"    {fecha_evento}: {nombre_evento}")
+
+        except Exception as e:
+            logger.warning(f"⚠ Error obteniendo eventos futuros: {e}")
+            events = {}
+
+        # ====================================================================
         # RESPUESTA FINAL
         # ====================================================================
         logger.info("\n" + "="*80)
@@ -1073,12 +1192,13 @@ async def predict_demand(request: PredictRequest):
         logger.info("="*80 + "\n")
 
         return PredictResponse(
-            should_retrain=should_retrain,
-            reason=reason,
             status="success",
             message=f"Predicción generada exitosamente para {request.n_days} días con granularidad horaria",
             metadata=metadata,
-            predictions=predictions_list
+            predictions=predictions_list,
+            should_retrain=should_retrain,
+            reason=reason,
+            events=events
         )
 
     except HTTPException:
