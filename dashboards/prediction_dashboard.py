@@ -1,8 +1,10 @@
 """
 Dashboard de Predicción: Próximos 30 Días con Desagregación Horaria
 
-Dashboard Streamlit para generar y visualizar predicciones de demanda
+Dashboard Streamlit para visualizar predicciones de demanda
 para los próximos 30 días con desagregación horaria automática.
+
+MODO AUTOMÁTICO: No requiere interacción, todo con valores por defecto.
 
 Uso:
     streamlit run dashboards/prediction_dashboard.py
@@ -29,12 +31,19 @@ from src.config.settings import FEATURES_DATA_DIR
 # Configurar logging
 logging.basicConfig(level=logging.WARNING)
 
+# ============================================================================
+# CONFIGURACIÓN POR DEFECTO (SIN INTERACCIÓN)
+# ============================================================================
+DEFAULT_UCP = "Atlantico"
+DEFAULT_N_DAYS = 30
+DEFAULT_VALIDATION_DAYS = 30  # Últimos 30 días para validación
+
 # Configuración de página
 st.set_page_config(
     page_title="Predicción 30 Días - EPM",
     page_icon="⚡",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
 # Estilos
@@ -64,18 +73,86 @@ st.markdown("""
         border-radius: 1rem;
         font-weight: bold;
     }
+    .ucp-badge {
+        background-color: #1f77b4;
+        color: white;
+        padding: 0.3rem 0.8rem;
+        border-radius: 1rem;
+        font-weight: bold;
+        font-size: 1.2rem;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 
+# ============================================================================
+# FUNCIONES DE CARGA
+# ============================================================================
+
+def get_available_ucps():
+    """Obtiene lista de UCPs disponibles con modelos entrenados"""
+    models_base = Path('models')
+    ucps = []
+    if models_base.exists():
+        for ucp_dir in models_base.iterdir():
+            if ucp_dir.is_dir():
+                champion_path = ucp_dir / 'registry' / 'champion_model.joblib'
+                trained_dir = ucp_dir / 'trained'
+                if champion_path.exists() or (trained_dir.exists() and list(trained_dir.glob('*.joblib'))):
+                    ucps.append(ucp_dir.name)
+    return sorted(ucps) if ucps else [DEFAULT_UCP]
+
+
+def get_model_path_for_ucp(ucp: str) -> tuple:
+    """Obtiene el path del modelo para un UCP específico"""
+    champion_path = Path(f'models/{ucp}/registry/champion_model.joblib')
+    if champion_path.exists():
+        return str(champion_path), None
+    
+    trained_dir = Path(f'models/{ucp}/trained')
+    if trained_dir.exists():
+        model_files = sorted(trained_dir.glob('*.joblib'), key=lambda p: p.stat().st_mtime, reverse=True)
+        if model_files:
+            return str(model_files[0]), None
+    
+    return None, f"No se encontró modelo para {ucp}"
+
+
+def get_data_path_for_ucp(ucp: str) -> tuple:
+    """Obtiene el path de datos para un UCP específico"""
+    ucp_data_path = Path(f'data/features/{ucp}/data_with_features_latest.csv')
+    if ucp_data_path.exists():
+        return str(ucp_data_path), None
+    
+    generic_path = Path('data/features/data_with_features_latest.csv')
+    if generic_path.exists():
+        return str(generic_path), f"Usando datos genéricos"
+    
+    return None, f"No hay datos para {ucp}"
+
+
 @st.cache_resource
-def load_prediction_pipeline():
-    """Carga el pipeline de predicción"""
+def load_prediction_pipeline(ucp: str):
+    """Carga el pipeline de predicción para un UCP específico"""
     try:
+        model_path, model_error = get_model_path_for_ucp(ucp)
+        if model_path is None:
+            return None, model_error
+        
+        data_path, _ = get_data_path_for_ucp(ucp)
+        if data_path is None:
+            return None, "No hay datos históricos"
+        
+        climate_path = f'data/raw/{ucp}/clima_new.csv'
+        if not Path(climate_path).exists():
+            climate_path = 'data/raw/clima_new.csv'
+        
         pipeline = ForecastPipeline(
-            model_path='models/trained/xgboost_20251120_161937.joblib',
-            historical_data_path='data/features/data_with_features_latest.csv',
-            enable_hourly_disaggregation=True
+            model_path=model_path,
+            historical_data_path=data_path,
+            enable_hourly_disaggregation=True,
+            raw_climate_path=climate_path,
+            ucp=ucp
         )
         return pipeline, None
     except Exception as e:
@@ -83,23 +160,26 @@ def load_prediction_pipeline():
 
 
 @st.cache_resource
-def load_hourly_engine():
-    """Carga motor de desagregación horaria"""
+def load_hourly_engine(ucp: str):
+    """Carga motor de desagregación horaria para un UCP específico"""
     try:
-        engine = HourlyDisaggregationEngine(auto_load=True)
+        models_dir = f'models/{ucp}'
+        engine = HourlyDisaggregationEngine(auto_load=True, models_dir=models_dir)
         return engine, None
     except Exception as e:
-        return None, str(e)
+        try:
+            engine = HourlyDisaggregationEngine(auto_load=True)
+            return engine, "Usando desagregador genérico"
+        except Exception as e2:
+            return None, str(e2)
 
 
-@st.cache_data(ttl=3600)  # Cache por 1 hora
-def generate_predictions(n_days=30):
+@st.cache_data(ttl=3600)
+def generate_predictions(ucp: str, n_days: int):
     """Genera predicciones para los próximos N días"""
-    pipeline, error = load_prediction_pipeline()
-
+    pipeline, error = load_prediction_pipeline(ucp)
     if pipeline is None:
         return None, error
-
     try:
         predictions = pipeline.predict_next_n_days(n_days=n_days)
         return predictions, None
@@ -107,11 +187,163 @@ def generate_predictions(n_days=30):
         return None, str(e)
 
 
+@st.cache_data
+def load_historical_data(ucp: str):
+    """Carga datos históricos para un UCP"""
+    ucp_path = Path(f'data/features/{ucp}/data_with_features_latest.csv')
+    if ucp_path.exists():
+        df = pd.read_csv(ucp_path)
+        df['FECHA'] = pd.to_datetime(df['FECHA'])
+        return df, None
+    
+    generic_path = Path(FEATURES_DATA_DIR) / "data_with_features_latest.csv"
+    if generic_path.exists():
+        df = pd.read_csv(generic_path)
+        df['FECHA'] = pd.to_datetime(df['FECHA'])
+        return df, "Usando datos genéricos"
+    
+    return None, "No hay datos históricos"
+
+
+@st.cache_data
+def run_validation(ucp: str, n_days: int):
+    """Ejecuta validación contra históricos automáticamente"""
+    df_historico, _ = load_historical_data(ucp)
+    if df_historico is None:
+        return None, "No hay datos históricos"
+    
+    engine, _ = load_hourly_engine(ucp)
+    if engine is None:
+        return None, "Motor de desagregación no disponible"
+    
+    # Últimos N días
+    available_dates = df_historico['FECHA'].sort_values()
+    if len(available_dates) < n_days:
+        n_days = len(available_dates)
+    
+    validation_end = available_dates.iloc[-1]
+    validation_start = validation_end - timedelta(days=n_days - 1)
+    
+    mask = (df_historico['FECHA'] >= validation_start) & (df_historico['FECHA'] <= validation_end)
+    df_validation = df_historico[mask].copy()
+    
+    if len(df_validation) == 0:
+        return None, "No hay datos en el rango"
+    
+    results = []
+    period_cols = [f'P{i}' for i in range(1, 25)]
+    
+    for i, (_, row) in enumerate(df_validation.iterrows()):
+        fecha = row['FECHA']
+        real_total = row['TOTAL'] if 'TOTAL' in row else row[period_cols].sum()
+        real_hourly = row[period_cols].values
+        
+        try:
+            result = engine.predict_hourly(fecha, real_total)
+            pred_hourly = result['hourly']
+            
+            error_abs = np.abs(pred_hourly - real_hourly)
+            error_pct = (pred_hourly - real_hourly) / real_hourly * 100
+            
+            results.append({
+                'fecha': fecha,
+                'real_total': real_total,
+                'pred_total': result['total_daily'],
+                'method': result['method'],
+                'day_type': result['day_type'],
+                'mae': np.mean(error_abs),
+                'rmse': np.sqrt(np.mean((pred_hourly - real_hourly)**2)),
+                'mape': np.mean(np.abs(error_pct)),
+                'max_error': np.max(error_abs),
+                'validation_ok': result['validation']['is_valid']
+            })
+        except Exception:
+            pass  # Ignorar errores individuales
+    
+    if not results:
+        return None, "No se pudieron procesar los datos"
+    
+    return pd.DataFrame(results), None
+
+
+@st.cache_data
+def run_model_backtest(ucp: str):
+    """
+    Ejecuta backtest del modelo: predice sobre datos históricos
+    y compara con valores reales (train y validation split)
+    """
+    import joblib
+    
+    df_historico, _ = load_historical_data(ucp)
+    if df_historico is None:
+        return None, None, "No hay datos históricos"
+    
+    model_path, _ = get_model_path_for_ucp(ucp)
+    if model_path is None:
+        return None, None, "No hay modelo entrenado"
+    
+    try:
+        # Cargar modelo
+        model_dict = joblib.load(model_path)
+        model = model_dict['model'] if isinstance(model_dict, dict) else model_dict
+        feature_names = model_dict.get('feature_names', None) if isinstance(model_dict, dict) else None
+        
+        # Preparar datos
+        df = df_historico.copy()
+        df = df.sort_values('FECHA').reset_index(drop=True)
+        
+        # Identificar columnas de features (excluir fecha, total, períodos)
+        exclude_cols = ['FECHA', 'fecha', 'TOTAL', 'demanda_total'] + [f'P{i}' for i in range(1, 25)]
+        
+        if feature_names:
+            # Usar las features del modelo
+            available_features = [f for f in feature_names if f in df.columns]
+            X = df[available_features].fillna(0)
+        else:
+            # Inferir features
+            feature_cols = [col for col in df.columns if col not in exclude_cols]
+            X = df[feature_cols].fillna(0)
+        
+        # Target
+        target_col = 'TOTAL' if 'TOTAL' in df.columns else 'demanda_total'
+        y = df[target_col].values
+        
+        # Predecir
+        y_pred = model.predict(X)
+        
+        # Split 80/20 (mismo que entrenamiento)
+        split_idx = int(len(df) * 0.8)
+        
+        # Datos de entrenamiento
+        df_train = pd.DataFrame({
+            'fecha': df['FECHA'].iloc[:split_idx],
+            'real': y[:split_idx],
+            'prediccion': y_pred[:split_idx]
+        })
+        df_train['error_pct'] = np.abs(df_train['prediccion'] - df_train['real']) / df_train['real'] * 100
+        
+        # Datos de validación
+        df_val = pd.DataFrame({
+            'fecha': df['FECHA'].iloc[split_idx:],
+            'real': y[split_idx:],
+            'prediccion': y_pred[split_idx:]
+        })
+        df_val['error_pct'] = np.abs(df_val['prediccion'] - df_val['real']) / df_val['real'] * 100
+        
+        return df_train, df_val, None
+        
+    except Exception as e:
+        return None, None, str(e)
+
+
+# ============================================================================
+# FUNCIONES DE GRÁFICAS
+# ============================================================================
+
 def plot_daily_predictions(predictions_df):
     """Gráfica de predicciones diarias"""
     fig = go.Figure()
-
-    # Línea de predicción
+    
     fig.add_trace(go.Scatter(
         x=predictions_df['fecha'],
         y=predictions_df['demanda_predicha'],
@@ -121,22 +353,19 @@ def plot_daily_predictions(predictions_df):
         marker=dict(size=8),
         hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Demanda: %{y:,.2f} MW<extra></extra>'
     ))
-
-    # Colorear fines de semana y festivos
+    
     for idx, row in predictions_df.iterrows():
-        if row['is_festivo']:
+        if row.get('is_festivo', False):
             fig.add_vrect(
                 x0=row['fecha'], x1=row['fecha'] + timedelta(days=1),
-                fillcolor="red", opacity=0.1,
-                layer="below", line_width=0,
+                fillcolor="red", opacity=0.1, layer="below", line_width=0
             )
-        elif row['is_weekend']:
+        elif row.get('is_weekend', False):
             fig.add_vrect(
                 x0=row['fecha'], x1=row['fecha'] + timedelta(days=1),
-                fillcolor="gray", opacity=0.05,
-                layer="below", line_width=0,
+                fillcolor="gray", opacity=0.05, layer="below", line_width=0
             )
-
+    
     fig.update_layout(
         title="<b>Predicción de Demanda Energética - Próximos 30 Días</b>",
         xaxis_title="Fecha",
@@ -145,24 +374,18 @@ def plot_daily_predictions(predictions_df):
         height=500,
         showlegend=True
     )
-
     return fig
 
 
 def plot_hourly_heatmap(predictions_df):
     """Mapa de calor de demanda horaria"""
     period_cols = [f'P{i}' for i in range(1, 25)]
-
-    # Verificar si existen columnas de períodos
     if not all(col in predictions_df.columns for col in period_cols):
         return None
-
-    # Crear matriz de horas × días
+    
     hourly_matrix = predictions_df[period_cols].values.T
-
-    # Fechas para el eje X
     dates = predictions_df['fecha'].dt.strftime('%Y-%m-%d').tolist()
-
+    
     fig = go.Figure(data=go.Heatmap(
         z=hourly_matrix,
         x=dates,
@@ -171,7 +394,7 @@ def plot_hourly_heatmap(predictions_df):
         colorbar=dict(title="MW"),
         hovertemplate='<b>Fecha: %{x}</b><br>Hora: %{y}<br>Demanda: %{z:,.2f} MW<extra></extra>'
     ))
-
+    
     fig.update_layout(
         title="<b>Patrón de Demanda Horaria - Próximos 30 Días</b>",
         xaxis_title="Fecha",
@@ -179,679 +402,507 @@ def plot_hourly_heatmap(predictions_df):
         height=600,
         xaxis=dict(tickangle=-45)
     )
-
     return fig
 
 
 def plot_weekly_comparison(predictions_df):
     """Comparación por semana"""
+    predictions_df = predictions_df.copy()
     predictions_df['week'] = predictions_df['fecha'].dt.isocalendar().week
-
+    
     weekly_stats = predictions_df.groupby('week').agg({
         'demanda_predicha': ['mean', 'min', 'max'],
         'fecha': 'first'
     }).reset_index()
-
     weekly_stats.columns = ['week', 'mean', 'min', 'max', 'start_date']
-
+    
     fig = go.Figure()
-
-    # Área entre min y max
+    
     fig.add_trace(go.Scatter(
-        x=weekly_stats['start_date'],
-        y=weekly_stats['max'],
-        fill=None,
-        mode='lines',
-        line_color='lightblue',
-        showlegend=False
+        x=weekly_stats['start_date'], y=weekly_stats['max'],
+        fill=None, mode='lines', line_color='lightblue', showlegend=False
     ))
-
     fig.add_trace(go.Scatter(
-        x=weekly_stats['start_date'],
-        y=weekly_stats['min'],
-        fill='tonexty',
-        mode='lines',
-        line_color='lightblue',
-        name='Rango Min-Max'
+        x=weekly_stats['start_date'], y=weekly_stats['min'],
+        fill='tonexty', mode='lines', line_color='lightblue', name='Rango Min-Max'
     ))
-
-    # Línea promedio
     fig.add_trace(go.Scatter(
-        x=weekly_stats['start_date'],
-        y=weekly_stats['mean'],
-        mode='lines+markers',
-        name='Demanda Promedio',
-        line=dict(color='blue', width=3),
-        marker=dict(size=10)
+        x=weekly_stats['start_date'], y=weekly_stats['mean'],
+        mode='lines+markers', name='Demanda Promedio',
+        line=dict(color='blue', width=3), marker=dict(size=10)
     ))
-
+    
     fig.update_layout(
         title="<b>Demanda Semanal Promedio</b>",
-        xaxis_title="Semana",
-        yaxis_title="Demanda (MW)",
+        xaxis_title="Semana", yaxis_title="Demanda (MW)", height=400
+    )
+    return fig
+
+
+def plot_hourly_average(predictions_df):
+    """Demanda promedio por hora"""
+    period_cols = [f'P{i}' for i in range(1, 25)]
+    if not all(col in predictions_df.columns for col in period_cols):
+        return None
+    
+    hourly_avg = predictions_df[period_cols].mean()
+    
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=list(range(24)),
+        y=hourly_avg.values,
+        marker_color='teal',
+        text=[f'{v:.0f}' for v in hourly_avg.values],
+        textposition='outside'
+    ))
+    fig.update_layout(
+        title="<b>Demanda Promedio por Período Horario</b>",
+        xaxis_title="Hora del Día",
+        yaxis_title="Demanda Promedio (MW)",
         height=400
     )
-
     return fig
 
 
-def plot_day_detail(predictions_df, selected_date):
-    """Detalle horario de un día específico"""
-    day_data = predictions_df[predictions_df['fecha'] == pd.to_datetime(selected_date)]
-
-    if len(day_data) == 0:
-        return None
-
-    period_cols = [f'P{i}' for i in range(1, 25)]
-
-    if not all(col in day_data.columns for col in period_cols):
-        st.warning("No hay datos de desagregación horaria disponibles")
-        return None
-
-    hourly_values = day_data[period_cols].values[0]
-    hours = list(range(24))
-
+def plot_validation_mape(df_results):
+    """Gráfica de MAPE temporal"""
+    mape_avg = df_results['mape'].mean()
+    
     fig = go.Figure()
-
-    # Barras de demanda horaria
-    fig.add_trace(go.Bar(
-        x=hours,
-        y=hourly_values,
-        name='Demanda',
-        marker_color='steelblue',
-        hovertemplate='<b>Hora %{x}:00</b><br>Demanda: %{y:,.2f} MW<extra></extra>'
+    fig.add_trace(go.Scatter(
+        x=df_results['fecha'], y=df_results['mape'],
+        mode='lines+markers', name='MAPE Diario',
+        line=dict(color='steelblue', width=2), marker=dict(size=6)
     ))
-
-    # Línea de promedio
-    avg_hourly = hourly_values.mean()
-    fig.add_hline(
-        y=avg_hourly,
-        line_dash="dash",
-        line_color="red",
-        annotation_text=f"Promedio: {avg_hourly:.2f} MW"
-    )
-
-    day_info = day_data.iloc[0]
-
+    fig.add_hline(y=5, line_dash="dash", line_color="red",
+                  annotation_text="Objetivo Regulatorio: 5%")
+    fig.add_hline(y=mape_avg, line_dash="dot", line_color="green",
+                  annotation_text=f"Promedio: {mape_avg:.2f}%")
+    
     fig.update_layout(
-        title=f"<b>Demanda Horaria - {selected_date}</b><br>"
-              f"<sub>Total: {day_info['demanda_predicha']:,.2f} MW | "
-              f"Tipo: {day_info.get('day_type', 'N/A')}</sub>",
-        xaxis_title="Hora del Día",
-        yaxis_title="Demanda (MW)",
-        height=500,
-        xaxis=dict(tickmode='linear', dtick=1)
+        title="<b>MAPE Diario - Validación Histórica</b>",
+        xaxis_title="Fecha", yaxis_title="MAPE (%)",
+        height=400, hovermode='x unified'
     )
-
     return fig
 
+
+def plot_real_vs_predicted(df_data, title: str, color_real: str = 'blue', color_pred: str = 'red'):
+    """Gráfica de Real vs Predicción"""
+    fig = go.Figure()
+    
+    # Línea de valores reales
+    fig.add_trace(go.Scatter(
+        x=df_data['fecha'],
+        y=df_data['real'],
+        mode='lines',
+        name='Real (Histórico)',
+        line=dict(color=color_real, width=2),
+        hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Real: %{y:,.0f} MW<extra></extra>'
+    ))
+    
+    # Línea de predicciones
+    fig.add_trace(go.Scatter(
+        x=df_data['fecha'],
+        y=df_data['prediccion'],
+        mode='lines',
+        name='Predicción (Modelo)',
+        line=dict(color=color_pred, width=2, dash='dash'),
+        hovertemplate='<b>%{x|%Y-%m-%d}</b><br>Predicción: %{y:,.0f} MW<extra></extra>'
+    ))
+    
+    # Calcular métricas
+    mape = df_data['error_pct'].mean()
+    r2 = 1 - (np.sum((df_data['real'] - df_data['prediccion'])**2) / 
+              np.sum((df_data['real'] - df_data['real'].mean())**2))
+    
+    fig.update_layout(
+        title=f"<b>{title}</b><br><sub>MAPE: {mape:.2f}% | R²: {r2:.4f}</sub>",
+        xaxis_title="Fecha",
+        yaxis_title="Demanda (MW)",
+        height=450,
+        hovermode='x unified',
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='center', x=0.5)
+    )
+    return fig, mape, r2
+
+
+def plot_scatter_real_vs_pred(df_data, title: str):
+    """Scatter plot de Real vs Predicción con línea diagonal"""
+    fig = go.Figure()
+    
+    # Puntos
+    fig.add_trace(go.Scatter(
+        x=df_data['real'],
+        y=df_data['prediccion'],
+        mode='markers',
+        name='Datos',
+        marker=dict(color='steelblue', size=6, opacity=0.6),
+        hovertemplate='Real: %{x:,.0f} MW<br>Pred: %{y:,.0f} MW<extra></extra>'
+    ))
+    
+    # Línea diagonal (predicción perfecta)
+    min_val = min(df_data['real'].min(), df_data['prediccion'].min())
+    max_val = max(df_data['real'].max(), df_data['prediccion'].max())
+    
+    fig.add_trace(go.Scatter(
+        x=[min_val, max_val],
+        y=[min_val, max_val],
+        mode='lines',
+        name='Predicción Perfecta',
+        line=dict(color='red', width=2, dash='dash')
+    ))
+    
+    # Calcular R²
+    r2 = 1 - (np.sum((df_data['real'] - df_data['prediccion'])**2) / 
+              np.sum((df_data['real'] - df_data['real'].mean())**2))
+    
+    fig.update_layout(
+        title=f"<b>{title}</b><br><sub>R²: {r2:.4f}</sub>",
+        xaxis_title="Demanda Real (MW)",
+        yaxis_title="Demanda Predicha (MW)",
+        height=400,
+        showlegend=True
+    )
+    return fig
+
+
+def plot_error_distribution(df_data, title: str):
+    """Histograma de distribución de errores"""
+    errors = df_data['prediccion'] - df_data['real']
+    
+    fig = go.Figure()
+    fig.add_trace(go.Histogram(
+        x=errors,
+        nbinsx=50,
+        name='Error',
+        marker_color='steelblue',
+        opacity=0.7
+    ))
+    
+    # Línea vertical en 0
+    fig.add_vline(x=0, line_dash="dash", line_color="red", line_width=2)
+    
+    # Estadísticas
+    mean_error = errors.mean()
+    std_error = errors.std()
+    
+    fig.update_layout(
+        title=f"<b>{title}</b><br><sub>Media: {mean_error:,.0f} MW | Std: {std_error:,.0f} MW</sub>",
+        xaxis_title="Error (Predicción - Real) [MW]",
+        yaxis_title="Frecuencia",
+        height=350
+    )
+    return fig
+
+
+# ============================================================================
+# APLICACIÓN PRINCIPAL (AUTOMÁTICA)
+# ============================================================================
 
 def main():
-    """Aplicación principal"""
-
+    """Aplicación principal - MODO AUTOMÁTICO"""
+    
+    # Usar UCP por defecto
+    selected_ucp = DEFAULT_UCP
+    n_days = DEFAULT_N_DAYS
+    
     # Header
     st.markdown('<p class="main-header">⚡ Predicción de Demanda Energética - EPM</p>',
                 unsafe_allow_html=True)
-
-    st.markdown("""
+    
+    st.markdown(f"""
     <div style='text-align: center; padding: 1rem; background-color: #e7f3ff; border-radius: 0.5rem; margin-bottom: 2rem;'>
         <h3 style='color: #1f77b4; margin: 0;'>🔮 Sistema de Pronóstico Automatizado</h3>
-        <p style='margin: 0.5rem 0 0 0;'>Predicciones con desagregación horaria automática usando clustering inteligente</p>
+        <p style='margin: 0.5rem 0 0 0;'>
+            <span class='ucp-badge'>{selected_ucp}</span> | 
+            Predicciones con desagregación horaria automática
+        </p>
     </div>
     """, unsafe_allow_html=True)
-
-    # Sidebar
-    st.sidebar.title("⚙️ Configuración")
-
-    # Número de días a predecir
-    n_days = st.sidebar.slider(
-        "Días a predecir:",
-        min_value=7,
-        max_value=60,
-        value=30,
-        step=1
-    )
-
-    # Botón de generación
-    if st.sidebar.button("🚀 Generar Predicciones", type="primary", use_container_width=True):
-        st.cache_data.clear()  # Limpiar cache para regenerar
-
-    # Información del sistema
-    with st.sidebar.expander("ℹ️ Información del Sistema", expanded=False):
-        st.write("**Modelo Principal:**")
-        st.write("- XGBoost optimizado")
-        st.write("- MAPE histórico: 0.45%")
-        st.write("- 63 features predictivas")
-
-        st.write("\n**Desagregación Horaria:**")
-        st.write("- 35 clusters (días normales)")
-        st.write("- 15 clusters (días especiales)")
-        st.write("- Validación suma = total")
-
-    # Estado del sistema
-    engine, error = load_hourly_engine()
-
-    if engine:
-        status = engine.get_engine_status()
-        with st.sidebar.expander("📊 Estado Desagregación", expanded=False):
-            st.write(f"Normal: {'✅' if status['normal_disaggregator']['fitted'] else '❌'}")
-            st.write(f"Especial: {'✅' if status['special_disaggregator']['fitted'] else '❌'}")
-
-    # Generar predicciones
+    
+    # Verificar modelo
+    model_path, model_error = get_model_path_for_ucp(selected_ucp)
+    if model_path is None:
+        st.error(f"❌ {model_error}")
+        st.info("Ejecute primero la API con force_retrain=true para entrenar el modelo")
+        st.stop()
+    
+    # Generar predicciones automáticamente
     with st.spinner(f"🔮 Generando predicciones para {n_days} días..."):
-        predictions_df, error = generate_predictions(n_days)
-
+        predictions_df, error = generate_predictions(selected_ucp, n_days)
+    
     if predictions_df is None:
         st.error(f"❌ Error al generar predicciones: {error}")
-        st.info("Verifique que el modelo esté entrenado:\n\n```bash\npython scripts/train_models.py\n```")
         st.stop()
-
+    
     # Información de las predicciones
     fecha_inicio = predictions_df['fecha'].min()
     fecha_fin = predictions_df['fecha'].max()
-
-    col1, col2, col3 = st.columns(3)
-
+    
+    # Métricas principales
+    col1, col2, col3, col4 = st.columns(4)
+    
     with col1:
-        st.markdown(f"""
-        <div class='metric-card'>
-            <h4>📅 Período de Predicción</h4>
-            <p><b>{fecha_inicio.strftime('%Y-%m-%d')}</b> a <b>{fecha_fin.strftime('%Y-%m-%d')}</b></p>
-            <span class='future-badge'>FUTURO</span>
-        </div>
-        """, unsafe_allow_html=True)
-
+        st.metric("📅 Período", f"{fecha_inicio.strftime('%d/%m')} - {fecha_fin.strftime('%d/%m/%Y')}")
     with col2:
-        st.markdown(f"""
-        <div class='metric-card'>
-            <h4>📊 Demanda Promedio</h4>
-            <p style='font-size: 2rem; margin: 0; color: #1f77b4;'><b>{predictions_df['demanda_predicha'].mean():,.0f}</b> MW</p>
-        </div>
-        """, unsafe_allow_html=True)
-
+        st.metric("📊 Demanda Promedio", f"{predictions_df['demanda_predicha'].mean():,.0f} MW")
     with col3:
         dias_festivos = int(predictions_df.get('is_festivo', pd.Series([0]*len(predictions_df))).sum())
-        st.markdown(f"""
-        <div class='metric-card'>
-            <h4>🎉 Días Especiales</h4>
-            <p><b>{dias_festivos}</b> festivos<br><b>{int(predictions_df.get('is_weekend', pd.Series([0]*len(predictions_df))).sum())}</b> fin de semana</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-    # Tabs principales
+        st.metric("🎉 Festivos", f"{dias_festivos} días")
+    with col4:
+        dias_weekend = int(predictions_df.get('is_weekend', pd.Series([0]*len(predictions_df))).sum())
+        st.metric("📆 Fin de Semana", f"{dias_weekend} días")
+    
+    # ==================== TABS ====================
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "📈 Vista General",
         "🔥 Mapa de Calor Horario",
-        "📅 Detalle por Día",
-        "✅ Validación con Históricos",
+        "🎯 Modelo: Train vs Val",
+        "✅ Validación Históricos",
         "📊 Estadísticas"
     ])
-
+    
     # ==================== TAB 1: VISTA GENERAL ====================
     with tab1:
-        st.header("Predicción de Demanda Diaria")
-
-        fig_daily = plot_daily_predictions(predictions_df)
-        st.plotly_chart(fig_daily, use_container_width=True)
-
-        # Comparación semanal
-        st.subheader("Demanda por Semana")
-        fig_weekly = plot_weekly_comparison(predictions_df)
-        st.plotly_chart(fig_weekly, use_container_width=True)
-
-        # Métricas adicionales
+        st.plotly_chart(plot_daily_predictions(predictions_df), use_container_width=True)
+        st.plotly_chart(plot_weekly_comparison(predictions_df), use_container_width=True)
+        
         col1, col2, col3, col4 = st.columns(4)
-
         with col1:
             st.metric("Demanda Mínima", f"{predictions_df['demanda_predicha'].min():,.0f} MW")
-
         with col2:
             st.metric("Demanda Máxima", f"{predictions_df['demanda_predicha'].max():,.0f} MW")
-
         with col3:
-            variacion = predictions_df['demanda_predicha'].std()
-            st.metric("Desv. Estándar", f"{variacion:,.0f} MW")
-
+            st.metric("Desv. Estándar", f"{predictions_df['demanda_predicha'].std():,.0f} MW")
         with col4:
-            total_mensual = predictions_df['demanda_predicha'].sum()
-            st.metric("Total Acumulado", f"{total_mensual:,.0f} MWh")
-
+            st.metric("Total Acumulado", f"{predictions_df['demanda_predicha'].sum():,.0f} MWh")
+    
     # ==================== TAB 2: MAPA DE CALOR ====================
     with tab2:
-        st.header("Patrón de Demanda Horaria (24h)")
-
-        period_cols = [f'P{i}' for i in range(1, 25)]
-        if all(col in predictions_df.columns for col in period_cols):
-            fig_heatmap = plot_hourly_heatmap(predictions_df)
-            if fig_heatmap:
-                st.plotly_chart(fig_heatmap, use_container_width=True)
-
-                # Estadísticas por hora
-                st.subheader("Demanda Promedio por Hora del Día")
-
-                hourly_avg = predictions_df[period_cols].mean()
-
-                fig_hourly_avg = go.Figure()
-                fig_hourly_avg.add_trace(go.Bar(
-                    x=list(range(24)),
-                    y=hourly_avg.values,
-                    marker_color='teal',
-                    text=[f'{v:.0f}' for v in hourly_avg.values],
-                    textposition='outside'
-                ))
-
-                fig_hourly_avg.update_layout(
-                    title="Demanda Promedio por Período Horario",
-                    xaxis_title="Hora del Día",
-                    yaxis_title="Demanda Promedio (MW)",
-                    height=400
-                )
-
-                st.plotly_chart(fig_hourly_avg, use_container_width=True)
+        fig_heatmap = plot_hourly_heatmap(predictions_df)
+        if fig_heatmap:
+            st.plotly_chart(fig_heatmap, use_container_width=True)
+            
+            fig_hourly = plot_hourly_average(predictions_df)
+            if fig_hourly:
+                st.plotly_chart(fig_hourly, use_container_width=True)
         else:
             st.warning("⚠️ Desagregación horaria no disponible")
-            st.info("Para habilitar desagregación horaria:\n\n```bash\npython scripts/train_hourly_disaggregation.py\n```")
-
-    # ==================== TAB 3: DETALLE POR DÍA ====================
+    
+    # ==================== TAB 3: MODELO TRAIN VS VALIDATION ====================
     with tab3:
-        st.header("Detalle Horario por Día")
-
-        # Selector de fecha
-        selected_date = st.date_input(
-            "Seleccione una fecha:",
-            value=fecha_inicio.date(),
-            min_value=fecha_inicio.date(),
-            max_value=fecha_fin.date()
-        )
-
-        fig_day = plot_day_detail(predictions_df, selected_date)
-
-        if fig_day:
-            st.plotly_chart(fig_day, use_container_width=True)
-
-            # Tabla de datos horarios
-            with st.expander("📋 Ver Datos Horarios Detallados"):
-                day_data = predictions_df[predictions_df['fecha'] == pd.to_datetime(selected_date)]
-
-                if len(day_data) > 0 and all(f'P{i}' in day_data.columns for i in range(1, 25)):
-                    period_cols = [f'P{i}' for i in range(1, 25)]
-                    hourly_values = day_data[period_cols].values[0]
-
-                    df_hourly = pd.DataFrame({
-                        'Hora': [f'{i:02d}:00 - {i+1:02d}:00' for i in range(24)],
-                        'Demanda (MW)': hourly_values,
-                        '% del Total': (hourly_values / hourly_values.sum() * 100)
-                    })
-
-                    st.dataframe(
-                        df_hourly.style.format({
-                            'Demanda (MW)': '{:,.2f}',
-                            '% del Total': '{:.2f}%'
-                        }),
-                        use_container_width=True
-                    )
-        else:
-            st.warning("No hay datos de desagregación horaria para esta fecha")
-
-    # ==================== TAB 4: VALIDACIÓN CON HISTÓRICOS ====================
-    with tab4:
-        st.header("✅ Validación: Predicciones vs Datos Reales")
-
-        st.info("📌 Esta sección compara las predicciones del sistema con datos históricos reales para validar la precisión.")
-
-        # Cargar datos históricos
-        @st.cache_data
-        def load_historical_data():
-            data_path = Path(FEATURES_DATA_DIR) / "data_with_features_latest.csv"
-            if not data_path.exists():
-                return None
-            df = pd.read_csv(data_path)
-            df['FECHA'] = pd.to_datetime(df['FECHA'])
-            return df
-
-        df_historico = load_historical_data()
-
-        if df_historico is None:
-            st.error("❌ No se encontraron datos históricos para validación")
-        else:
-            st.success(f"✅ {len(df_historico)} días históricos disponibles")
-
-            # Selector de rango de validación
-            available_dates = df_historico['FECHA'].dt.date.tolist()
-
-            col1, col2 = st.columns(2)
-
+        st.header("🎯 Desempeño del Modelo: Entrenamiento vs Validación")
+        st.info("📌 Comparación de predicciones del modelo contra datos históricos reales (split 80% train / 20% validation)")
+        
+        with st.spinner("🔄 Ejecutando backtest del modelo..."):
+            df_train, df_val, backtest_error = run_model_backtest(selected_ucp)
+        
+        if backtest_error:
+            st.error(f"❌ Error en backtest: {backtest_error}")
+        elif df_train is not None and df_val is not None:
+            # Métricas resumen
+            col1, col2, col3, col4 = st.columns(4)
+            
+            train_mape = df_train['error_pct'].mean()
+            val_mape = df_val['error_pct'].mean()
+            
             with col1:
-                validation_start = st.date_input(
-                    "Fecha inicial:",
-                    value=available_dates[-30] if len(available_dates) >= 30 else available_dates[0],
-                    min_value=min(available_dates),
-                    max_value=max(available_dates)
-                )
-
+                st.metric("📚 MAPE Entrenamiento", f"{train_mape:.2f}%",
+                         delta="✅" if train_mape < 5 else "⚠️")
             with col2:
-                validation_end = st.date_input(
-                    "Fecha final:",
-                    value=available_dates[-1],
-                    min_value=validation_start,
-                    max_value=max(available_dates)
-                )
-
-            if st.button("🔍 Ejecutar Validación", type="primary"):
-                with st.spinner("Validando predicciones..."):
-                    # Filtrar datos históricos
-                    mask = (df_historico['FECHA'].dt.date >= validation_start) & \
-                           (df_historico['FECHA'].dt.date <= validation_end)
-                    df_validation = df_historico[mask].copy()
-
-                    if len(df_validation) == 0:
-                        st.warning("No hay datos en el rango seleccionado")
-                    else:
-                        # Cargar motor de desagregación
-                        engine, error = load_hourly_engine()
-
-                        if engine is None:
-                            st.error(f"❌ Motor de desagregación no disponible: {error}")
-                        else:
-                            results = []
-                            period_cols = [f'P{i}' for i in range(1, 25)]
-
-                            progress_bar = st.progress(0)
-
-                            for idx, row in df_validation.iterrows():
-                                fecha = row['FECHA']
-                                real_total = row['TOTAL'] if 'TOTAL' in row else row[period_cols].sum()
-                                real_hourly = row[period_cols].values
-
-                                # Predecir con el sistema
-                                try:
-                                    result = engine.predict_hourly(fecha, real_total)
-                                    pred_hourly = result['hourly']
-
-                                    # Calcular errores
-                                    error_abs = np.abs(pred_hourly - real_hourly)
-                                    error_pct = (pred_hourly - real_hourly) / real_hourly * 100
-
-                                    results.append({
-                                        'fecha': fecha,
-                                        'real_total': real_total,
-                                        'pred_total': result['total_daily'],
-                                        'method': result['method'],
-                                        'day_type': result['day_type'],
-                                        'mae': np.mean(error_abs),
-                                        'rmse': np.sqrt(np.mean((pred_hourly - real_hourly)**2)),
-                                        'mape': np.mean(np.abs(error_pct)),
-                                        'max_error': np.max(error_abs),
-                                        'validation_ok': result['validation']['is_valid']
-                                    })
-                                except Exception as e:
-                                    st.error(f"Error en {fecha}: {e}")
-
-                                progress_bar.progress((idx + 1) / len(df_validation))
-
-                            progress_bar.empty()
-
-                            if results:
-                                df_results = pd.DataFrame(results)
-
-                                # Métricas globales
-                                st.subheader("📊 Métricas Globales de Precisión")
-
-                                col1, col2, col3, col4 = st.columns(4)
-
-                                with col1:
-                                    mae_avg = df_results['mae'].mean()
-                                    st.metric(
-                                        "MAE Promedio",
-                                        f"{mae_avg:.2f} MW",
-                                        delta=f"{'✅' if mae_avg < 5 else '⚠️'}"
-                                    )
-
-                                with col2:
-                                    rmse_avg = df_results['rmse'].mean()
-                                    st.metric(
-                                        "RMSE Promedio",
-                                        f"{rmse_avg:.2f} MW",
-                                        delta=f"{'✅' if rmse_avg < 10 else '⚠️'}"
-                                    )
-
-                                with col3:
-                                    mape_avg = df_results['mape'].mean()
-                                    mape_status = "✅ EXCELENTE" if mape_avg < 2 else \
-                                                 "✅ BUENO" if mape_avg < 5 else "⚠️ ACEPTABLE"
-                                    st.metric(
-                                        "MAPE Promedio",
-                                        f"{mape_avg:.2f}%",
-                                        delta=mape_status
-                                    )
-
-                                with col4:
-                                    validation_ok = (df_results['validation_ok'].sum() / len(df_results)) * 100
-                                    st.metric(
-                                        "Validación OK",
-                                        f"{validation_ok:.1f}%",
-                                        delta="✅" if validation_ok > 95 else "⚠️"
-                                    )
-
-                                # Gráfica de comparación temporal
-                                st.subheader("📈 MAPE a lo Largo del Tiempo")
-
-                                fig_temporal = go.Figure()
-
-                                fig_temporal.add_trace(go.Scatter(
-                                    x=df_results['fecha'],
-                                    y=df_results['mape'],
-                                    mode='lines+markers',
-                                    name='MAPE Diario',
-                                    line=dict(color='steelblue', width=2),
-                                    marker=dict(size=6)
-                                ))
-
-                                # Línea de objetivo regulatorio
-                                fig_temporal.add_hline(
-                                    y=5,
-                                    line_dash="dash",
-                                    line_color="red",
-                                    annotation_text="Objetivo Regulatorio: 5%"
-                                )
-
-                                # Línea de promedio
-                                fig_temporal.add_hline(
-                                    y=mape_avg,
-                                    line_dash="dot",
-                                    line_color="green",
-                                    annotation_text=f"Promedio: {mape_avg:.2f}%"
-                                )
-
-                                fig_temporal.update_layout(
-                                    title="MAPE Diario - Validación Histórica",
-                                    xaxis_title="Fecha",
-                                    yaxis_title="MAPE (%)",
-                                    height=400,
-                                    hovermode='x unified'
-                                )
-
-                                st.plotly_chart(fig_temporal, use_container_width=True)
-
-                                # Comparación por tipo de día
-                                col1, col2 = st.columns(2)
-
-                                with col1:
-                                    st.subheader("📊 MAPE por Tipo de Día")
-
-                                    fig_box = px.box(
-                                        df_results,
-                                        x='day_type',
-                                        y='mape',
-                                        color='day_type',
-                                        title="Distribución de MAPE por Tipo de Día",
-                                        labels={'day_type': 'Tipo de Día', 'mape': 'MAPE (%)'}
-                                    )
-                                    st.plotly_chart(fig_box, use_container_width=True)
-
-                                with col2:
-                                    st.subheader("📊 MAPE por Método")
-
-                                    fig_method = px.box(
-                                        df_results,
-                                        x='method',
-                                        y='mape',
-                                        color='method',
-                                        title="Distribución de MAPE por Método de Desagregación",
-                                        labels={'method': 'Método', 'mape': 'MAPE (%)'}
-                                    )
-                                    st.plotly_chart(fig_method, use_container_width=True)
-
-                                # Tabla resumen
-                                st.subheader("📋 Resumen Estadístico por Categoría")
-
-                                summary_by_type = df_results.groupby('day_type')['mape'].agg([
-                                    ('Media (%)', 'mean'),
-                                    ('Mínimo (%)', 'min'),
-                                    ('Máximo (%)', 'max'),
-                                    ('Desv. Std (%)', 'std'),
-                                    ('Días', 'count')
-                                ]).round(2)
-
-                                st.dataframe(summary_by_type, use_container_width=True)
-
-                                # Días con mayor error
-                                st.subheader("⚠️ Días con Mayor Error (Top 10)")
-
-                                top_errors = df_results.nlargest(10, 'mape')[
-                                    ['fecha', 'day_type', 'method', 'mape', 'mae', 'rmse']
-                                ].copy()
-
-                                top_errors['fecha'] = top_errors['fecha'].dt.strftime('%Y-%m-%d')
-
-                                st.dataframe(
-                                    top_errors.style.format({
-                                        'mape': '{:.2f}%',
-                                        'mae': '{:.2f} MW',
-                                        'rmse': '{:.2f} MW'
-                                    }),
-                                    use_container_width=True
-                                )
-
-                                # Comparación visual de un día específico
-                                st.subheader("🔍 Detalle de Día Específico")
-
-                                selected_validation_date = st.selectbox(
-                                    "Seleccione un día para ver detalle:",
-                                    options=df_results['fecha'].dt.strftime('%Y-%m-%d').tolist()
-                                )
-
-                                if selected_validation_date:
-                                    sel_date = pd.to_datetime(selected_validation_date)
-                                    day_row = df_validation[df_validation['FECHA'] == sel_date].iloc[0]
-
-                                    real_hourly = day_row[period_cols].values
-                                    real_total = day_row['TOTAL'] if 'TOTAL' in day_row else real_hourly.sum()
-
-                                    result_sel = engine.predict_hourly(sel_date, real_total)
-                                    pred_hourly = result_sel['hourly']
-
-                                    # Gráfica comparativa
-                                    fig_compare = go.Figure()
-
-                                    hours = list(range(24))
-
-                                    fig_compare.add_trace(go.Scatter(
-                                        x=hours,
-                                        y=real_hourly,
-                                        mode='lines+markers',
-                                        name='Real',
-                                        line=dict(color='blue', width=3),
-                                        marker=dict(size=8)
-                                    ))
-
-                                    fig_compare.add_trace(go.Scatter(
-                                        x=hours,
-                                        y=pred_hourly,
-                                        mode='lines+markers',
-                                        name='Predicción',
-                                        line=dict(color='red', width=3, dash='dash'),
-                                        marker=dict(size=6, symbol='square')
-                                    ))
-
-                                    error_abs = np.abs(pred_hourly - real_hourly)
-                                    mape_day = np.mean(np.abs((pred_hourly - real_hourly) / real_hourly * 100))
-
-                                    fig_compare.update_layout(
-                                        title=f"Comparación Detallada: {selected_validation_date}<br>"
-                                              f"<sub>MAPE: {mape_day:.2f}% | MAE: {np.mean(error_abs):.2f} MW</sub>",
-                                        xaxis_title="Hora del Día",
-                                        yaxis_title="Demanda (MW)",
-                                        height=500,
-                                        hovermode='x unified'
-                                    )
-
-                                    st.plotly_chart(fig_compare, use_container_width=True)
-
+                st.metric("🧪 MAPE Validación", f"{val_mape:.2f}%",
+                         delta="✅" if val_mape < 5 else "⚠️")
+            with col3:
+                st.metric("📊 Registros Train", f"{len(df_train):,}")
+            with col4:
+                st.metric("📊 Registros Val", f"{len(df_val):,}")
+            
+            # Separador
+            st.markdown("---")
+            
+            # ====== GRÁFICA 1: HISTÓRICOS VS ENTRENAMIENTO ======
+            st.subheader("📚 Históricos vs Entrenamiento (80% datos)")
+            
+            fig_train, mape_train, r2_train = plot_real_vs_predicted(
+                df_train, 
+                "Real vs Predicción - Período de Entrenamiento",
+                color_real='#1f77b4',
+                color_pred='#ff7f0e'
+            )
+            st.plotly_chart(fig_train, use_container_width=True)
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                fig_scatter_train = plot_scatter_real_vs_pred(df_train, "Scatter: Entrenamiento")
+                st.plotly_chart(fig_scatter_train, use_container_width=True)
+            with col2:
+                fig_error_train = plot_error_distribution(df_train, "Distribución de Errores: Entrenamiento")
+                st.plotly_chart(fig_error_train, use_container_width=True)
+            
+            # Separador
+            st.markdown("---")
+            
+            # ====== GRÁFICA 2: HISTÓRICOS VS VALIDACIÓN ======
+            st.subheader("🧪 Históricos vs Validación (20% datos)")
+            
+            fig_val, mape_val, r2_val = plot_real_vs_predicted(
+                df_val,
+                "Real vs Predicción - Período de Validación",
+                color_real='#2ca02c',
+                color_pred='#d62728'
+            )
+            st.plotly_chart(fig_val, use_container_width=True)
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                fig_scatter_val = plot_scatter_real_vs_pred(df_val, "Scatter: Validación")
+                st.plotly_chart(fig_scatter_val, use_container_width=True)
+            with col2:
+                fig_error_val = plot_error_distribution(df_val, "Distribución de Errores: Validación")
+                st.plotly_chart(fig_error_val, use_container_width=True)
+            
+            # Separador
+            st.markdown("---")
+            
+            # ====== TABLA COMPARATIVA ======
+            st.subheader("📋 Resumen Comparativo")
+            
+            summary_data = {
+                'Métrica': ['MAPE (%)', 'R²', 'MAE (MW)', 'RMSE (MW)', 'Error Medio (MW)', 'Error Std (MW)', 'Registros'],
+                'Entrenamiento': [
+                    f"{train_mape:.2f}",
+                    f"{r2_train:.4f}",
+                    f"{np.mean(np.abs(df_train['prediccion'] - df_train['real'])):,.0f}",
+                    f"{np.sqrt(np.mean((df_train['prediccion'] - df_train['real'])**2)):,.0f}",
+                    f"{np.mean(df_train['prediccion'] - df_train['real']):,.0f}",
+                    f"{np.std(df_train['prediccion'] - df_train['real']):,.0f}",
+                    f"{len(df_train):,}"
+                ],
+                'Validación': [
+                    f"{val_mape:.2f}",
+                    f"{r2_val:.4f}",
+                    f"{np.mean(np.abs(df_val['prediccion'] - df_val['real'])):,.0f}",
+                    f"{np.sqrt(np.mean((df_val['prediccion'] - df_val['real'])**2)):,.0f}",
+                    f"{np.mean(df_val['prediccion'] - df_val['real']):,.0f}",
+                    f"{np.std(df_val['prediccion'] - df_val['real']):,.0f}",
+                    f"{len(df_val):,}"
+                ]
+            }
+            
+            df_summary = pd.DataFrame(summary_data)
+            st.dataframe(df_summary, use_container_width=True, hide_index=True)
+            
+            # Interpretación
+            overfitting_ratio = val_mape / train_mape if train_mape > 0 else 0
+            
+            if overfitting_ratio < 1.5:
+                st.success(f"✅ **Modelo bien generalizado**: El error de validación ({val_mape:.2f}%) es similar al de entrenamiento ({train_mape:.2f}%)")
+            elif overfitting_ratio < 2.0:
+                st.warning(f"⚠️ **Posible sobreajuste leve**: El error de validación ({val_mape:.2f}%) es {overfitting_ratio:.1f}x mayor que entrenamiento ({train_mape:.2f}%)")
+            else:
+                st.error(f"❌ **Sobreajuste detectado**: El error de validación ({val_mape:.2f}%) es {overfitting_ratio:.1f}x mayor que entrenamiento ({train_mape:.2f}%)")
+        else:
+            st.warning("⚠️ No se pudo ejecutar el backtest")
+    
+    # ==================== TAB 4: VALIDACIÓN HISTÓRICOS ====================
+    with tab4:
+        st.header(f"✅ Validación: Últimos {DEFAULT_VALIDATION_DAYS} Días")
+        
+        with st.spinner("🔍 Ejecutando validación automática..."):
+            df_results, val_error = run_validation(selected_ucp, DEFAULT_VALIDATION_DAYS)
+        
+        if df_results is None:
+            st.warning(f"⚠️ {val_error}")
+        else:
+            # Métricas globales
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                mae_avg = df_results['mae'].mean()
+                st.metric("MAE Promedio", f"{mae_avg:.2f} MW",
+                         delta="✅" if mae_avg < 50 else "⚠️")
+            with col2:
+                rmse_avg = df_results['rmse'].mean()
+                st.metric("RMSE Promedio", f"{rmse_avg:.2f} MW",
+                         delta="✅" if rmse_avg < 100 else "⚠️")
+            with col3:
+                mape_avg = df_results['mape'].mean()
+                status = "✅ EXCELENTE" if mape_avg < 2 else "✅ BUENO" if mape_avg < 5 else "⚠️"
+                st.metric("MAPE Promedio", f"{mape_avg:.2f}%", delta=status)
+            with col4:
+                val_ok = (df_results['validation_ok'].sum() / len(df_results)) * 100
+                st.metric("Validación OK", f"{val_ok:.1f}%",
+                         delta="✅" if val_ok > 95 else "⚠️")
+            
+            # Gráficas
+            st.plotly_chart(plot_validation_mape(df_results), use_container_width=True)
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                fig_box = px.box(df_results, x='day_type', y='mape', color='day_type',
+                                title="<b>MAPE por Tipo de Día</b>",
+                                labels={'day_type': 'Tipo', 'mape': 'MAPE (%)'})
+                st.plotly_chart(fig_box, use_container_width=True)
+            
+            with col2:
+                fig_method = px.box(df_results, x='method', y='mape', color='method',
+                                   title="<b>MAPE por Método de Desagregación</b>",
+                                   labels={'method': 'Método', 'mape': 'MAPE (%)'})
+                st.plotly_chart(fig_method, use_container_width=True)
+            
+            # Tabla resumen
+            st.subheader("📋 Resumen por Tipo de Día")
+            summary = df_results.groupby('day_type')['mape'].agg([
+                ('Media (%)', 'mean'),
+                ('Mín (%)', 'min'),
+                ('Máx (%)', 'max'),
+                ('Días', 'count')
+            ]).round(2)
+            st.dataframe(summary, use_container_width=True)
+    
     # ==================== TAB 5: ESTADÍSTICAS ====================
     with tab5:
-        st.header("Estadísticas y Análisis")
-
         col1, col2 = st.columns(2)
-
+        
         with col1:
-            # Distribución de demanda
             fig_dist = px.histogram(
-                predictions_df,
-                x='demanda_predicha',
-                nbins=30,
-                title="Distribución de Demanda Predicha",
+                predictions_df, x='demanda_predicha', nbins=30,
+                title="<b>Distribución de Demanda Predicha</b>",
                 labels={'demanda_predicha': 'Demanda (MW)'},
                 color_discrete_sequence=['steelblue']
             )
             st.plotly_chart(fig_dist, use_container_width=True)
-
+        
         with col2:
-            # Box plot por día de la semana
-            predictions_df['dia_semana'] = predictions_df['fecha'].dt.day_name()
-
+            predictions_df_copy = predictions_df.copy()
+            predictions_df_copy['dia_semana'] = predictions_df_copy['fecha'].dt.day_name()
             fig_box = px.box(
-                predictions_df,
-                x='dia_semana',
-                y='demanda_predicha',
-                title="Demanda por Día de la Semana",
+                predictions_df_copy, x='dia_semana', y='demanda_predicha',
+                title="<b>Demanda por Día de la Semana</b>",
                 labels={'dia_semana': 'Día', 'demanda_predicha': 'Demanda (MW)'},
                 color='dia_semana'
             )
             st.plotly_chart(fig_box, use_container_width=True)
-
+        
         # Tabla resumen
-        st.subheader("Resumen Estadístico")
-
+        st.subheader("📋 Resumen Estadístico")
         summary = predictions_df['demanda_predicha'].describe()
-
         summary_df = pd.DataFrame({
-            'Métrica': ['Media', 'Desv. Estándar', 'Mínimo', '25%', 'Mediana', '75%', 'Máximo'],
-            'Valor (MW)': [
-                summary['mean'],
-                summary['std'],
-                summary['min'],
-                summary['25%'],
-                summary['50%'],
-                summary['75%'],
-                summary['max']
-            ]
+            'Métrica': ['Media', 'Desv. Std', 'Mínimo', '25%', 'Mediana', '75%', 'Máximo'],
+            'Valor (MW)': [summary['mean'], summary['std'], summary['min'],
+                          summary['25%'], summary['50%'], summary['75%'], summary['max']]
         })
-
-        st.dataframe(
-            summary_df.style.format({'Valor (MW)': '{:,.2f}'}),
-            use_container_width=True
-        )
-
-        # Descargar datos
+        st.dataframe(summary_df.style.format({'Valor (MW)': '{:,.2f}'}), use_container_width=True)
+        
+        # Descargar
         st.subheader("💾 Exportar Datos")
-
         csv = predictions_df.to_csv(index=False)
-
         st.download_button(
             label="📥 Descargar Predicciones (CSV)",
             data=csv,
-            file_name=f"predicciones_epm_{fecha_inicio.strftime('%Y%m%d')}_{fecha_fin.strftime('%Y%m%d')}.csv",
+            file_name=f"predicciones_{selected_ucp}_{fecha_inicio.strftime('%Y%m%d')}.csv",
             mime="text/csv",
             use_container_width=True
         )

@@ -21,6 +21,9 @@ import logging
 import traceback
 import pandas as pd
 from fastapi.concurrency import run_in_threadpool
+import os
+from dotenv import load_dotenv
+from openai import OpenAI
 # Importar componentes del sistema
 from src.pipeline.orchestrator import run_automated_pipeline
 from src.models.trainer import ModelTrainer
@@ -28,6 +31,9 @@ from src.prediction.forecaster import ForecastPipeline
 from src.prediction.hourly import HourlyDisaggregationEngine
 from src.pipeline.update_csv import full_update_csv
 from fastapi.concurrency import run_in_threadpool
+
+# Cargar variables de entorno
+load_dotenv()
 # Configuración de logging
 logging.basicConfig(
     level=logging.INFO,
@@ -180,7 +186,8 @@ class HourlyPrediction(BaseModel):
 
 class PredictResponse(BaseModel):
     """Schema para respuesta de predicción"""
-    should_retrain: str = Field(..., description="Indica si se recomienda reentrenar el modelo")
+    should_retrain: bool = Field(..., description="Indica si se recomienda reentrenar el modelo (true/false)")
+    reason: str = Field(..., description="Razón por la cual se recomienda o no reentrenar")
     status: str = Field(..., description="Estado de la operación")
     message: str = Field(..., description="Mensaje descriptivo")
     metadata: Dict[str, Any] = Field(..., description="Metadata de la predicción")
@@ -189,6 +196,8 @@ class PredictResponse(BaseModel):
     class Config:
         schema_extra = {
             "example": {
+                "should_retrain": False,
+                "reason": "Error dentro de límites aceptables (MAPE: 2.35%)",
                 "status": "success",
                 "message": "Predicción generada exitosamente para 30 días",
                 "metadata": {
@@ -223,6 +232,140 @@ class HealthResponse(BaseModel):
 # ============================================================================
 # FUNCIONES AUXILIARES
 # ============================================================================
+
+async def analyze_error_with_openai(
+    ucp: str,
+    error_type: str,
+    mape_total: float,
+    fecha_inicio: str,
+    fecha_fin: str,
+    dias_consecutivos: Optional[List[str]] = None
+) -> str:
+    """
+    Analiza las posibles causas del error de predicción usando OpenAI con búsqueda en internet
+
+    Args:
+        ucp: Nombre del UCP (ej: 'Atlantico', 'Oriente')
+        error_type: Tipo de error ('mensual', 'consecutivo', 'ambos')
+        mape_total: MAPE mensual calculado
+        fecha_inicio: Fecha inicio del periodo analizado
+        fecha_fin: Fecha fin del periodo analizado
+        dias_consecutivos: Lista de fechas con errores consecutivos > 5%
+
+    Returns:
+        str: Análisis detallado de OpenAI sobre posibles causas
+    """
+    try:
+        # Obtener API key desde variables de entorno
+        api_key = os.getenv('API_KEY')
+        if not api_key:
+            logger.warning("⚠ API_KEY no encontrada en .env, saltando análisis de OpenAI")
+            return "Análisis no disponible (API_KEY no configurada)"
+
+        # Inicializar cliente de OpenAI
+        client = OpenAI(api_key=api_key)
+
+        # Construir prompt según tipo de error
+        if error_type == 'consecutivo':
+            dias_str = ', '.join(dias_consecutivos) if dias_consecutivos else 'últimos 2 días'
+            prompt = f"""Eres un analista energético experto. Necesito que investigues en internet las posibles causas de una anomalía en la demanda energética.
+
+**Contexto:**
+- UCP: {ucp}, Colombia
+- Fechas afectadas: {dias_str}
+- Tipo de anomalía: Dos días consecutivos con error de predicción superior al 5%
+- Periodo analizado: {fecha_inicio} a {fecha_fin}
+
+**Tarea:**
+Busca en internet eventos, acontecimientos o situaciones que pudieron haber ocurrido en {ucp}, Colombia en las fechas {dias_str} que pudieron causar variaciones significativas en la demanda de energía eléctrica.
+
+Considera:
+- Eventos climáticos extremos (tormentas, olas de calor/frío)
+- Eventos públicos masivos (conciertos, partidos, festivales)
+- Días festivos locales o nacionales
+- Apagones o fallas en el suministro
+- Eventos políticos o sociales
+- Paros o manifestaciones
+- cualquier otro acontecimiento relevante
+
+Proporciona un análisis conciso (máximo 2-3 oraciones) con las causas más probables encontradas."""
+
+        elif error_type == 'mensual':
+            # Extraer mes y año de fecha_fin
+            fecha_obj = datetime.strptime(fecha_fin, '%Y-%m-%d')
+            mes_nombre = fecha_obj.strftime('%B %Y')
+
+            prompt = f"""Eres un analista energético experto. Necesito que investigues en internet las posibles causas de una anomalía en la demanda energética.
+
+**Contexto:**
+- UCP: {ucp}, Colombia
+- Periodo: {mes_nombre} (del {fecha_inicio} al {fecha_fin})
+- Tipo de anomalía: Error mensual de predicción de {mape_total:.2f}% (superior al límite del 5%)
+
+**Tarea:**
+Busca en internet eventos, acontecimientos o condiciones que pudieron haber ocurrido en {ucp}, Colombia durante {mes_nombre} que pudieron causar variaciones significativas en la demanda de energía eléctrica durante todo el mes.
+
+Considera:
+- Condiciones climáticas atípicas del mes (sequías, lluvias intensas, temperaturas anormales)
+- Cambios en la actividad industrial o comercial
+- Eventos recurrentes durante el mes
+- Temporadas vacacionales o escolares
+- Restricciones energéticas o racionamientos
+- Crecimiento poblacional o cambios demográficos
+- cualquier otro acontecimiento relevante
+
+Proporciona un análisis conciso (máximo 2-3 oraciones) con las causas más probables encontradas."""
+
+        else:  # 'ambos'
+            dias_str = ', '.join(dias_consecutivos) if dias_consecutivos else 'últimos 2 días'
+            fecha_obj = datetime.strptime(fecha_fin, '%Y-%m-%d')
+            mes_nombre = fecha_obj.strftime('%B %Y')
+
+            prompt = f"""Eres un analista energético experto. Necesito que investigues en internet las posibles causas de una anomalía severa en la demanda energética.
+
+**Contexto:**
+- UCP: {ucp}, Colombia
+- Periodo mensual: {mes_nombre} (del {fecha_inicio} al {fecha_fin})
+- Error mensual: {mape_total:.2f}% (superior al límite del 5%)
+- Días consecutivos afectados: {dias_str} (errores > 5%)
+
+**Tarea:**
+Busca en internet eventos o condiciones que pudieron causar tanto el error mensual sostenido como los picos específicos en las fechas {dias_str} en {ucp}, Colombia.
+
+Proporciona un análisis conciso (máximo 3-4 oraciones) con las causas más probables encontradas, conectando los eventos puntuales con las tendencias mensuales."""
+
+        logger.info(f"🤖 Consultando OpenAI (gpt-5-mini Responses API) para análisis de causalidad ({error_type})...")
+
+        # Llamar a OpenAI con búsqueda en internet habilitada
+        # Nota: GPT-5-mini usa la nueva Responses API con web_search nativo
+        response = await run_in_threadpool(
+            lambda: client.responses.create(
+                model="gpt-5-mini",  # Modelo GPT-5-mini con capacidad de búsqueda web
+                input=[  # NOTA: Responses API usa 'input' en lugar de 'messages'
+                    {
+                        "role": "user",
+                        "content": f"Eres un analista experto en sistemas energéticos y demanda eléctrica en Colombia. Proporcionas análisis concisos basados en información factual encontrada en internet.\n\n{prompt}"
+                    }
+                ],
+                tools=[
+                    {
+                        "type": "web_search"  # Herramienta nativa de búsqueda web
+                    }
+                ]
+            )
+        )
+
+        # La respuesta viene directamente en output_text en la nueva Responses API
+        analysis = response.output_text.strip()
+        logger.info(f"✓ Análisis de OpenAI recibido: {len(analysis)} caracteres")
+
+        return analysis
+
+    except Exception as e:
+        logger.error(f"Error en análisis de OpenAI: {e}")
+        logger.error(traceback.format_exc())
+        return f"Análisis automático no disponible (error: {str(e)})"
+
 
 def check_model_exists(ucp: str) -> Tuple[bool, Optional[Path]]:
     """
@@ -689,17 +832,101 @@ async def predict_demand(request: PredictRequest):
             print("MAPE TOTAL:", df_merged[['abs_pct_error','demanda_predicha','TOTAL']])
 
             print('df_try_features'*40)
+
+            # ====================================================================
+            # ANÁLISIS DE CAUSALIDAD CON OPENAI (si se requiere reentrenamiento)
+            # ====================================================================
+
+            # Determinar si se requiere reentrenamiento y tipo de error
             if mape_total > 5 and hay_dos_seguidos:
-                should_retrain = 'Error mensual superior al 5% y dos dias consecutivos con error superior al 5%'
-            
-            elif hay_dos_seguidos :
-                should_retrain = 'Dos dias consecutivos con error superior al 5%'
+                should_retrain = True
+                error_type = 'ambos'
+                reason_base = f'Error mensual superior al 5% (MAPE: {mape_total:.2f}%) y dos días consecutivos con error superior al 5%'
+                logger.info(f"⚠ MAPE TOTAL: {mape_total:.2f}%. Se requiere reentrenamiento.")
+            elif hay_dos_seguidos:
+                should_retrain = True
+                error_type = 'consecutivo'
+                reason_base = f'Dos días consecutivos con error superior al 5% (MAPE mensual: {mape_total:.2f}%)'
                 logger.info(f"⚠ MAPE TOTAL: {mape_total:.2f}%. Se requiere reentrenamiento.")
             elif mape_total > 5:
-                should_retrain = 'Error mensual superior al 5%'
+                should_retrain = True
+                error_type = 'mensual'
+                reason_base = f'Error mensual superior al 5% (MAPE: {mape_total:.2f}%)'
+                logger.info(f"⚠ MAPE TOTAL: {mape_total:.2f}%. Se requiere reentrenamiento.")
             else:
-                should_retrain = 'Error dentro de límites aceptables'
+                should_retrain = False
+                error_type = None
+                reason = f'Error dentro de límites aceptables (MAPE: {mape_total:.2f}%)'
                 logger.info(f"✓ MAPE TOTAL: {mape_total:.2f}%. No se requiere reentrenamiento.")
+
+            # Si se requiere reentrenamiento, analizar causas con OpenAI
+            if should_retrain:
+                logger.info("="*80)
+                logger.info("🔍 ANALIZANDO CAUSAS DEL ERROR CON OPENAI")
+                logger.info("="*80)
+
+                # Extraer fechas de días con errores consecutivos si aplica
+                dias_consecutivos = None
+                if error_type in ['consecutivo', 'ambos']:
+                    # Encontrar los días consecutivos con error > 5%
+                    mask_consecutivos = cond & cond.shift(1)
+                    indices_consecutivos = df_merged.index[mask_consecutivos].tolist()
+
+                    # Convertir a datetime si no lo está y formatear
+                    if len(indices_consecutivos) > 0:
+                        fechas_consecutivas = []
+                        for idx in indices_consecutivos:
+                            fecha_val = df_merged.loc[idx, 'FECHA']
+                            if isinstance(fecha_val, pd.Timestamp):
+                                fechas_consecutivas.append(fecha_val.strftime('%Y-%m-%d'))
+                            else:
+                                fechas_consecutivas.append(str(fecha_val))
+
+                        # También incluir el día anterior al primero marcado
+                        if fechas_consecutivas and indices_consecutivos:
+                            primer_idx = indices_consecutivos[0]
+                            if primer_idx > 0:
+                                fecha_ant_val = df_merged.loc[primer_idx - 1, 'FECHA']
+                                if isinstance(fecha_ant_val, pd.Timestamp):
+                                    fecha_anterior = fecha_ant_val.strftime('%Y-%m-%d')
+                                else:
+                                    fecha_anterior = str(fecha_ant_val)
+                                dias_consecutivos = [fecha_anterior] + fechas_consecutivas
+                            else:
+                                dias_consecutivos = fechas_consecutivas
+
+                    logger.info(f"  Días consecutivos identificados: {dias_consecutivos}")
+
+                # Obtener rango de fechas del análisis
+                fecha_min = df_merged['FECHA'].min()
+                fecha_max = df_merged['FECHA'].max()
+
+                if isinstance(fecha_min, pd.Timestamp):
+                    fecha_inicio_analisis = fecha_min.strftime('%Y-%m-%d')
+                else:
+                    fecha_inicio_analisis = str(fecha_min)
+
+                if isinstance(fecha_max, pd.Timestamp):
+                    fecha_fin_analisis = fecha_max.strftime('%Y-%m-%d')
+                else:
+                    fecha_fin_analisis = str(fecha_max)
+
+                # Llamar a OpenAI para análisis de causalidad
+                openai_analysis = await analyze_error_with_openai(
+                    ucp=request.ucp,
+                    error_type=error_type,
+                    mape_total=mape_total,
+                    fecha_inicio=fecha_inicio_analisis,
+                    fecha_fin=fecha_fin_analisis,
+                    dias_consecutivos=dias_consecutivos
+                )
+
+                # Combinar reason base con análisis de OpenAI
+                reason = f"{reason_base}\n\n📊 Análisis de causalidad:\n{openai_analysis}"
+
+                logger.info(f"✓ Análisis de causalidad agregado al reporte")
+                logger.info("="*80)
+
 
 
 
@@ -847,6 +1074,7 @@ async def predict_demand(request: PredictRequest):
 
         return PredictResponse(
             should_retrain=should_retrain,
+            reason=reason,
             status="success",
             message=f"Predicción generada exitosamente para {request.n_days} días con granularidad horaria",
             metadata=metadata,

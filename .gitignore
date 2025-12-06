@@ -21,6 +21,8 @@ wheels/
 *.egg
 MANIFEST
 
+data/features/
+.claude/
 # Virtual environments
 venv/
 env/
@@ -44,14 +46,8 @@ ENV/
 data/raw/*.xlsx
 data/raw/*.xltx
 data/processed/*.csv
-data/features/*.csv
 data/predictions/*.csv
 
-# Keep directory structure
-!data/raw/.gitkeep
-!data/processed/.gitkeep
-!data/features/.gitkeep
-!data/predictions/.gitkeep
 
 # Models (exclude trained models, keep registry metadata)
 models/trained/*.joblib
@@ -105,3 +101,6 @@ coverage.xml
 # Deployment secrets
 deployment/secrets/
 deployment/*.key
+/data/features/*
+tests/test_openai_analysis.py
+data/features/Atlantico/data_with_features_latest.csv
