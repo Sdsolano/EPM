@@ -53,7 +53,25 @@ app = FastAPI(
 # ============================================================================
 # SCHEMAS DE REQUEST/RESPONSE
 # ============================================================================
+class EventsRequest(BaseModel):
+    """Schema para solicitud de eventos futuros"""
+    ucp: str = Field(
+        ...,
+        description="Selección de UCP para búsqueda de eventos"
+    )
+    fecha_inicio: str = Field(
+        ...,
+        description="Fecha inicio del periodo a predecir (formato: YYYY-MM-DD)"
+    )
+    fecha_fin: str = Field(
+        ...,
+        description="Fecha fin del periodo a predecir (formato: YYYY-MM-DD)"
+    )
 
+class EventsResponse(BaseModel):
+    """Schema para respuesta de eventos futuros"""
+    
+    events: Dict[str, str] = Field(..., description="Eventos futuros que podrían afectar la demanda energética (formato: {'YYYY-MM-DD': 'Nombre del evento'})")
 class PredictRequest(BaseModel):
     """Schema para solicitud de predicción"""
     # power_data_path: str = Field(
@@ -192,7 +210,7 @@ class PredictResponse(BaseModel):
     predictions: List[HourlyPrediction] = Field(..., description="Array de predicciones diarias con desagregación horaria")
     should_retrain: bool = Field(..., description="Indica si se recomienda reentrenar el modelo (true/false)")
     reason: str = Field(..., description="Razón por la cual se recomienda o no reentrenar")
-    events: Dict[str, str] = Field(..., description="Eventos futuros que podrían afectar la demanda energética (formato: {'YYYY-MM-DD': 'Nombre del evento'})")
+    #events: Dict[str, str] = Field(..., description="Eventos futuros que podrían afectar la demanda energética (formato: {'YYYY-MM-DD': 'Nombre del evento'})")
 
     class Config:
         schema_extra = {
@@ -1044,18 +1062,6 @@ async def predict_demand(request: PredictRequest):
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
             # Determinar ruta de datos climáticos RAW específicos del UCP
             climate_raw_path = f'data/raw/{request.ucp}/clima_new.csv'
 
@@ -1161,28 +1167,7 @@ async def predict_demand(request: PredictRequest):
         # ====================================================================
         # PASO 6: OBTENER EVENTOS FUTUROS
         # ====================================================================
-        logger.info("\n📅 PASO 6: Obteniendo eventos futuros que podrían afectar la demanda...")
-
-        try:
-            # Obtener rango de fechas de las predicciones
-            fecha_inicio_pred = predictions_df['fecha'].min().strftime('%Y-%m-%d')
-            fecha_fin_pred = predictions_df['fecha'].max().strftime('%Y-%m-%d')
-
-            # Llamar a OpenAI para obtener eventos
-            events = await get_future_events_from_openai(
-                ucp=request.ucp,
-                fecha_inicio=fecha_inicio_pred,
-                fecha_fin=fecha_fin_pred
-            )
-
-            logger.info(f"✓ Eventos futuros identificados: {len(events)}")
-            if events:
-                for fecha_evento, nombre_evento in list(events.items())[:3]:  # Log primeros 3
-                    logger.info(f"    {fecha_evento}: {nombre_evento}")
-
-        except Exception as e:
-            logger.warning(f"⚠ Error obteniendo eventos futuros: {e}")
-            events = {}
+        
 
         # ====================================================================
         # RESPUESTA FINAL
@@ -1198,7 +1183,7 @@ async def predict_demand(request: PredictRequest):
             predictions=predictions_list,
             should_retrain=should_retrain,
             reason=reason,
-            events=events
+           # events=events
         )
 
     except HTTPException:
@@ -1211,6 +1196,29 @@ async def predict_demand(request: PredictRequest):
             detail=f"Error inesperado en el servidor: {str(e)}"
         )
 
+@app.post('/get_events', response_model=EventsResponse, status_code=status.HTTP_200_OK)
+async def get_events(request: EventsRequest):   
+    logger.info("\n📅 PASO 6: Obteniendo eventos futuros que podrían afectar la demanda...")
+    try:
+        # Obtener rango de fechas de las predicciones
+        fecha_inicio_pred = request.fecha_inicio
+        fecha_fin_pred = request.fecha_fin
+
+        # Llamar a OpenAI para obtener eventos
+        events = await get_future_events_from_openai(
+            ucp=request.ucp,
+            fecha_inicio=fecha_inicio_pred,
+            fecha_fin=fecha_fin_pred
+        )
+
+        logger.info(f"✓ Eventos futuros identificados: {len(events)}")
+        if events:
+            for fecha_evento, nombre_evento in list(events.items())[:3]:  # Log primeros 3
+                logger.info(f"    {fecha_evento}: {nombre_evento}")
+        return EventsResponse(events=events)
+    except Exception as e:
+        logger.warning(f"⚠ Error obteniendo eventos futuros: {e}")
+        events = {}
 
 @app.get("/health", response_model=HealthResponse, status_code=status.HTTP_200_OK)
 async def health_check(ucp: Optional[str] = None):
