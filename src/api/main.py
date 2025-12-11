@@ -245,6 +245,45 @@ class PredictResponse(BaseModel):
         }
 
 
+class ReasonResponse(BaseModel):
+    """Schema para respuesta de predicción"""
+    reason: str = Field(..., description="Razón por la cual se recomienda o no reentrenar")
+    #events: Dict[str, str] = Field(..., description="Eventos futuros que podrían afectar la demanda energética (formato: {'YYYY-MM-DD': 'Nombre del evento'})")
+
+    class Config:
+        schema_extra = {
+            
+                "reason": "Error dentro de límites aceptables (MAPE: 2.35%)",
+             
+        }
+class ReasonRequest(BaseModel):
+    """Schema para solicitud de predicción"""
+    # power_data_path: str = Field(
+    #     ...,
+    #     description="Ruta al archivo CSV con datos históricos de demanda hasta el día anterior"
+    # )
+    # weather_data_path: Optional[str] = Field(
+    #     'data/raw/clima_new.csv',
+    #     description="Ruta al archivo CSV con datos meteorológicos API EPM (se usa por defecto data/raw/clima_new.csv si no se especifica)"
+    # )
+    # start_date: Optional[str] = Field(
+    #     None,
+    #     description="Fecha inicial para filtrar datos históricos (formato: YYYY-MM-DD)"
+    # )
+    ucp: str = Field(
+        None,
+        description="Selección de UCP para calculos"
+    )
+    end_date: Optional[str] = Field(
+        None,
+        description="Fecha final de datos históricos (formato: YYYY-MM-DD)"
+    )
+    force_retrain: bool = Field(
+        False,
+        description="Forzar reentrenamiento del modelo aunque exista uno. Si es True, entrena los 3 modelos y selecciona automáticamente el mejor basado en rMAPE"
+    )
+
+
 class HealthResponse(BaseModel):
     """Schema para respuesta de health check"""
     status: str
@@ -728,6 +767,319 @@ def train_hourly_disaggregation_if_needed(df_with_features: pd.DataFrame, ucp: s
 # ENDPOINTS
 # ============================================================================
 
+
+@app.post("/Error-feedback", response_model=ReasonResponse, status_code=status.HTTP_200_OK)
+async def predict_demand(request: ReasonRequest):
+    """
+    Genera predicción de demanda energética para los próximos N días con granularidad horaria
+
+    Flujo:
+    1. Ejecuta pipeline de feature engineering con datos históricos hasta ayer
+    2. Verifica si existe modelo entrenado (o entrena uno nuevo si se requiere)
+    3. Genera predicción para los próximos N días
+    4. Desagrega cada día en 24 períodos horarios (P1-P24) usando clustering K-Means
+    5. Retorna array JSON con predicciones completas
+
+    Args:
+        request: PredictRequest con parámetros de la predicción
+
+    Returns:
+        PredictResponse con array de predicciones horarias
+
+    Raises:
+        HTTPException: Si hay error en algún paso del proceso
+    """
+    try:
+        logger.info("="*80)
+        logger.info("🚀 INICIANDO PREDICCIÓN DE DEMANDA")
+        logger.info("="*80)
+
+        # ====================================================================
+        # PASO 1: EJECUTAR PIPELINE DE FEATURE ENGINEERING
+        # ====================================================================
+        logger.info(f"\n📊 PASO 1: Procesando datos históricos y creando features para {request.ucp}...")
+        await run_in_threadpool(full_update_csv, request.ucp)
+        try:
+            # Paths dinámicos basados en UCP
+            power_data_path = f'data/raw/{request.ucp}/datos.csv'
+            weather_data_path = f'data/raw/{request.ucp}/clima_new.csv'
+            output_dir = Path(f'data/features/{request.ucp}')
+
+            df_with_features, _ = run_automated_pipeline(
+                power_data_path=power_data_path,
+                weather_data_path=weather_data_path,
+                start_date='2015-01-01',
+                end_date=request.end_date,
+                output_dir=output_dir
+            )
+
+            logger.info(f"✓ Pipeline completado para {request.ucp}: {len(df_with_features)} registros con {len(df_with_features.columns)} columnas")
+
+        except FileNotFoundError as e:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Archivo no encontrado: {str(e)}"
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error en pipeline de datos: {str(e)}"
+            )
+
+        # ====================================================================
+        # PASO 2: VERIFICAR/ENTRENAR MODELO
+        # ====================================================================
+        logger.info(f"\n🤖 PASO 2: Verificando modelo de predicción para {request.ucp}...")
+
+        try:
+            model_path, train_metrics = train_model_if_needed(
+                df_with_features=df_with_features,
+                ucp=request.ucp,
+                force_retrain=request.force_retrain
+            )
+
+            modelo_entrenado = len(train_metrics) > 0
+
+            if modelo_entrenado:
+                logger.info(f"✓ Modelo entrenado exitosamente")
+                logger.info(f"  MAPE: {train_metrics['mape']:.4f}%")
+                logger.info(f"  rMAPE: {train_metrics['rmape']:.4f}")
+                logger.info(f"  R²: {train_metrics['r2']:.4f}")
+            else:
+                logger.info(f"✓ Usando modelo existente: {model_path.name}")
+
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error en entrenamiento de modelo: {str(e)}"
+            )
+
+        # ====================================================================
+        # PASO 3: VERIFICAR/ENTRENAR SISTEMA DE DESAGREGACIÓN HORARIA
+        # ====================================================================
+        logger.info(f"\n⏰ PASO 3: Verificando sistema de desagregación horaria para {request.ucp}...")
+
+        try:
+            logger.info(f"   Verificando si desagregación horaria está entrenada...")
+            train_hourly_disaggregation_if_needed(df_with_features, request.ucp)
+            logger.info(f"Desagrecacion horaria se ejecuta")
+
+        except Exception as e:
+            logger.warning(f"⚠ Error en desagregación horaria: {e}")
+            logger.warning("Se continuará con placeholders")
+
+        # ====================================================================
+        # PASO 4: GENERAR PREDICCIONES
+        # ====================================================================
+        
+        try:
+
+
+
+
+
+
+
+
+
+
+
+
+            climate_raw_path = f'data/raw/{request.ucp}/clima_new.csv'
+
+
+
+
+
+
+            df_try_features = df_with_features.copy()
+            max_date = df_with_features['FECHA'].max()
+            cut_date = max_date - pd.Timedelta(days=30)
+
+            df_try_features = df_try_features[df_try_features['FECHA'] <= cut_date]        
+            temp_try_path = f'data/features/{request.ucp}/temp_api_features_try.csv'
+            df_try_features.to_csv(temp_try_path, index=False)
+            # Inicializar pipeline de predicción con datos RECIEN PROCESADOS
+            pipeline = ForecastPipeline(
+                model_path=str(model_path),
+                historical_data_path=temp_try_path,
+                festivos_path='config/festivos.json',
+                enable_hourly_disaggregation=True,  # ← Habilitado con nuevo modelo
+                raw_climate_path=climate_raw_path,
+                ucp=request.ucp  # ← Pasar UCP al pipeline
+            )
+            check_date=max_date - pd.Timedelta(days=29)
+            # Generar predicciones
+            predictions_df = pipeline.predict_next_n_days(n_days=30)
+            print('predictions_df'*40)
+            print(predictions_df)
+            
+            mape_check_df=df_with_features[df_with_features['FECHA'] >= check_date] 
+            print(mape_check_df)  
+            
+            import numpy as np
+            
+
+            # --- Alinear por fecha ---
+            pred = predictions_df.copy()
+            real = mape_check_df.copy()
+
+            pred['fecha'] = pd.to_datetime(pred['fecha'])
+            real['FECHA'] = pd.to_datetime(real['FECHA'])
+
+            # Unimos por fecha
+            df_merged = pred.merge(real, left_on='fecha', right_on='FECHA', how='inner')
+            print(df_merged.columns)
+            # ============================
+            # 1️⃣ MAPE TOTAL (demanda_predicha vs TOTAL)
+            # ============================
+            df_merged['abs_pct_error'] = np.abs(
+                (df_merged['demanda_predicha'] - df_merged['TOTAL']) *100/ df_merged['TOTAL']
+            )
+
+            print(df_merged[['abs_pct_error','demanda_predicha','TOTAL']])
+            # Condición: error mayor al 5%
+            cond = df_merged['abs_pct_error'] > 5
+            print(cond)
+            # Detectar si hay dos True consecutivos
+            hay_dos_seguidos = (cond & cond.shift(1)).any()
+
+            print("¿Hay dos errores seguidos > 5%?:", hay_dos_seguidos)
+            
+            mape_total = df_merged['abs_pct_error'].mean()
+            print("MAPE TOTAL:", mape_total)
+            print("MAPE TOTAL:", df_merged[['abs_pct_error','demanda_predicha','TOTAL']])
+
+            print('df_try_features'*40)
+
+            # ====================================================================
+            # ANÁLISIS DE CAUSALIDAD CON OPENAI (si se requiere reentrenamiento)
+            # ====================================================================
+
+            # Determinar si se requiere reentrenamiento y tipo de error
+            if mape_total > 5 and hay_dos_seguidos:
+                should_retrain = True
+                error_type = 'ambos'
+                reason_base = f'Error mensual superior al 5% (MAPE: {mape_total:.2f}%) y dos días consecutivos con error superior al 5%'
+                logger.info(f"⚠ MAPE TOTAL: {mape_total:.2f}%. Se requiere reentrenamiento.")
+            elif hay_dos_seguidos:
+                should_retrain = True
+                error_type = 'consecutivo'
+                reason_base = f'Dos días consecutivos con error superior al 5% (MAPE mensual: {mape_total:.2f}%)'
+                logger.info(f"⚠ MAPE TOTAL: {mape_total:.2f}%. Se requiere reentrenamiento.")
+            elif mape_total > 5:
+                should_retrain = True
+                error_type = 'mensual'
+                reason_base = f'Error mensual superior al 5% (MAPE: {mape_total:.2f}%)'
+                logger.info(f"⚠ MAPE TOTAL: {mape_total:.2f}%. Se requiere reentrenamiento.")
+            else:
+                should_retrain = False
+                error_type = None
+                reason = f'Error dentro de límites aceptables (MAPE: {mape_total:.2f}%)'
+                logger.info(f"✓ MAPE TOTAL: {mape_total:.2f}%. No se requiere reentrenamiento.")
+
+            # Si se requiere reentrenamiento, analizar causas con OpenAI
+            if should_retrain:
+                logger.info("="*80)
+                logger.info("🔍 ANALIZANDO CAUSAS DEL ERROR CON OPENAI")
+                logger.info("="*80)
+
+                # Extraer fechas de días con errores consecutivos si aplica
+                dias_consecutivos = None
+                if error_type in ['consecutivo', 'ambos']:
+                    # Encontrar los días consecutivos con error > 5%
+                    mask_consecutivos = cond & cond.shift(1)
+                    indices_consecutivos = df_merged.index[mask_consecutivos].tolist()
+
+                    # Convertir a datetime si no lo está y formatear
+                    if len(indices_consecutivos) > 0:
+                        fechas_consecutivas = []
+                        for idx in indices_consecutivos:
+                            fecha_val = df_merged.loc[idx, 'FECHA']
+                            if isinstance(fecha_val, pd.Timestamp):
+                                fechas_consecutivas.append(fecha_val.strftime('%Y-%m-%d'))
+                            else:
+                                fechas_consecutivas.append(str(fecha_val))
+
+                        # También incluir el día anterior al primero marcado
+                        if fechas_consecutivas and indices_consecutivos:
+                            primer_idx = indices_consecutivos[0]
+                            if primer_idx > 0:
+                                fecha_ant_val = df_merged.loc[primer_idx - 1, 'FECHA']
+                                if isinstance(fecha_ant_val, pd.Timestamp):
+                                    fecha_anterior = fecha_ant_val.strftime('%Y-%m-%d')
+                                else:
+                                    fecha_anterior = str(fecha_ant_val)
+                                dias_consecutivos = [fecha_anterior] + fechas_consecutivas
+                            else:
+                                dias_consecutivos = fechas_consecutivas
+
+                    logger.info(f"  Días consecutivos identificados: {dias_consecutivos}")
+
+                # Obtener rango de fechas del análisis
+                fecha_min = df_merged['FECHA'].min()
+                fecha_max = df_merged['FECHA'].max()
+
+                if isinstance(fecha_min, pd.Timestamp):
+                    fecha_inicio_analisis = fecha_min.strftime('%Y-%m-%d')
+                else:
+                    fecha_inicio_analisis = str(fecha_min)
+
+                if isinstance(fecha_max, pd.Timestamp):
+                    fecha_fin_analisis = fecha_max.strftime('%Y-%m-%d')
+                else:
+                    fecha_fin_analisis = str(fecha_max)
+
+                # Llamar a OpenAI para análisis de causalidad
+                openai_analysis = await analyze_error_with_openai(
+                    ucp=request.ucp,
+                    error_type=error_type,
+                    mape_total=mape_total,
+                    fecha_inicio=fecha_inicio_analisis,
+                    fecha_fin=fecha_fin_analisis,
+                    dias_consecutivos=dias_consecutivos
+                )
+
+                # Combinar reason base con análisis de OpenAI
+                reason = f"{reason_base}// Análisis de causas: {openai_analysis}"
+
+                logger.info(f"✓ Análisis de causalidad agregado al reporte")
+                logger.info("="*80)
+                return ReasonResponse(
+                    reason=reason
+                )
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error generando predicciones: {str(e)}"
+            )
+
+
+    except Exception as e:        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error en proceso de predicción: {str(e)}"
+        )
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 @app.post("/predict", response_model=PredictResponse, status_code=status.HTTP_200_OK)
 async def predict_demand(request: PredictRequest):
     """
@@ -1023,17 +1375,17 @@ async def predict_demand(request: PredictRequest):
                     fecha_fin_analisis = str(fecha_max)
 
                 # Llamar a OpenAI para análisis de causalidad
-                openai_analysis = await analyze_error_with_openai(
-                    ucp=request.ucp,
-                    error_type=error_type,
-                    mape_total=mape_total,
-                    fecha_inicio=fecha_inicio_analisis,
-                    fecha_fin=fecha_fin_analisis,
-                    dias_consecutivos=dias_consecutivos
-                )
+                # openai_analysis = await analyze_error_with_openai(
+                #     ucp=request.ucp,
+                #     error_type=error_type,
+                #     mape_total=mape_total,
+                #     fecha_inicio=fecha_inicio_analisis,
+                #     fecha_fin=fecha_fin_analisis,
+                #     dias_consecutivos=dias_consecutivos
+                # )
 
                 # Combinar reason base con análisis de OpenAI
-                reason = f"{reason_base}\n\n📊 Análisis de causalidad:\n{openai_analysis}"
+                reason = f"{reason_base}"
 
                 logger.info(f"✓ Análisis de causalidad agregado al reporte")
                 logger.info("="*80)
