@@ -710,17 +710,21 @@ def check_hourly_disaggregation_trained(ucp: str) -> bool:
     return normal_path.exists() and special_path.exists()
 
 
-def train_hourly_disaggregation_if_needed(df_with_features: pd.DataFrame, ucp: str):
+def train_hourly_disaggregation_if_needed(df_with_features: pd.DataFrame, ucp: str, force_retrain: bool = False):
     """
     Entrena sistema de desagregación horaria si no existe para un UCP específico
 
     Args:
         df_with_features: DataFrame con datos históricos y features
         ucp: Nombre del UCP (ej: 'Atlantico', 'Oriente')
+        force_retrain: Si True, reentrena los clusters incluso si ya existen
     """
-    if check_hourly_disaggregation_trained(ucp):
+    if check_hourly_disaggregation_trained(ucp) and not force_retrain:
         logger.info(f"✓ Sistema de desagregación horaria ya está entrenado para {ucp}")
         return
+    
+    if force_retrain:
+        logger.info(f"🔄 Reentrenando sistema de desagregación horaria para {ucp} (force_retrain=True)...")
 
     logger.info("="*80)
     logger.info(f"🔧 ENTRENANDO SISTEMA DE DESAGREGACIÓN HORARIA PARA {ucp}")
@@ -861,7 +865,7 @@ async def predict_demand(request: ReasonRequest):
 
         try:
             logger.info(f"   Verificando si desagregación horaria está entrenada...")
-            train_hourly_disaggregation_if_needed(df_with_features, request.ucp)
+            train_hourly_disaggregation_if_needed(df_with_features, request.ucp, force_retrain=request.force_retrain)
             logger.info(f"Desagrecacion horaria se ejecuta")
 
         except Exception as e:
@@ -1173,7 +1177,7 @@ async def predict_demand(request: PredictRequest):
 
         try:
             logger.info(f"   Verificando si desagregación horaria está entrenada...")
-            train_hourly_disaggregation_if_needed(df_with_features, request.ucp)
+            train_hourly_disaggregation_if_needed(df_with_features, request.ucp, force_retrain=request.force_retrain)
             logger.info(f"Desagrecacion horaria se ejecuta")
 
         except Exception as e:
