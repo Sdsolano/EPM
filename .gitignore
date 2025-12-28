@@ -105,3 +105,6 @@ deployment/*.key
 tests/test_openai_analysis.py
 data/features/Atlantico/data_with_features_latest.csv
 tests/test_future_events.py
+
+models/
+/models

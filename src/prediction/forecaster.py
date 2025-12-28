@@ -576,6 +576,40 @@ class ForecastPipeline:
         features['total_lag_14d'] = get_value_by_date(df_temp, fecha_lag_14d, 'demanda_total')
 
         # ========================================
+        # C.2. LAGS HISTÓRICOS ANUALES (mismo día del año en años anteriores)
+        # ========================================
+        # Útiles para festivos especiales y patrones estacionales específicos
+        # Maneja años bisiestos correctamente usando pd.DateOffset
+        from pandas import DateOffset
+        
+        for years_back in [1, 2, 3]:  # 1 año, 2 años, 3 años
+            fecha_lag_anual = fecha - DateOffset(years=years_back)
+            col_name = f'total_lag_{years_back}y'
+            
+            # Intentar buscar fecha exacta
+            features[col_name] = get_value_by_date(df_temp, fecha_lag_anual, 'demanda_total')
+            
+            # Si no se encuentra (primeros años o falta de datos), usar fallback
+            # Fallback: promedio de días del mismo mes-día en años anteriores disponibles
+            if features[col_name] == 0:
+                # Buscar días del mismo mes-día en años anteriores disponibles
+                same_month_day = df_temp[
+                    (df_temp['fecha'].dt.month == fecha.month) &
+                    (df_temp['fecha'].dt.day == fecha.day) &
+                    (df_temp['fecha'].dt.date < fecha.date())
+                ]
+                
+                if len(same_month_day) > 0:
+                    # Usar promedio de años anteriores del mismo día
+                    features[col_name] = same_month_day['demanda_total'].mean()
+                else:
+                    # Último fallback: usar lag de 365 días (aproximado)
+                    fecha_approx = fecha - timedelta(days=365 * years_back)
+                    features[col_name] = get_value_by_date(df_temp, fecha_approx, 'demanda_total')
+                    if features[col_name] == 0:
+                        features[col_name] = features['total_lag_1d']  # Fallback final
+
+        # ========================================
         # D. ROLLING STATISTICS
         # ========================================
         # IMPORTANTE: Usar FECHAS para definir ventanas, no índices
@@ -734,12 +768,60 @@ class ForecastPipeline:
                 X_pred = pd.DataFrame([features])
 
             # Predecir
-            demanda_pred = self.model.predict(X_pred)[0]
+            demanda_pred_original = self.model.predict(X_pred)[0]
+            demanda_pred = demanda_pred_original
+            
+            # ========================================
+            # AJUSTE POST-PREDICCIÓN PARA FESTIVOS ESPECIALES Y TEMPORADA NAVIDEÑA
+            # ========================================
+            # Usa valores históricos del año anterior para corregir:
+            # 1. Festivos especiales (8 dic, 25 dic, 1 ene)
+            # 2. Temporada navideña (25 dic - 7 ene) - período de menor consumo
+            lag_1y = features.get('total_lag_1y', 0)
+            aplicar_ajuste = False
+            weight_historical = 0.60  # Por defecto: ajuste moderado
+            
+            # Verificar si está en temporada navideña (25 dic - 7 ene)
+            # Esto incluye días entre Navidad y Epifanía donde el consumo es menor
+            es_temporada_navideña = False
+            if fecha.month == 12 and fecha.day >= 25:
+                es_temporada_navideña = True
+                aplicar_ajuste = True
+            elif fecha.month == 1 and fecha.day <= 6:
+                es_temporada_navideña = True
+                aplicar_ajuste = True
+            
+            # Verificar si es festivo especial
+            if features['is_festivo']:
+                month_day = f"{fecha.month:02d}-{fecha.day:02d}"
+                very_special_holidays = ['12-25', '12-08', '01-01']  # Navidad, Inmaculada, Año Nuevo
+                
+                if month_day in very_special_holidays:
+                    aplicar_ajuste = True
+                    weight_historical = 0.70  # Ajuste más fuerte para festivos muy especiales
+                elif not es_temporada_navideña:
+                    # Otros festivos (fuera de temporada navideña): ajuste moderado
+                    aplicar_ajuste = True
+                    weight_historical = 0.60
+                # Si es festivo DENTRO de temporada navideña, ya se aplicó el ajuste arriba
+            
+            # Aplicar ajuste si corresponde y tenemos datos históricos
+            if aplicar_ajuste and lag_1y > 0:
+                # Aplicar promedio ponderado
+                demanda_pred = (weight_historical * lag_1y) + ((1 - weight_historical) * demanda_pred_original)
+                
+                tipo_ajuste = "temporada navideña" if es_temporada_navideña else "festivo especial"
+                logger.info(f"   🔧 Ajuste post-predicción aplicado ({tipo_ajuste})")
+                logger.info(f"      - Valor histórico (1 año): {lag_1y:,.2f} MW")
+                logger.info(f"      - Predicción modelo original: {demanda_pred_original:,.2f} MW")
+                logger.info(f"      - Predicción final (ponderada {int(weight_historical*100)}% histórico): {demanda_pred:,.2f} MW")
             
             # Log adicional para debugging
             logger.info(f"   Demanda predicha: {demanda_pred:,.2f} MW")
             logger.info(f"   Features clave: is_weekend={features['is_weekend']}, is_festivo={features['is_festivo']}")
             logger.info(f"   Lags: lag_1d={features['total_lag_1d']:.2f}, lag_7d={features['total_lag_7d']:.2f}")
+            if features.get('total_lag_1y', 0) > 0:
+                logger.info(f"   Lag histórico (1 año): {features['total_lag_1y']:.2f}")
 
             # Desagregación horaria (si está habilitada)
             hourly_breakdown = {}

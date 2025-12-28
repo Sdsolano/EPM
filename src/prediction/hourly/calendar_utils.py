@@ -26,7 +26,7 @@ class CalendarClassifier:
             country: Código ISO del país (por defecto 'CO' = Colombia)
             years_range: Tupla (año_inicio, año_fin) para cargar festivos
         """
-        # Cargar festivos de Colombia usando la librería holidays
+
         self.holidays = holidays.country_holidays(
             country,
             years=range(years_range[0], years_range[1] + 1)

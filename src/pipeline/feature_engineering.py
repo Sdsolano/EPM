@@ -156,6 +156,47 @@ class FeatureEngineer:
                 df[col_name] = df['TOTAL'].shift(lag)
                 demand_features.append(col_name)
 
+            # Lags históricos anuales (mismo día del año en años anteriores)
+            # Útil para festivos especiales y patrones estacionales específicos
+            logger.info("   Creando lags históricos anuales...")
+            for years_back in [1, 2, 3]:  # 1 año, 2 años, 3 años
+                col_name = f'total_lag_{years_back}y'
+                
+                # Crear DataFrame auxiliar con fecha y TOTAL para el merge
+                df_aux = df[['FECHA', 'TOTAL']].copy()
+                df_aux.columns = ['fecha_lag', 'total_lag']
+                
+                # Calcular fecha de lag (año anterior) usando DateOffset para manejar bisiestos
+                df['fecha_lag'] = pd.to_datetime(df['FECHA']) - pd.DateOffset(years=years_back)
+                
+                # Convertir a date para hacer merge más robusto
+                df['fecha_lag_date'] = df['fecha_lag'].dt.date
+                df_aux['fecha_lag_date'] = pd.to_datetime(df_aux['fecha_lag']).dt.date
+                
+                # Merge left para obtener valores históricos
+                df = df.merge(df_aux[['fecha_lag_date', 'total_lag']], 
+                             on='fecha_lag_date', how='left')
+                df[col_name] = df['total_lag']
+                
+                # Limpiar columnas temporales
+                df = df.drop(columns=['fecha_lag', 'fecha_lag_date', 'total_lag'])
+                
+                # Rellenar NaN con promedio histórico del mismo mes-día (fallback robusto)
+                # Solo para los primeros años donde no hay datos históricos
+                if df[col_name].isna().any():
+                    df['mmdd'] = df['FECHA'].dt.strftime('%m-%d')
+                    # Calcular promedio histórico por mm-dd usando solo valores no NaN
+                    mmdd_avg = df.groupby('mmdd')[col_name].transform(
+                        lambda x: x.mean() if x.notna().any() else np.nan
+                    )
+                    df[col_name] = df[col_name].fillna(mmdd_avg)
+                    # Si aún hay NaN (primeros datos del dataset), usar media global
+                    df[col_name] = df[col_name].fillna(df['TOTAL'].mean())
+                    df = df.drop(columns=['mmdd'])
+                
+                demand_features.append(col_name)
+                logger.info(f"      ✓ {col_name} creado")
+
             # Rolling statistics para TOTAL
             for window in ROLLING_WINDOWS:
                 # Media móvil
