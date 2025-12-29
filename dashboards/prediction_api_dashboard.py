@@ -173,7 +173,7 @@ def get_historical_total(df_historico, fecha_inicio, fecha_fin):
 # FUNCIONES DE LLAMADAS A LA API
 # ============================================================================
 
-def call_predict_api(api_url: str, ucp: str, n_days: int, end_date: Optional[str] = None, force_retrain: bool = False) -> Dict[str, Any]:
+def call_predict_api(api_url: str, ucp: str, n_days: int, end_date: Optional[str] = None, force_retrain: bool = False, offset_scalar: Optional[float] = None) -> Dict[str, Any]:
     """
     Llama al endpoint /predict de la API
     
@@ -183,6 +183,7 @@ def call_predict_api(api_url: str, ucp: str, n_days: int, end_date: Optional[str
         n_days: Número de días a predecir
         end_date: Fecha final de datos históricos (formato YYYY-MM-DD)
         force_retrain: Forzar reentrenamiento
+        offset_scalar: Escalar opcional para ajustar todas las predicciones (ej: 1.2 para aumentar 20%)
     
     Returns:
         Dict con la respuesta de la API o None si hay error
@@ -197,6 +198,9 @@ def call_predict_api(api_url: str, ucp: str, n_days: int, end_date: Optional[str
     
     if end_date:
         payload["end_date"] = end_date
+    
+    if offset_scalar is not None and offset_scalar > 0:
+        payload["offset_scalar"] = offset_scalar
     
     try:
         response = requests.post(url, json=payload, timeout=600)  # 10 minutos timeout
@@ -821,6 +825,25 @@ def main():
         help="Si está marcado, el modelo se reentrenará antes de generar predicciones"
     )
     
+    # Offset scalar para ajustar predicciones
+    st.sidebar.subheader("🔧 Ajustes de Predicción")
+    offset_scalar = st.sidebar.slider(
+        "Offset Scalar",
+        min_value=0.1,
+        max_value=2.0,
+        value=1.0,
+        step=0.01,
+        help="Escalar para ajustar todas las predicciones (1.0 = sin ajuste, 1.2 = +20%, 0.8 = -20%)"
+    )
+    
+    # Mostrar información del offset
+    if offset_scalar != 1.0:
+        cambio_pct = (offset_scalar - 1.0) * 100
+        if cambio_pct > 0:
+            st.sidebar.info(f"📈 Aumento: +{cambio_pct:.1f}%")
+        else:
+            st.sidebar.info(f"📉 Disminución: {cambio_pct:.1f}%")
+    
     # Botones de acción
     st.sidebar.markdown("---")
     
@@ -903,12 +926,22 @@ def main():
             with st.spinner(f"Prediciendo {n_days} días (esto puede tardar 1-2 minutos)..."):
                 # Convertir end_date a string para la API
                 end_date_str = end_date.strftime('%Y-%m-%d')
+                
+                # Mostrar información del offset si está aplicado
+                if offset_scalar != 1.0:
+                    cambio_pct = (offset_scalar - 1.0) * 100
+                    if cambio_pct > 0:
+                        st.info(f"🔧 Aplicando offset: +{cambio_pct:.1f}% (scalar: {offset_scalar:.2f})")
+                    else:
+                        st.info(f"🔧 Aplicando offset: {cambio_pct:.1f}% (scalar: {offset_scalar:.2f})")
+                
                 response = call_predict_api(
                     api_url=api_url,
                     ucp=selected_ucp,
                     n_days=n_days,
                     end_date=end_date_str,
-                    force_retrain=force_retrain
+                    force_retrain=force_retrain,
+                    offset_scalar=offset_scalar if offset_scalar != 1.0 else None
                 )
             
             if "error" in response:

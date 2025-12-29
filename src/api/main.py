@@ -136,6 +136,11 @@ class PredictRequest(BaseModel):
         False,
         description="Forzar reentrenamiento del modelo aunque exista uno. Si es True, entrena los 3 modelos y selecciona automáticamente el mejor basado en rMAPE"
     )
+    offset_scalar: Optional[float] = Field(
+        None,
+        description="Escalar opcional para ajustar todas las predicciones (ej: 1.2 para aumentar 20%, 0.8 para disminuir 20%). Si no se proporciona, no se aplica ningún ajuste.",
+        gt=0.0
+    )
 
     @field_validator( 'end_date')
     @classmethod
@@ -156,7 +161,8 @@ class PredictRequest(BaseModel):
                 "start_date": "2023-01-01",
                 "end_date": "2024-11-27",
                 "n_days": 30,
-                "force_retrain": False
+                "force_retrain": False,
+                "offset_scalar": 1.2
             }
         }
 
@@ -194,30 +200,6 @@ class HourlyPrediction(BaseModel):
     P22: float = Field(..., description="Período 22 (21:00-22:00) en MWh")
     P23: float = Field(..., description="Período 23 (22:00-23:00) en MWh")
     P24: float = Field(..., description="Período 24 (23:00-00:00) en MWh")
-    senda_P1: Optional[float] = Field(None, description="Senda normalizada P1 (patrón cluster 0-1)")
-    senda_P2: Optional[float] = Field(None, description="Senda normalizada P2 (patrón cluster 0-1)")
-    senda_P3: Optional[float] = Field(None, description="Senda normalizada P3 (patrón cluster 0-1)")
-    senda_P4: Optional[float] = Field(None, description="Senda normalizada P4 (patrón cluster 0-1)")
-    senda_P5: Optional[float] = Field(None, description="Senda normalizada P5 (patrón cluster 0-1)")
-    senda_P6: Optional[float] = Field(None, description="Senda normalizada P6 (patrón cluster 0-1)")
-    senda_P7: Optional[float] = Field(None, description="Senda normalizada P7 (patrón cluster 0-1)")
-    senda_P8: Optional[float] = Field(None, description="Senda normalizada P8 (patrón cluster 0-1)")
-    senda_P9: Optional[float] = Field(None, description="Senda normalizada P9 (patrón cluster 0-1)")
-    senda_P10: Optional[float] = Field(None, description="Senda normalizada P10 (patrón cluster 0-1)")
-    senda_P11: Optional[float] = Field(None, description="Senda normalizada P11 (patrón cluster 0-1)")
-    senda_P12: Optional[float] = Field(None, description="Senda normalizada P12 (patrón cluster 0-1)")
-    senda_P13: Optional[float] = Field(None, description="Senda normalizada P13 (patrón cluster 0-1)")
-    senda_P14: Optional[float] = Field(None, description="Senda normalizada P14 (patrón cluster 0-1)")
-    senda_P15: Optional[float] = Field(None, description="Senda normalizada P15 (patrón cluster 0-1)")
-    senda_P16: Optional[float] = Field(None, description="Senda normalizada P16 (patrón cluster 0-1)")
-    senda_P17: Optional[float] = Field(None, description="Senda normalizada P17 (patrón cluster 0-1)")
-    senda_P18: Optional[float] = Field(None, description="Senda normalizada P18 (patrón cluster 0-1)")
-    senda_P19: Optional[float] = Field(None, description="Senda normalizada P19 (patrón cluster 0-1)")
-    senda_P20: Optional[float] = Field(None, description="Senda normalizada P20 (patrón cluster 0-1)")
-    senda_P21: Optional[float] = Field(None, description="Senda normalizada P21 (patrón cluster 0-1)")
-    senda_P22: Optional[float] = Field(None, description="Senda normalizada P22 (patrón cluster 0-1)")
-    senda_P23: Optional[float] = Field(None, description="Senda normalizada P23 (patrón cluster 0-1)")
-    senda_P24: Optional[float] = Field(None, description="Senda normalizada P24 (patrón cluster 0-1)")
 
     class Config:
         schema_extra = {
@@ -1487,6 +1469,27 @@ async def predict_demand(request: PredictRequest):
 
             logger.info(f"✓ Predicciones generadas: {len(predictions_df)} días")
 
+            # ====================================================================
+            # APLICAR OFFSET SCALAR (si se proporciona y es diferente de 1.0)
+            # ====================================================================
+            if request.offset_scalar is not None and request.offset_scalar > 0 and request.offset_scalar != 1.0:
+                logger.info(f"\n🔧 Aplicando offset scalar: {request.offset_scalar}")
+                
+                # Aplicar escalar a demanda total
+                predictions_df['demanda_predicha'] = predictions_df['demanda_predicha'] * request.offset_scalar
+                
+                # Aplicar escalar a todos los períodos horarios (P1-P24)
+                for i in range(1, 25):
+                    col_name = f'P{i}'
+                    if col_name in predictions_df.columns:
+                        predictions_df[col_name] = predictions_df[col_name] * request.offset_scalar
+                
+                logger.info(f"✓ Offset aplicado: todas las predicciones multiplicadas por {request.offset_scalar}")
+            elif request.offset_scalar == 1.0:
+                logger.info("✓ Offset scalar es 1.0, se omite (no se requiere ajuste)")
+            else:
+                logger.info("✓ No se aplicó offset scalar (no proporcionado o inválido)")
+
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1519,8 +1522,7 @@ async def predict_demand(request: PredictRequest):
                     'is_weekend': bool(row.get('is_weekend', False)),
                     'metodo_desagregacion': metodo,
                     'cluster_id': int(row['cluster_id']) if pd.notna(row.get('cluster_id')) else None,
-                    **{f'P{i}': round(float(row.get(f'P{i}', 0)), 2) for i in range(1, 25)},
-                    **{f'senda_P{i}': round(float(row.get(f'senda_P{i}', 0)), 6) if pd.notna(row.get(f'senda_P{i}')) else None for i in range(1, 25)}
+                    **{f'P{i}': round(float(row.get(f'P{i}', 0)), 2) for i in range(1, 25)}
                 }
 
                 predictions_list.append(prediction)
@@ -1766,65 +1768,109 @@ def calculate_base_curves(
                         logger.warning(f"  {fecha_str} (festivo): usando perfil plano (sin datos)")
         
         # MÉTODO 2: Si es día normal, usar cluster + total promedio histórico
+        # ESTRATEGIA: Usar días del mismo día de la semana del mes más reciente disponible
+        # Esto captura mejor el comportamiento actual de la demanda
         else:
-            # Calcular total promedio histórico del mismo día (mismo mes-día en años anteriores)
-            # PRIORIDAD: Usar últimos 3 años para capturar tendencia reciente
-            historical_same_day = df_historico[
-                (df_historico['fecha'].dt.month == fecha.month) &
-                (df_historico['fecha'].dt.day == fecha.day) &
+            # Obtener el día de la semana (0=lunes, 6=domingo)
+            target_dow = fecha.dayofweek
+            
+            # Buscar días del mismo día de la semana en el mes más reciente disponible
+            # IMPORTANTE: Excluir días festivos para no sesgar el promedio
+            # Intentar primero el mes anterior completo
+            month_ago = fecha - pd.DateOffset(months=1)
+            historical_recent = df_historico[
+                (df_historico['fecha'].dt.year == month_ago.year) &
+                (df_historico['fecha'].dt.month == month_ago.month) &
+                (df_historico['fecha'].dt.dayofweek == target_dow) &
                 (df_historico['fecha'] < fecha)
             ].copy()
             
-            if len(historical_same_day) > 0:
-                # Ordenar por fecha descendente (más recientes primero)
-                historical_same_day = historical_same_day.sort_values('fecha', ascending=False)
-                
-                # Si hay más de 3 años, usar solo los últimos 3 años (más representativos)
-                if len(historical_same_day) > 3:
-                    historical_same_day = historical_same_day.head(3)
-                    logger.debug(f"  {fecha_str} (normal): usando últimos 3 años de histórico")
-                
-                # Calcular promedio (ya filtrado a últimos años)
-                avg_total = historical_same_day['TOTAL'].mean() if 'TOTAL' in historical_same_day.columns else historical_same_day[period_cols].sum(axis=1).mean()
-            else:
-                # Fallback: promedio del mismo día de la semana en el mismo mes (últimos 3 años)
-                historical_same_dow = df_historico[
+            # Filtrar días festivos
+            if len(historical_recent) > 0:
+                historical_recent = historical_recent[
+                    ~historical_recent['fecha'].apply(lambda x: calendar_classifier.is_holiday(pd.to_datetime(x)))
+                ].copy()
+            
+            if len(historical_recent) == 0:
+                # Si no hay datos del mes anterior, buscar en el mes actual (si hay datos anteriores a la fecha)
+                historical_recent = df_historico[
+                    (df_historico['fecha'].dt.year == fecha.year) &
                     (df_historico['fecha'].dt.month == fecha.month) &
-                    (df_historico['fecha'].dt.dayofweek == fecha.dayofweek) &
+                    (df_historico['fecha'].dt.dayofweek == target_dow) &
                     (df_historico['fecha'] < fecha)
                 ].copy()
                 
+                # Filtrar días festivos
+                if len(historical_recent) > 0:
+                    historical_recent = historical_recent[
+                        ~historical_recent['fecha'].apply(lambda x: calendar_classifier.is_holiday(pd.to_datetime(x)))
+                    ].copy()
+            
+            if len(historical_recent) == 0:
+                # Si aún no hay datos, buscar en los últimos 2 meses (cualquier mes)
+                two_months_ago = fecha - pd.DateOffset(months=2)
+                historical_recent = df_historico[
+                    (df_historico['fecha'] >= two_months_ago) &
+                    (df_historico['fecha'] < fecha) &
+                    (df_historico['fecha'].dt.dayofweek == target_dow)
+                ].copy()
+                
+                # Filtrar días festivos
+                if len(historical_recent) > 0:
+                    historical_recent = historical_recent[
+                        ~historical_recent['fecha'].apply(lambda x: calendar_classifier.is_holiday(pd.to_datetime(x)))
+                    ].copy()
+            
+            # Variable para almacenar datos históricos a usar para perfil horario
+            historical_for_profile = None
+            
+            if len(historical_recent) > 0:
+                # Ordenar por fecha descendente (más recientes primero)
+                historical_recent = historical_recent.sort_values('fecha', ascending=False)
+                historical_for_profile = historical_recent
+                
+                # Calcular promedio de los días encontrados
+                avg_total = historical_recent['TOTAL'].mean() if 'TOTAL' in historical_recent.columns else historical_recent[period_cols].sum(axis=1).mean()
+                logger.debug(f"  {fecha_str} (normal): usando {len(historical_recent)} días recientes del mismo día de semana, total={avg_total:.2f}")
+            else:
+                # Fallback: usar mismo día de la semana en el mismo mes de años anteriores (últimos 2 años)
+                historical_same_dow = df_historico[
+                    (df_historico['fecha'].dt.month == fecha.month) &
+                    (df_historico['fecha'].dt.dayofweek == target_dow) &
+                    (df_historico['fecha'] < fecha) &
+                    (df_historico['fecha'] >= (fecha - pd.DateOffset(years=2)))
+                ].copy()
+                
+                # Filtrar días festivos
                 if len(historical_same_dow) > 0:
-                    # Ordenar y tomar últimos años
-                    historical_same_dow = historical_same_dow.sort_values('fecha', ascending=False)
-                    # Agrupar por año y tomar últimos 3 años únicos
-                    historical_same_dow['year'] = historical_same_dow['fecha'].dt.year
-                    unique_years = historical_same_dow['year'].unique()
-                    if len(unique_years) > 3:
-                        # Tomar solo los últimos 3 años
-                        recent_years = sorted(unique_years)[-3:]
-                        historical_same_dow = historical_same_dow[historical_same_dow['year'].isin(recent_years)]
-                    
+                    historical_same_dow = historical_same_dow[
+                        ~historical_same_dow['fecha'].apply(lambda x: calendar_classifier.is_holiday(pd.to_datetime(x)))
+                    ].copy()
+                
+                if len(historical_same_dow) > 0:
+                    historical_for_profile = historical_same_dow
                     avg_total = historical_same_dow['TOTAL'].mean() if 'TOTAL' in historical_same_dow.columns else historical_same_dow[period_cols].sum(axis=1).mean()
+                    logger.debug(f"  {fecha_str} (normal): fallback con {len(historical_same_dow)} días históricos del mismo mes (festivos excluidos)")
                 else:
-                    # Último fallback: promedio general de últimos 2 años
+                    # Último fallback: promedio general de últimos 2 años (excluyendo festivos)
                     df_recent = df_historico[df_historico['fecha'] >= (fecha - pd.DateOffset(years=2))].copy()
                     if len(df_recent) > 0:
-                        avg_total = df_recent['TOTAL'].mean() if 'TOTAL' in df_recent.columns else df_recent[period_cols].sum(axis=1).mean()
+                        # Filtrar días festivos
+                        df_recent = df_recent[
+                            ~df_recent['fecha'].apply(lambda x: calendar_classifier.is_holiday(pd.to_datetime(x)))
+                        ].copy()
+                        if len(df_recent) > 0:
+                            historical_for_profile = df_recent
+                            avg_total = df_recent['TOTAL'].mean() if 'TOTAL' in df_recent.columns else df_recent[period_cols].sum(axis=1).mean()
+                        else:
+                            # Si después de filtrar festivos no quedan datos, usar todos
+                            df_recent = df_historico[df_historico['fecha'] >= (fecha - pd.DateOffset(years=2))].copy()
+                            historical_for_profile = df_recent
+                            avg_total = df_recent['TOTAL'].mean() if 'TOTAL' in df_recent.columns else df_recent[period_cols].sum(axis=1).mean()
                     else:
+                        historical_for_profile = None
                         avg_total = df_historico['TOTAL'].mean() if 'TOTAL' in df_historico.columns else df_historico[period_cols].sum(axis=1).mean()
-            
-            # Aplicar factor de ajuste según tipo de día para corregir offset
-            # Días laborales (lunes-viernes): aumentar promedio (offset negativo observado)
-            # Fines de semana (sábado-domingo): reducir promedio (offset positivo observado)
-            if is_weekend:
-                # Fines de semana: reducir en ~8% para corregir offset positivo
-                avg_total = avg_total * 0.92
-                logger.debug(f"  {fecha_str} (fin de semana): ajuste -8% aplicado, total={avg_total:.2f}")
-            else:
-                # Días laborales: aumentar en ~8% para corregir offset negativo
-                avg_total = avg_total * 1.08
-                logger.debug(f"  {fecha_str} (laboral): ajuste +8% aplicado, total={avg_total:.2f}")
+                    logger.warning(f"  {fecha_str} (normal): usando promedio general como último recurso")
             
             # Usar cluster para obtener perfil normalizado
             if hourly_engine and hourly_engine.normal_disaggregator.is_fitted:
@@ -1842,30 +1888,20 @@ def calculate_base_curves(
                         hourly_profile = np.array(hourly_profile)
                     logger.debug(f"  {fecha_str} (normal): usando cluster, total={avg_total:.2f}")
                 except Exception as e:
-                    logger.warning(f"  {fecha_str} (normal): error con cluster ({e}), usando promedio histórico")
-                    # Fallback: promedio histórico del mismo día
-                    historical_same_day = df_historico[
-                        (df_historico['fecha'].dt.month == fecha.month) &
-                        (df_historico['fecha'].dt.day == fecha.day) &
-                        (df_historico['fecha'] < fecha)
-                    ].copy()
-                    
-                    if len(historical_same_day) > 0:
-                        hourly_profile = historical_same_day[period_cols].mean().values
+                    logger.warning(f"  {fecha_str} (normal): error con cluster ({e}), usando promedio reciente")
+                    # Fallback: usar perfil horario promedio de datos históricos disponibles
+                    if historical_for_profile is not None and len(historical_for_profile) > 0:
+                        hourly_profile = historical_for_profile[period_cols].mean().values
+                        logger.debug(f"  {fecha_str} (normal): usando perfil promedio de {len(historical_for_profile)} días históricos")
                     else:
                         # Perfil plano como último recurso
                         hourly_profile = np.full(24, avg_total / 24)
+                        logger.warning(f"  {fecha_str} (normal): usando perfil plano (sin datos históricos)")
             else:
-                # Sin cluster: usar promedio histórico del mismo día
-                historical_same_day = df_historico[
-                    (df_historico['fecha'].dt.month == fecha.month) &
-                    (df_historico['fecha'].dt.day == fecha.day) &
-                    (df_historico['fecha'] < fecha)
-                ].copy()
-                
-                if len(historical_same_day) > 0:
-                    hourly_profile = historical_same_day[period_cols].mean().values
-                    logger.debug(f"  {fecha_str} (normal): usando promedio histórico, {len(historical_same_day)} años")
+                # Sin cluster: usar perfil horario promedio de datos históricos disponibles
+                if historical_for_profile is not None and len(historical_for_profile) > 0:
+                    hourly_profile = historical_for_profile[period_cols].mean().values
+                    logger.debug(f"  {fecha_str} (normal): usando perfil promedio de {len(historical_for_profile)} días históricos")
                 else:
                     # Perfil plano
                     hourly_profile = np.full(24, avg_total / 24)
