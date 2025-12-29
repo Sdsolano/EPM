@@ -1887,9 +1887,6 @@ async def get_base_curve(request: BaseCurveRequest):
     """
     Endpoint para obtener curvas base de demanda horaria para un rango de fechas.
     
-    Para días festivos: usa promedio histórico del mismo día en años anteriores.
-    Para días normales: usa clusters + total promedio histórico del mismo día.
-    
     Retorna perfiles horarios con valores absolutos (MW) en formato JSON.
     """
     try:
