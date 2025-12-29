@@ -784,7 +784,7 @@ class ForecastPipeline:
             # Verificar si está en temporada navideña (25 dic - 7 ene)
             # Esto incluye días entre Navidad y Epifanía donde el consumo es menor
             es_temporada_navideña = False
-            if fecha.month == 12 and fecha.day >= 25:
+            if fecha.month == 12 and fecha.day >= 23:
                 es_temporada_navideña = True
                 aplicar_ajuste = True
             elif fecha.month == 1 and fecha.day <= 6:

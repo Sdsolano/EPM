@@ -1702,6 +1702,19 @@ def calculate_base_curves(
     
     curves = {}
     
+    # Función helper para detectar temporada navideña (23 dic - 6 ene)
+    def is_christmas_season(date):
+        """Verifica si una fecha está en temporada navideña (23 dic - 6 ene)"""
+        month = date.month
+        day = date.day
+        # Del 23 al 31 de diciembre
+        if month == 12 and day >= 23:
+            return True
+        # Del 1 al 6 de enero
+        if month == 1 and day <= 6:
+            return True
+        return False
+    
     for fecha in fecha_range:
         fecha_str = fecha.strftime('%Y-%m-%d')
         mmdd = fecha.strftime('%m-%d')  # Para buscar mismo día en años anteriores
@@ -1709,9 +1722,69 @@ def calculate_base_curves(
         # Clasificar día
         is_holiday = calendar_classifier.is_holiday(fecha)
         is_weekend = calendar_classifier.is_weekend(fecha)
+        is_christmas = is_christmas_season(fecha)
         
-        # MÉTODO 1: Si es festivo, usar promedio histórico del mismo día
-        if is_holiday:
+        # MÉTODO 0: Si está en temporada navideña, usar promedio histórico de últimos 3 años
+        if is_christmas:
+            # Buscar todos los años anteriores con mismo mes-día (últimos 3 años)
+            historical_same_day = df_historico[
+                (df_historico['fecha'].dt.month == fecha.month) &
+                (df_historico['fecha'].dt.day == fecha.day) &
+                (df_historico['fecha'] < fecha)  # Solo años anteriores
+            ].copy()
+            
+            if len(historical_same_day) > 0:
+                # Ordenar por fecha descendente y usar últimos 3 años
+                historical_same_day = historical_same_day.sort_values('fecha', ascending=False)
+                if len(historical_same_day) > 3:
+                    historical_same_day = historical_same_day.head(3)
+                    logger.debug(f"  {fecha_str} (temporada navideña): usando últimos 3 años de {len(historical_same_day)} disponibles")
+                
+                # Promediar perfiles horarios
+                hourly_profile = historical_same_day[period_cols].mean().values
+                logger.debug(f"  {fecha_str} (temporada navideña): {len(historical_same_day)} años históricos")
+            else:
+                # Fallback: usar promedio de todos los días de temporada navideña del mismo día en años anteriores (últimos 3 años)
+                historical_christmas = df_historico[
+                    (df_historico['fecha'].dt.month == fecha.month) &
+                    (df_historico['fecha'].dt.day == fecha.day) &
+                    (df_historico['fecha'] < fecha) &
+                    (df_historico['fecha'] >= (fecha - pd.DateOffset(years=3)))
+                ].copy()
+                
+                if len(historical_christmas) > 0:
+                    # Normalizar y promediar
+                    totals = historical_christmas[period_cols].sum(axis=1)
+                    normalized = historical_christmas[period_cols].div(totals, axis=0)
+                    avg_normalized = normalized.mean().values
+                    
+                    # Escalar con total promedio
+                    avg_total = historical_christmas['TOTAL'].mean() if 'TOTAL' in historical_christmas.columns else historical_christmas[period_cols].sum(axis=1).mean()
+                    hourly_profile = avg_normalized * avg_total
+                    logger.debug(f"  {fecha_str} (temporada navideña): fallback con {len(historical_christmas)} días históricos (últimos 3 años)")
+                else:
+                    # Último fallback: usar cluster de días especiales
+                    if hourly_engine and hourly_engine.special_disaggregator.is_fitted:
+                        avg_total = df_historico['TOTAL'].mean() if 'TOTAL' in df_historico.columns else df_historico[period_cols].sum(axis=1).mean()
+                        result = hourly_engine.special_disaggregator.predict_hourly_profile(fecha, avg_total, return_normalized=False)
+                        if result is not None:
+                            if isinstance(result, tuple):
+                                hourly_profile = result[0]
+                            else:
+                                hourly_profile = result
+                            if not isinstance(hourly_profile, np.ndarray):
+                                hourly_profile = np.array(hourly_profile)
+                        else:
+                            hourly_profile = np.zeros(24)
+                        logger.debug(f"  {fecha_str} (temporada navideña): usando cluster especial")
+                    else:
+                        # Fallback final: perfil plano
+                        avg_total = df_historico['TOTAL'].mean() if 'TOTAL' in df_historico.columns else df_historico[period_cols].sum(axis=1).mean()
+                        hourly_profile = np.full(24, avg_total / 24)
+                        logger.warning(f"  {fecha_str} (temporada navideña): usando perfil plano (sin datos)")
+        
+        # MÉTODO 1: Si es festivo (pero no temporada navideña), usar promedio histórico del mismo día
+        elif is_holiday:
             # Buscar todos los años anteriores con mismo mes-día
             historical_same_day = df_historico[
                 (df_historico['fecha'].dt.month == fecha.month) &
