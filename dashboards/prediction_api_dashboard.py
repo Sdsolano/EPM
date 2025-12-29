@@ -247,6 +247,45 @@ def call_retrain_api(api_url: str, ucp: str) -> Dict[str, Any]:
         return {"error": f"Error inesperado: {str(e)}"}
 
 
+def call_base_curve_api(api_url: str, ucp: str, fecha_inicio: str, fecha_fin: str) -> Dict[str, Any]:
+    """
+    Llama al endpoint /api/v1/base-curve de la API
+    
+    Args:
+        api_url: URL base de la API
+        ucp: Nombre del UCP
+        fecha_inicio: Fecha inicio (formato YYYY-MM-DD)
+        fecha_fin: Fecha fin (formato YYYY-MM-DD)
+    
+    Returns:
+        Dict con la respuesta de la API o None si hay error
+    """
+    url = f"{api_url}/base-curve"
+    
+    payload = {
+        "ucp": ucp,
+        "fecha_inicio": fecha_inicio,
+        "fecha_fin": fecha_fin
+    }
+    
+    try:
+        response = requests.post(url, json=payload, timeout=300)  # 5 minutos timeout
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.ConnectionError:
+        return {"error": f"No se pudo conectar a la API en {api_url}. Asegúrate de que el servidor esté corriendo."}
+    except requests.exceptions.Timeout:
+        return {"error": "La solicitud a la API tardó demasiado. Intenta nuevamente."}
+    except requests.exceptions.HTTPError as e:
+        try:
+            error_detail = response.json().get("detail", str(e))
+            return {"error": f"Error HTTP {response.status_code}: {error_detail}"}
+        except:
+            return {"error": f"Error HTTP {response.status_code}: {str(e)}"}
+    except Exception as e:
+        return {"error": f"Error inesperado: {str(e)}"}
+
+
 def check_api_health(api_url: str) -> bool:
     """
     Verifica si la API está disponible
@@ -557,6 +596,127 @@ def plot_hourly_predictions_vs_historical(hourly_predictions_df, hourly_historic
         ),
         yaxis=dict(
             title='Demanda Horaria (MWh)',
+            showgrid=True,
+            gridcolor='lightgray'
+        ),
+        hovermode='x unified',
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        ),
+        height=500,
+        template='plotly_white'
+    )
+    
+    return fig
+
+
+def convert_base_curves_to_hourly_dataframe(api_response: Dict[str, Any]) -> Optional[pd.DataFrame]:
+    """
+    Convierte la respuesta del endpoint base-curve a un DataFrame con datos horarios
+    
+    Args:
+        api_response: Respuesta JSON de la API con formato {"curves": {"YYYY-MM-DD": [P1, P2, ..., P24]}}
+    
+    Returns:
+        DataFrame con columnas: fecha_hora, demanda_horaria, tipo
+    """
+    if "error" in api_response:
+        return None
+    
+    if "curves" not in api_response:
+        return None
+    
+    curves = api_response["curves"]
+    
+    if not curves or len(curves) == 0:
+        return None
+    
+    # Convertir diccionario de curvas a DataFrame horario
+    rows = []
+    for fecha_str, periodos in curves.items():
+        fecha = pd.to_datetime(fecha_str)
+        
+        # Cada día tiene 24 períodos (P1-P24)
+        for periodo in range(1, 25):
+            if periodo <= len(periodos):
+                # Crear datetime con la hora correspondiente (periodo 1 = 00:00, periodo 2 = 01:00, etc.)
+                hora = periodo - 1  # P1 = 0, P2 = 1, ..., P24 = 23
+                fecha_hora = fecha.replace(hour=hora, minute=0, second=0)
+                
+                rows.append({
+                    "fecha_hora": fecha_hora,
+                    "demanda_horaria": periodos[periodo - 1],  # Índice 0-based
+                    "tipo": "curva_base",
+                    "periodo": periodo
+                })
+    
+    if len(rows) == 0:
+        return None
+    
+    df = pd.DataFrame(rows)
+    df = df.sort_values("fecha_hora")
+    return df
+
+
+def plot_base_curves_vs_historical(base_curves_df, historical_df, title="Curvas Base vs Históricos"):
+    """
+    Crea gráfica comparando curvas base con datos históricos horarios
+    
+    Args:
+        base_curves_df: DataFrame con curvas base (debe tener 'fecha_hora' y 'demanda_horaria')
+        historical_df: DataFrame con datos históricos horarios (debe tener 'fecha_hora' y 'demanda_horaria')
+        title: Título de la gráfica
+    
+    Returns:
+        Figura de Plotly
+    """
+    fig = go.Figure()
+    
+    # Agregar línea de curvas base
+    if base_curves_df is not None and len(base_curves_df) > 0:
+        base_dates = pd.to_datetime(base_curves_df['fecha_hora'])
+        base_values = base_curves_df['demanda_horaria']
+        
+        fig.add_trace(go.Scatter(
+            x=base_dates,
+            y=base_values,
+            mode='lines',
+            name='Curva Base',
+            line=dict(color='#2ca02c', width=2),
+            hovertemplate='<b>%{x|%Y-%m-%d %H:00}</b><br>Curva Base: %{y:,.2f} MW<extra></extra>'
+        ))
+    
+    # Agregar línea de datos históricos horarios
+    if historical_df is not None and len(historical_df) > 0:
+        hist_dates = pd.to_datetime(historical_df['fecha_hora'])
+        hist_values = historical_df['demanda_horaria']
+        
+        fig.add_trace(go.Scatter(
+            x=hist_dates,
+            y=hist_values,
+            mode='lines',
+            name='Histórico Real',
+            line=dict(color='#1f77b4', width=2),
+            hovertemplate='<b>%{x|%Y-%m-%d %H:00}</b><br>Real: %{y:,.2f} MW<extra></extra>'
+        ))
+    
+    # Configurar layout
+    fig.update_layout(
+        title=dict(
+            text=title,
+            font=dict(size=20, color='#1f77b4')
+        ),
+        xaxis=dict(
+            title='Fecha y Hora',
+            showgrid=True,
+            gridcolor='lightgray'
+        ),
+        yaxis=dict(
+            title='Demanda Horaria (MW)',
             showgrid=True,
             gridcolor='lightgray'
         ),
@@ -1017,6 +1177,208 @@ def main():
         else:
             st.error(f"❌ No se pudo conectar a la API en {api_url}")
             st.info("💡 Para iniciar la API, ejecuta: `uvicorn src.api.main:app --reload`")
+    
+    # ========================================================================
+    # SECCIÓN: CURVAS BASE
+    # ========================================================================
+    st.markdown("---")
+    st.markdown("---")
+    st.subheader("📊 Curvas Base de Demanda")
+    st.markdown("Obtén curvas base de demanda horaria para un rango de fechas específico")
+    
+    # Formulario para curvas base
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        base_curve_ucp = st.selectbox(
+            "UCP para Curva Base",
+            options=ucp_options,
+            index=0,
+            key="base_curve_ucp"
+        )
+    
+    with col2:
+        base_curve_fecha_inicio = st.date_input(
+            "Fecha Inicio",
+            value=datetime.now().date(),
+            key="base_curve_fecha_inicio"
+        )
+    
+    with col3:
+        base_curve_fecha_fin = st.date_input(
+            "Fecha Fin",
+            value=datetime.now().date() + timedelta(days=30),
+            key="base_curve_fecha_fin"
+        )
+    
+    base_curve_button = st.button("📊 Obtener Curvas Base", type="primary", use_container_width=True)
+    
+    # Inicializar estado de sesión para curvas base
+    if 'base_curves_df' not in st.session_state:
+        st.session_state.base_curves_df = None
+    if 'base_curves_response' not in st.session_state:
+        st.session_state.base_curves_response = None
+    if 'base_curves_historical_df' not in st.session_state:
+        st.session_state.base_curves_historical_df = None
+    
+    # Procesar solicitud de curvas base
+    if base_curve_button:
+        if not api_available:
+            st.error(f"❌ No se pudo conectar a la API. Verifica que el servidor esté corriendo en {api_url}")
+        else:
+            if base_curve_fecha_inicio > base_curve_fecha_fin:
+                st.error("❌ La fecha de inicio debe ser anterior o igual a la fecha de fin")
+            else:
+                st.info(f"📊 Obteniendo curvas base para {base_curve_ucp} desde {base_curve_fecha_inicio} hasta {base_curve_fecha_fin}...")
+                
+                with st.spinner("Consultando endpoint de curvas base..."):
+                    fecha_inicio_str = base_curve_fecha_inicio.strftime('%Y-%m-%d')
+                    fecha_fin_str = base_curve_fecha_fin.strftime('%Y-%m-%d')
+                    
+                    response = call_base_curve_api(
+                        api_url=api_url,
+                        ucp=base_curve_ucp,
+                        fecha_inicio=fecha_inicio_str,
+                        fecha_fin=fecha_fin_str
+                    )
+                
+                if "error" in response:
+                    st.error(f"❌ Error obteniendo curvas base: {response['error']}")
+                    st.session_state.base_curves_df = None
+                    st.session_state.base_curves_response = None
+                else:
+                    st.success("✅ Curvas base obtenidas exitosamente!")
+                    
+                    # Convertir respuesta a DataFrame
+                    base_curves_df = convert_base_curves_to_hourly_dataframe(response)
+                    
+                    if base_curves_df is None or len(base_curves_df) == 0:
+                        st.warning("⚠️ No se recibieron curvas base en la respuesta de la API")
+                        st.json(response)  # Mostrar respuesta completa para debugging
+                    else:
+                        st.session_state.base_curves_df = base_curves_df
+                        st.session_state.base_curves_response = response
+                        
+                        # Intentar cargar datos históricos para comparación
+                        df_historico = load_historical_data_for_comparison(base_curve_ucp)
+                        if df_historico is not None and len(df_historico) > 0:
+                            fecha_inicio_dt = pd.to_datetime(base_curve_fecha_inicio)
+                            fecha_fin_dt = pd.to_datetime(base_curve_fecha_fin)
+                            historical_df = get_historical_hourly_data(df_historico, fecha_inicio_dt, fecha_fin_dt)
+                            st.session_state.base_curves_historical_df = historical_df
+                        else:
+                            st.session_state.base_curves_historical_df = pd.DataFrame()
+    
+    # Mostrar gráfica de curvas base si hay datos
+    if st.session_state.base_curves_df is not None and len(st.session_state.base_curves_df) > 0:
+        base_curves_df = st.session_state.base_curves_df
+        historical_df = st.session_state.base_curves_historical_df if st.session_state.base_curves_historical_df is not None else pd.DataFrame()
+        
+        # Calcular estadísticas
+        st.markdown("---")
+        st.subheader("📈 Visualización de Curvas Base")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric(
+                "Demanda Promedio",
+                f"{base_curves_df['demanda_horaria'].mean():,.0f} MW"
+            )
+        
+        with col2:
+            st.metric(
+                "Demanda Mínima",
+                f"{base_curves_df['demanda_horaria'].min():,.0f} MW"
+            )
+        
+        with col3:
+            st.metric(
+                "Demanda Máxima",
+                f"{base_curves_df['demanda_horaria'].max():,.0f} MW"
+            )
+        
+        with col4:
+            total_horas = len(base_curves_df)
+            total_dias = len(set(base_curves_df['fecha_hora'].dt.date))
+            st.metric(
+                "Total Horas",
+                f"{total_horas} ({total_dias} días)"
+            )
+        
+        # Crear gráfica
+        fig_base = plot_base_curves_vs_historical(
+            base_curves_df,
+            historical_df,
+            title=f"Curvas Base vs Históricos - {base_curve_ucp}"
+        )
+        
+        st.plotly_chart(fig_base, use_container_width=True)
+        
+        # Información sobre datos históricos
+        if historical_df is not None and len(historical_df) > 0:
+            st.info(f"📊 Mostrando {len(base_curves_df)} horas de curvas base y {len(historical_df)} horas de datos históricos")
+            
+            # Mostrar tabla de comparación si hay datos históricos
+            st.markdown("---")
+            st.subheader("📋 Comparación Detallada")
+            
+            # Unir curvas base con históricos
+            comparison_df = base_curves_df[['fecha_hora', 'demanda_horaria']].copy()
+            comparison_df = comparison_df.rename(columns={'demanda_horaria': 'curva_base'})
+            
+            comparison_df = comparison_df.merge(
+                historical_df[['fecha_hora', 'demanda_horaria']],
+                on='fecha_hora',
+                how='left',
+                suffixes=('', '_real')
+            )
+            comparison_df = comparison_df.rename(columns={'demanda_horaria': 'historico_real'})
+            
+            # Calcular errores
+            comparison_df['error_abs'] = (
+                comparison_df['curva_base'] - comparison_df['historico_real']
+            ).abs()
+            comparison_df['error_pct'] = (
+                (comparison_df['error_abs'] / comparison_df['historico_real']) * 100
+            ).round(2)
+            
+            # Renombrar columnas para visualización
+            comparison_df = comparison_df.rename(columns={
+                'fecha_hora': 'Fecha y Hora',
+                'curva_base': 'Curva Base (MW)',
+                'historico_real': 'Histórico Real (MW)',
+                'error_abs': 'Error Absoluto (MW)',
+                'error_pct': 'Error (%)'
+            })
+            
+            # Mostrar tabla
+            st.dataframe(
+                comparison_df,
+                use_container_width=True,
+                hide_index=True
+            )
+            
+            # Métricas de error
+            if comparison_df['Error (%)'].notna().any():
+                avg_error = comparison_df['Error (%)'].mean()
+                max_error = comparison_df['Error (%)'].max()
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("Error Promedio (%)", f"{avg_error:.2f}%")
+                with col2:
+                    st.metric("Error Máximo (%)", f"{max_error:.2f}%")
+        else:
+            st.info(f"📊 Mostrando {len(base_curves_df)} horas de curvas base (no hay datos históricos disponibles para este período)")
+        
+        # Mostrar datos completos en expander
+        with st.expander("📄 Ver datos completos de curvas base"):
+            st.dataframe(base_curves_df, use_container_width=True)
+        
+        # Mostrar respuesta completa de la API en expander (para debugging)
+        with st.expander("🔍 Ver respuesta completa de la API"):
+            st.json(st.session_state.base_curves_response)
 
 
 if __name__ == "__main__":

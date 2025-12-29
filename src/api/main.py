@@ -72,6 +72,38 @@ class EventsResponse(BaseModel):
     """Schema para respuesta de eventos futuros"""
     
     events: Dict[str, str] = Field(..., description="Eventos futuros que podrían afectar la demanda energética (formato: {'YYYY-MM-DD': 'Nombre del evento'})")
+
+class BaseCurveRequest(BaseModel):
+    """Schema para solicitud de curva base"""
+    ucp: str = Field(
+        ...,
+        description="UCP para filtrar datos históricos (ej: 'Atlantico', 'Oriente')"
+    )
+    fecha_inicio: str = Field(
+        ...,
+        description="Fecha inicio del periodo (formato: YYYY-MM-DD)"
+    )
+    fecha_fin: str = Field(
+        ...,
+        description="Fecha fin del periodo (formato: YYYY-MM-DD)"
+    )
+
+    @field_validator('fecha_inicio', 'fecha_fin')
+    @classmethod
+    def validate_date_format(cls, v: str) -> str:
+        """Valida formato de fechas"""
+        try:
+            datetime.strptime(v, '%Y-%m-%d')
+        except ValueError:
+            raise ValueError('Formato de fecha inválido. Usar YYYY-MM-DD')
+        return v
+
+class BaseCurveResponse(BaseModel):
+    """Schema para respuesta de curva base"""
+    curves: Dict[str, List[float]] = Field(
+        ...,
+        description="Curvas base por fecha (formato: {'YYYY-MM-DD': [P1, P2, ..., P24]})"
+    )
 class PredictRequest(BaseModel):
     """Schema para solicitud de predicción"""
     # power_data_path: str = Field(
@@ -1576,6 +1608,326 @@ async def get_events(request: EventsRequest):
         logger.warning(f"⚠ Error obteniendo eventos futuros: {e}")
         events = {}
 
+def calculate_base_curves(
+    ucp: str,
+    fecha_inicio: str,
+    fecha_fin: str
+) -> Dict[str, List[float]]:
+    """
+    Calcula curvas base para un rango de fechas.
+    
+    Para días festivos: usa promedio histórico del mismo día en años anteriores.
+    Para días normales: usa clusters + total promedio histórico.
+    
+    Args:
+        ucp: UCP para filtrar datos
+        fecha_inicio: Fecha inicio (YYYY-MM-DD)
+        fecha_fin: Fecha fin (YYYY-MM-DD)
+    
+    Returns:
+        Dict con formato {'YYYY-MM-DD': [P1, P2, ..., P24]}
+    """
+    from src.prediction.hourly import HourlyDisaggregationEngine, CalendarClassifier
+    from src.config.settings import FEATURES_DATA_DIR, RAW_DATA_DIR
+    import numpy as np
+    
+    logger.info(f"📊 Calculando curvas base para UCP={ucp}, {fecha_inicio} a {fecha_fin}")
+    
+    # Cargar datos históricos filtrados por UCP
+    # Intentar primero desde data/raw/{ucp}/datos.csv
+    historical_paths = [
+        Path(RAW_DATA_DIR) / ucp / "datos.csv",
+        Path(FEATURES_DATA_DIR) / "data_with_features_latest.csv"
+    ]
+    
+    df_historico = None
+    for path in historical_paths:
+        if path.exists():
+            try:
+                df_historico = pd.read_csv(path)
+                # Normalizar nombres de columnas
+                if 'FECHA' in df_historico.columns:
+                    df_historico.rename(columns={'FECHA': 'fecha'}, inplace=True)
+                df_historico['fecha'] = pd.to_datetime(df_historico['fecha'])
+                
+                # Filtrar por UCP si existe la columna
+                if 'UCP' in df_historico.columns:
+                    df_historico = df_historico[df_historico['UCP'] == ucp].copy()
+                    logger.info(f"✓ Datos cargados desde {path} (filtrado por UCP={ucp}): {len(df_historico)} registros")
+                else:
+                    logger.info(f"✓ Datos cargados desde {path}: {len(df_historico)} registros (sin columna UCP)")
+                
+                if len(df_historico) > 0:
+                    break
+            except Exception as e:
+                logger.warning(f"⚠ Error cargando {path}: {e}")
+                continue
+    
+    if df_historico is None or len(df_historico) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No se encontraron datos históricos para UCP={ucp}"
+        )
+    
+    # Validar que tenga columnas P1-P24
+    period_cols = [f'P{i}' for i in range(1, 25)]
+    missing_cols = [col for col in period_cols if col not in df_historico.columns]
+    if missing_cols:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Faltan columnas de períodos horarios: {missing_cols}"
+        )
+    
+    # Inicializar componentes
+    calendar_classifier = CalendarClassifier()
+    
+    # Cargar motor de desagregación horaria (para días normales)
+    try:
+        models_dir = Path(f'models/{ucp}') if Path(f'models/{ucp}').exists() else Path('models')
+        hourly_engine = HourlyDisaggregationEngine(
+            auto_load=True,
+            models_dir=str(models_dir)
+        )
+        logger.info(f"✓ Motor de desagregación horaria cargado")
+    except Exception as e:
+        logger.warning(f"⚠ No se pudo cargar motor de desagregación: {e}")
+        hourly_engine = None
+    
+    # Generar rango de fechas
+    fecha_inicio_dt = pd.to_datetime(fecha_inicio)
+    fecha_fin_dt = pd.to_datetime(fecha_fin)
+    fecha_range = pd.date_range(start=fecha_inicio_dt, end=fecha_fin_dt, freq='D')
+    
+    curves = {}
+    
+    for fecha in fecha_range:
+        fecha_str = fecha.strftime('%Y-%m-%d')
+        mmdd = fecha.strftime('%m-%d')  # Para buscar mismo día en años anteriores
+        
+        # Clasificar día
+        is_holiday = calendar_classifier.is_holiday(fecha)
+        is_weekend = calendar_classifier.is_weekend(fecha)
+        
+        # MÉTODO 1: Si es festivo, usar promedio histórico del mismo día
+        if is_holiday:
+            # Buscar todos los años anteriores con mismo mes-día
+            historical_same_day = df_historico[
+                (df_historico['fecha'].dt.month == fecha.month) &
+                (df_historico['fecha'].dt.day == fecha.day) &
+                (df_historico['fecha'] < fecha)  # Solo años anteriores
+            ].copy()
+            
+            if len(historical_same_day) > 0:
+                # Ordenar por fecha descendente y usar últimos años (máximo 5 años para festivos)
+                historical_same_day = historical_same_day.sort_values('fecha', ascending=False)
+                if len(historical_same_day) > 5:
+                    historical_same_day = historical_same_day.head(5)
+                    logger.debug(f"  {fecha_str} (festivo): usando últimos 5 años de {len(historical_same_day)} disponibles")
+                
+                # Promediar perfiles horarios
+                hourly_profile = historical_same_day[period_cols].mean().values
+                logger.debug(f"  {fecha_str} (festivo): {len(historical_same_day)} años históricos")
+            else:
+                # Fallback: usar promedio de todos los festivos del mismo mes
+                historical_holidays = df_historico[
+                    (df_historico['fecha'].dt.month == fecha.month) &
+                    (df_historico['fecha'].apply(lambda x: calendar_classifier.is_holiday(pd.to_datetime(x))))
+                ].copy()
+                
+                if len(historical_holidays) > 0:
+                    # Normalizar y promediar
+                    totals = historical_holidays[period_cols].sum(axis=1)
+                    normalized = historical_holidays[period_cols].div(totals, axis=0)
+                    avg_normalized = normalized.mean().values
+                    
+                    # Escalar con total promedio
+                    avg_total = historical_holidays['TOTAL'].mean() if 'TOTAL' in historical_holidays.columns else historical_holidays[period_cols].sum(axis=1).mean()
+                    hourly_profile = avg_normalized * avg_total
+                    logger.debug(f"  {fecha_str} (festivo): fallback con {len(historical_holidays)} festivos del mes")
+                else:
+                    # Último fallback: usar cluster de días especiales
+                    if hourly_engine and hourly_engine.special_disaggregator.is_fitted:
+                        avg_total = df_historico['TOTAL'].mean() if 'TOTAL' in df_historico.columns else df_historico[period_cols].sum(axis=1).mean()
+                        result = hourly_engine.special_disaggregator.predict_hourly_profile(fecha, avg_total, return_normalized=False)
+                        if result is not None:
+                            if isinstance(result, tuple):
+                                hourly_profile = result[0]
+                            else:
+                                hourly_profile = result
+                            if not isinstance(hourly_profile, np.ndarray):
+                                hourly_profile = np.array(hourly_profile)
+                        else:
+                            hourly_profile = np.zeros(24)
+                        logger.debug(f"  {fecha_str} (festivo): usando cluster especial")
+                    else:
+                        # Fallback final: perfil plano
+                        avg_total = df_historico['TOTAL'].mean() if 'TOTAL' in df_historico.columns else df_historico[period_cols].sum(axis=1).mean()
+                        hourly_profile = np.full(24, avg_total / 24)
+                        logger.warning(f"  {fecha_str} (festivo): usando perfil plano (sin datos)")
+        
+        # MÉTODO 2: Si es día normal, usar cluster + total promedio histórico
+        else:
+            # Calcular total promedio histórico del mismo día (mismo mes-día en años anteriores)
+            # PRIORIDAD: Usar últimos 3 años para capturar tendencia reciente
+            historical_same_day = df_historico[
+                (df_historico['fecha'].dt.month == fecha.month) &
+                (df_historico['fecha'].dt.day == fecha.day) &
+                (df_historico['fecha'] < fecha)
+            ].copy()
+            
+            if len(historical_same_day) > 0:
+                # Ordenar por fecha descendente (más recientes primero)
+                historical_same_day = historical_same_day.sort_values('fecha', ascending=False)
+                
+                # Si hay más de 3 años, usar solo los últimos 3 años (más representativos)
+                if len(historical_same_day) > 3:
+                    historical_same_day = historical_same_day.head(3)
+                    logger.debug(f"  {fecha_str} (normal): usando últimos 3 años de histórico")
+                
+                # Calcular promedio (ya filtrado a últimos años)
+                avg_total = historical_same_day['TOTAL'].mean() if 'TOTAL' in historical_same_day.columns else historical_same_day[period_cols].sum(axis=1).mean()
+            else:
+                # Fallback: promedio del mismo día de la semana en el mismo mes (últimos 3 años)
+                historical_same_dow = df_historico[
+                    (df_historico['fecha'].dt.month == fecha.month) &
+                    (df_historico['fecha'].dt.dayofweek == fecha.dayofweek) &
+                    (df_historico['fecha'] < fecha)
+                ].copy()
+                
+                if len(historical_same_dow) > 0:
+                    # Ordenar y tomar últimos años
+                    historical_same_dow = historical_same_dow.sort_values('fecha', ascending=False)
+                    # Agrupar por año y tomar últimos 3 años únicos
+                    historical_same_dow['year'] = historical_same_dow['fecha'].dt.year
+                    unique_years = historical_same_dow['year'].unique()
+                    if len(unique_years) > 3:
+                        # Tomar solo los últimos 3 años
+                        recent_years = sorted(unique_years)[-3:]
+                        historical_same_dow = historical_same_dow[historical_same_dow['year'].isin(recent_years)]
+                    
+                    avg_total = historical_same_dow['TOTAL'].mean() if 'TOTAL' in historical_same_dow.columns else historical_same_dow[period_cols].sum(axis=1).mean()
+                else:
+                    # Último fallback: promedio general de últimos 2 años
+                    df_recent = df_historico[df_historico['fecha'] >= (fecha - pd.DateOffset(years=2))].copy()
+                    if len(df_recent) > 0:
+                        avg_total = df_recent['TOTAL'].mean() if 'TOTAL' in df_recent.columns else df_recent[period_cols].sum(axis=1).mean()
+                    else:
+                        avg_total = df_historico['TOTAL'].mean() if 'TOTAL' in df_historico.columns else df_historico[period_cols].sum(axis=1).mean()
+            
+            # Aplicar factor de ajuste según tipo de día para corregir offset
+            # Días laborales (lunes-viernes): aumentar promedio (offset negativo observado)
+            # Fines de semana (sábado-domingo): reducir promedio (offset positivo observado)
+            if is_weekend:
+                # Fines de semana: reducir en ~8% para corregir offset positivo
+                avg_total = avg_total * 0.92
+                logger.debug(f"  {fecha_str} (fin de semana): ajuste -8% aplicado, total={avg_total:.2f}")
+            else:
+                # Días laborales: aumentar en ~8% para corregir offset negativo
+                avg_total = avg_total * 1.08
+                logger.debug(f"  {fecha_str} (laboral): ajuste +8% aplicado, total={avg_total:.2f}")
+            
+            # Usar cluster para obtener perfil normalizado
+            if hourly_engine and hourly_engine.normal_disaggregator.is_fitted:
+                try:
+                    result = hourly_engine.normal_disaggregator.predict_hourly_profile(
+                        fecha, avg_total, return_normalized=True
+                    )
+                    # Cuando return_normalized=True, retorna tupla (hourly, normalized, cluster_id)
+                    if isinstance(result, tuple):
+                        hourly_profile = result[0]
+                    else:
+                        hourly_profile = result
+                    # Asegurar que es array numpy
+                    if not isinstance(hourly_profile, np.ndarray):
+                        hourly_profile = np.array(hourly_profile)
+                    logger.debug(f"  {fecha_str} (normal): usando cluster, total={avg_total:.2f}")
+                except Exception as e:
+                    logger.warning(f"  {fecha_str} (normal): error con cluster ({e}), usando promedio histórico")
+                    # Fallback: promedio histórico del mismo día
+                    historical_same_day = df_historico[
+                        (df_historico['fecha'].dt.month == fecha.month) &
+                        (df_historico['fecha'].dt.day == fecha.day) &
+                        (df_historico['fecha'] < fecha)
+                    ].copy()
+                    
+                    if len(historical_same_day) > 0:
+                        hourly_profile = historical_same_day[period_cols].mean().values
+                    else:
+                        # Perfil plano como último recurso
+                        hourly_profile = np.full(24, avg_total / 24)
+            else:
+                # Sin cluster: usar promedio histórico del mismo día
+                historical_same_day = df_historico[
+                    (df_historico['fecha'].dt.month == fecha.month) &
+                    (df_historico['fecha'].dt.day == fecha.day) &
+                    (df_historico['fecha'] < fecha)
+                ].copy()
+                
+                if len(historical_same_day) > 0:
+                    hourly_profile = historical_same_day[period_cols].mean().values
+                    logger.debug(f"  {fecha_str} (normal): usando promedio histórico, {len(historical_same_day)} años")
+                else:
+                    # Perfil plano
+                    hourly_profile = np.full(24, avg_total / 24)
+                    logger.warning(f"  {fecha_str} (normal): usando perfil plano (sin datos históricos)")
+        
+        # Convertir a lista de floats y asegurar 24 valores
+        hourly_list = [float(x) for x in hourly_profile[:24]]
+        if len(hourly_list) < 24:
+            hourly_list.extend([0.0] * (24 - len(hourly_list)))
+        
+        curves[fecha_str] = hourly_list
+    
+    logger.info(f"✓ Curvas base calculadas para {len(curves)} días")
+    return curves
+
+
+@app.post("/base-curve", response_model=BaseCurveResponse, status_code=status.HTTP_200_OK)
+async def get_base_curve(request: BaseCurveRequest):
+    """
+    Endpoint para obtener curvas base de demanda horaria para un rango de fechas.
+    
+    Para días festivos: usa promedio histórico del mismo día en años anteriores.
+    Para días normales: usa clusters + total promedio histórico del mismo día.
+    
+    Retorna perfiles horarios con valores absolutos (MW) en formato JSON.
+    """
+    try:
+        logger.info(f"📊 Solicitud de curva base: UCP={request.ucp}, {request.fecha_inicio} a {request.fecha_fin}")
+        
+        # Validar rango de fechas
+        fecha_inicio_dt = pd.to_datetime(request.fecha_inicio)
+        fecha_fin_dt = pd.to_datetime(request.fecha_fin)
+        
+        if fecha_inicio_dt > fecha_fin_dt:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="fecha_inicio debe ser anterior o igual a fecha_fin"
+            )
+        
+        # Calcular curvas base
+        curves = await run_in_threadpool(
+            calculate_base_curves,
+            request.ucp,
+            request.fecha_inicio,
+            request.fecha_fin
+        )
+        
+        logger.info(f"✅ Curvas base generadas exitosamente para {len(curves)} días")
+        
+        return BaseCurveResponse(curves=curves)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error generando curvas base: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error generando curvas base: {str(e)}"
+        )
+
+
 @app.get("/health", response_model=HealthResponse, status_code=status.HTTP_200_OK)
 async def health_check(ucp: Optional[str] = None):
     """
@@ -1818,6 +2170,7 @@ async def root():
         "docs": "/docs",
         "endpoints": {
             "POST /predict": "Genera predicción de demanda con granularidad horaria",
+            "POST /api/v1/base-curve": "Obtiene curvas base de demanda horaria para un rango de fechas",
             "POST /retrain": "Reentrenamiento manual del modelo (actualiza datos + entrena nuevo modelo)",
             "GET /health": "Estado del sistema",
             "GET /models": "Lista de modelos disponibles"
