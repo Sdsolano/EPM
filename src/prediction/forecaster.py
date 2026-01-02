@@ -41,6 +41,12 @@ except ImportError:
     # Si no está disponible, será None
     HourlyDisaggregationEngine = None
 
+# Importar cliente de festivos API
+try:
+    from .festivos_api import FestivosAPIClient
+except ImportError:
+    FestivosAPIClient = None
+
 # Configurar logging
 logging.basicConfig(
     level=logging.INFO,
@@ -50,12 +56,18 @@ logger = logging.getLogger(__name__)
 
 
 class ForecastPipeline:
-    """Pipeline completo para predicción de próximos 30 días"""
+    """
+    Pipeline completo para predicción de próximos 30 días
+    
+    IMPORTANTE: El caché de festivos es solo por instancia (en memoria).
+    Cada ejecución nueva crea una nueva instancia, por lo que siempre se llama
+    a la API al menos una vez, garantizando que los cambios en la API se reflejen.
+    """
 
     def __init__(self,
                  model_path: str = 'models/registry/champion_model.joblib',
                  historical_data_path: str = 'data/features/data_with_features_latest.csv',
-                 festivos_path: str = 'data/calendario_festivos.json',
+                 festivos_path: str = None,  # Deprecated: ya no se usa, se mantiene por compatibilidad
                  enable_hourly_disaggregation: bool = True,
                  raw_climate_path: str = 'data/raw/clima_new.csv',
                  ucp: str = None):
@@ -65,17 +77,24 @@ class ForecastPipeline:
         Args:
             model_path: Ruta al modelo entrenado
             historical_data_path: Ruta a datos históricos con features
-            festivos_path: Ruta al calendario de festivos
+            festivos_path: DEPRECATED - Ya no se usa, los festivos se obtienen desde la API
             enable_hourly_disaggregation: Si True, habilita desagregación horaria automática
             raw_climate_path: Ruta a datos climáticos RAW (para obtener datos reales más allá del entrenamiento)
-            ucp: Nombre del UCP (ej: 'Atlantico', 'Oriente') para cargar modelos específicos
+            ucp: Nombre del UCP (ej: 'Antioquia', 'Atlantico', 'Oriente') - REQUERIDO para obtener festivos desde API
         """
         self.model_path = model_path
         self.historical_data_path = historical_data_path
-        self.festivos_path = festivos_path
+        self.festivos_path = festivos_path  # Mantenido por compatibilidad, pero no se usa
         self.enable_hourly_disaggregation = enable_hourly_disaggregation
         self.raw_climate_path = raw_climate_path
-        self.ucp = ucp
+        self.ucp = ucp or 'Antioquia'  # Default a Antioquia si no se especifica
+        
+        # Inicializar cliente de festivos API
+        if FestivosAPIClient is None:
+            logger.warning("⚠ FestivosAPIClient no disponible. Los festivos no funcionarán correctamente.")
+            self.festivos_client = None
+        else:
+            self.festivos_client = FestivosAPIClient()
 
         # Cargar modelo
         logger.info(f"Cargando modelo desde {model_path}")
@@ -131,8 +150,9 @@ class ForecastPipeline:
                 logger.warning(f"   Se usarán promedios históricos como fallback")
                 self.df_climate_raw = None
 
-        # Cargar festivos
-        self.festivos = self._load_festivos()
+        # Inicializar conjunto de festivos (se carga bajo demanda en predict_next_n_days)
+        self.festivos = set()  # Set para búsquedas rápidas
+        self.festivos_loaded_range = None  # Rango de fechas para el cual se cargaron los festivos
 
         # Feature engineer
         self.feature_engineer = FeatureEngineer()
@@ -146,11 +166,12 @@ class ForecastPipeline:
                     models_dir = f'models/{self.ucp}'
                     self.hourly_engine = HourlyDisaggregationEngine(
                         auto_load=True,
-                        models_dir=models_dir
+                        models_dir=models_dir,
+                        ucp=self.ucp
                     )
                     logger.info(f"✓ Sistema de desagregación horaria cargado para {self.ucp}")
                 else:
-                    self.hourly_engine = HourlyDisaggregationEngine(auto_load=True)
+                    self.hourly_engine = HourlyDisaggregationEngine(auto_load=True, ucp=self.ucp)
                     logger.info("✓ Sistema de desagregación horaria cargado")
             except Exception as e:
                 logger.warning(f"⚠ No se pudo cargar sistema de desagregación: {e}")
@@ -163,34 +184,85 @@ class ForecastPipeline:
 
         logger.info("✓ Pipeline inicializado correctamente")
 
-    def _load_festivos(self) -> list:
-        """Carga calendario de festivos"""
-        if Path(self.festivos_path).exists():
-            with open(self.festivos_path, 'r', encoding='utf-8') as f:
-                festivos_dict = json.load(f)
-                return festivos_dict.get('festivos', [])
-        else:
-            logger.warning(f"Archivo de festivos no encontrado: {self.festivos_path}")
-            logger.warning("Usando festivos por defecto de Colombia 2024-2025")
-            return self._get_default_festivos()
-
-    def _get_default_festivos(self) -> list:
-        """Festivos por defecto de Colombia"""
-        return [
-            '2024-01-01', '2024-01-08', '2024-03-25', '2024-03-28', '2024-03-29',
-            '2024-05-01', '2024-05-13', '2024-06-03', '2024-06-10', '2024-07-01',
-            '2024-07-20', '2024-08-07', '2024-08-19', '2024-10-14', '2024-11-04',
-            '2024-11-11', '2024-12-08', '2024-12-25',
-            '2025-01-01', '2025-01-06', '2025-03-24', '2025-04-17', '2025-04-18',
-            '2025-05-01', '2025-06-02', '2025-06-23', '2025-06-30', '2025-07-20',
-            '2025-08-07', '2025-08-18', '2025-10-13', '2025-11-03', '2025-11-17',
-            '2025-12-08', '2025-12-25'
-        ]
+    def _load_festivos_for_range(self, start_date: datetime, end_date: datetime) -> None:
+        """
+        Carga festivos desde la API para un rango de fechas específico.
+        
+        Args:
+            start_date: Fecha de inicio
+            end_date: Fecha de fin
+        """
+        if self.festivos_client is None:
+            logger.error("⚠ Cliente de festivos API no disponible. No se pueden cargar festivos.")
+            return
+        
+        # Verificar si ya tenemos los festivos cargados para este rango
+        if (self.festivos_loaded_range and 
+            start_date >= self.festivos_loaded_range[0] and 
+            end_date <= self.festivos_loaded_range[1]):
+            logger.debug(f"Festivos ya cargados para el rango solicitado")
+            return
+        
+        try:
+            start_str = start_date.strftime('%Y-%m-%d')
+            end_str = end_date.strftime('%Y-%m-%d')
+            
+            logger.info(f"Cargando festivos desde API para {self.ucp} ({start_str} a {end_str})...")
+            festivos_list = self.festivos_client.get_festivos(start_str, end_str, self.ucp)
+            
+            # Agregar al set existente (o reemplazar si es un rango completamente nuevo)
+            if self.festivos_loaded_range is None:
+                self.festivos = set(festivos_list)
+            else:
+                # Extender el set con nuevos festivos
+                self.festivos.update(festivos_list)
+            
+            # Actualizar el rango cargado (extender si es necesario)
+            if self.festivos_loaded_range is None:
+                self.festivos_loaded_range = (start_date, end_date)
+            else:
+                self.festivos_loaded_range = (
+                    min(self.festivos_loaded_range[0], start_date),
+                    max(self.festivos_loaded_range[1], end_date)
+                )
+            
+            logger.info(f"✓ Cargados {len(festivos_list)} festivos (total en caché: {len(self.festivos)})")
+            
+        except Exception as e:
+            logger.error(f"❌ Error al cargar festivos desde API: {e}")
+            logger.warning("  Continuando sin festivos (se asumirá que no hay festivos)")
 
     def is_festivo(self, fecha: datetime) -> bool:
-        """Verifica si una fecha es festivo"""
+        """
+        Verifica si una fecha es festivo.
+        
+        Nota: Los festivos deberían estar pre-cargados con _load_festivos_for_range().
+        Si no están, intenta cargarlos automáticamente (pero esto es ineficiente).
+        """
         fecha_str = fecha.strftime('%Y-%m-%d')
-        return fecha_str in self.festivos
+        
+        # Verificar si ya está en el set (caso más común - optimizado)
+        if fecha_str in self.festivos:
+            return True
+        
+        # Si no está en el caché, verificar si el rango cargado incluye esta fecha
+        # Si no, cargar el año completo (solo como fallback)
+        if self.festivos_client is not None:
+            # Verificar si la fecha está fuera del rango cargado
+            if (self.festivos_loaded_range is None or 
+                fecha < self.festivos_loaded_range[0] or 
+                fecha > self.festivos_loaded_range[1]):
+                # Cargar el año de la fecha como fallback
+                year = fecha.year
+                start_date = datetime(year, 1, 1)
+                end_date = datetime(year, 12, 31)
+                self._load_festivos_for_range(start_date, end_date)
+            
+            # Verificar de nuevo después de cargar (o si ya estaba en rango pero no en set)
+            return fecha_str in self.festivos
+        
+        # Si no hay cliente disponible, retornar False
+        return False
 
     def _get_placeholder_hourly(self, total_daily: float) -> dict:
         """
@@ -261,8 +333,9 @@ class ForecastPipeline:
             logger.info(f"   Buscando datos climáticos RAW: {start_date.date()} a {end_date.date()}")
             logger.info(f"   Registros encontrados en RAW: {len(df_climate_raw_filtered)}/{days} días")
 
-            if len(df_climate_raw_filtered) >= days:
-                # Tenemos datos suficientes en RAW
+            # CAMBIO: Usar datos disponibles aunque sean menos de 'days' (complementaremos con promedios)
+            if len(df_climate_raw_filtered) > 0:
+                # Tenemos al menos algunos datos en RAW
                 # CAMBIO: Buscar columnas de forma más flexible
                 all_cols = df_climate_raw_filtered.columns.tolist()
                 
@@ -281,7 +354,10 @@ class ForecastPipeline:
 
                 if len(clima_cols) > 0:
                     df_result = df_climate_raw_filtered[['fecha'] + clima_cols].copy()
-                    logger.info(f"✅ Usando datos climáticos REALES de archivo RAW para {len(df_result)} días")
+                    if len(df_result) >= days:
+                        logger.info(f"✅ Usando datos climáticos REALES de archivo RAW para {len(df_result)} días (completos)")
+                    else:
+                        logger.info(f"✅ Usando datos climáticos REALES de archivo RAW para {len(df_result)}/{days} días (parciales, se complementarán con promedios)")
                     return df_result
                 else:
                     logger.warning(f"⚠️ No se encontraron columnas climáticas válidas en RAW")
@@ -338,7 +414,8 @@ class ForecastPipeline:
 
         PRIORIDAD:
         1. Intenta usar datos climáticos REALES del histórico si existen
-        2. Si no, usa PROMEDIOS HISTÓRICOS como fallback
+        2. Si hay datos parciales, los complementa con promedios históricos
+        3. Si no hay datos, usa PROMEDIOS HISTÓRICOS como fallback
 
         Args:
             start_date: Fecha inicial
@@ -352,9 +429,15 @@ class ForecastPipeline:
         # PRIMERO: Intentar usar datos reales
         real_data = self.get_real_climate_data(start_date, days)
         if real_data is not None:
-            return real_data
+            # Verificar si tenemos todos los días o solo parciales
+            if len(real_data) >= days:
+                return real_data
+            else:
+                # Complementar datos parciales con promedios históricos
+                logger.info(f"   Complementando {len(real_data)} días reales con promedios históricos para {days - len(real_data)} días faltantes")
+                return self._complement_with_historical_averages(real_data, start_date, days)
 
-        # FALLBACK: Usar promedios históricos
+        # FALLBACK: Usar promedios históricos completos
         logger.warning("⚠️  Usando promedios históricos (fallback). Integrar API de clima para producción.")
 
         # Calcular promedios históricos por mes/día del año
@@ -388,6 +471,68 @@ class ForecastPipeline:
             })
 
         return pd.DataFrame(forecasts)
+
+    def _complement_with_historical_averages(self, real_data: pd.DataFrame, start_date: datetime, days: int) -> pd.DataFrame:
+        """
+        Complementa datos climáticos reales parciales con promedios históricos para días faltantes
+        
+        Args:
+            real_data: DataFrame con datos reales (puede tener menos de 'days' registros)
+            start_date: Fecha inicial del período completo
+            days: Número total de días necesarios
+            
+        Returns:
+            DataFrame completo con datos reales + promedios históricos
+        """
+        # Obtener fechas que ya tenemos en datos reales
+        real_dates = set(real_data['fecha'].dt.date)
+        
+        # Calcular promedios históricos
+        climate_stats = self._calculate_historical_climate_stats()
+        
+        # Crear lista completa de fechas
+        all_dates = [start_date + timedelta(days=day) for day in range(days)]
+        
+        # Construir DataFrame completo
+        complete_forecasts = []
+        for fecha in all_dates:
+            fecha_date = fecha.date()
+            
+            # Si tenemos datos reales para esta fecha, usarlos
+            if fecha_date in real_dates:
+                real_row = real_data[real_data['fecha'].dt.date == fecha_date].iloc[0]
+                complete_forecasts.append(real_row.to_dict())
+            else:
+                # Usar promedios históricos para días faltantes
+                month = fecha.month
+                stats = climate_stats[month]
+                
+                np.random.seed(int(fecha.timestamp()))
+                
+                complete_forecasts.append({
+                    'fecha': fecha,
+                    'temp_mean': stats['temp_mean'] + np.random.normal(0, 1),
+                    'temp_min': stats['temp_min'] + np.random.normal(0, 0.5),
+                    'temp_max': stats['temp_max'] + np.random.normal(0, 0.5),
+                    'temp_std': stats['temp_std'],
+                    'humidity_mean': stats['humidity_mean'] + np.random.normal(0, 2),
+                    'humidity_min': stats['humidity_min'],
+                    'humidity_max': stats['humidity_max'],
+                    'wind_speed_mean': stats.get('wind_speed_mean', 2.0),
+                    'wind_speed_max': stats.get('wind_speed_max', 5.0),
+                    'rain_mean': stats.get('rain_mean', 0.0),
+                    'rain_sum': stats.get('rain_sum', 0.0)
+                })
+        
+        result_df = pd.DataFrame(complete_forecasts)
+        
+        # Asegurar que las columnas de fecha sean datetime
+        if not pd.api.types.is_datetime64_any_dtype(result_df['fecha']):
+            result_df['fecha'] = pd.to_datetime(result_df['fecha'])
+        
+        logger.info(f"✅ Pronóstico completo: {len(real_data)} días reales + {days - len(real_data)} días con promedios históricos")
+        
+        return result_df
 
     def _calculate_historical_climate_stats(self) -> dict:
         """Calcula estadísticas climáticas históricas por mes"""
@@ -720,6 +865,26 @@ class ForecastPipeline:
         # Fecha inicial (mañana)
         ultimo_dia_historico = self.df_historico['fecha'].max()
         primer_dia_prediccion = ultimo_dia_historico + timedelta(days=1)
+        
+        # Fecha final del período a predecir
+        ultimo_dia_prediccion = primer_dia_prediccion + timedelta(days=n_days - 1)
+        
+        # Cargar festivos para el rango completo de predicción (con margen de seguridad)
+        # Agregar 30 días antes y después para cubrir lags y márgenes
+        start_festivos = primer_dia_prediccion - timedelta(days=30)
+        end_festivos = ultimo_dia_prediccion + timedelta(days=30)
+        self._load_festivos_for_range(start_festivos, end_festivos)
+        
+        # Pre-cargar festivos en el CalendarClassifier del hourly_engine para evitar llamadas repetidas
+        if self.hourly_engine is not None and hasattr(self.hourly_engine, 'calendar_classifier'):
+            # Obtener años únicos del rango (más eficiente que bucle)
+            years_needed = set(range(start_festivos.year, end_festivos.year + 1))
+            
+            # Pre-cargar todos los años necesarios
+            if hasattr(self.hourly_engine.calendar_classifier, 'preload_years'):
+                logger.info(f"Pre-cargando festivos para años {sorted(years_needed)} en CalendarClassifier...")
+                self.hourly_engine.calendar_classifier.preload_years(list(years_needed))
+                logger.info(f"✓ Festivos pre-cargados en CalendarClassifier (total: {len(self.hourly_engine.calendar_classifier.festivos_cache)} fechas)")
 
         logger.info(f"Último día con datos históricos: {ultimo_dia_historico.strftime('%Y-%m-%d')}")
         logger.info(f"Primera fecha a predecir: {primer_dia_prediccion.strftime('%Y-%m-%d')}")

@@ -35,7 +35,8 @@ class HourlyDisaggregationEngine:
         normal_disaggregator: Optional[HourlyDisaggregator] = None,
         special_disaggregator: Optional[SpecialDaysDisaggregator] = None,
         auto_load: bool = True,
-        models_dir: Optional[str] = None
+        models_dir: Optional[str] = None,
+        ucp: Optional[str] = None
     ):
         """
         Inicializa el motor de desagregación.
@@ -45,9 +46,25 @@ class HourlyDisaggregationEngine:
             special_disaggregator: Desagregador para días especiales (opcional)
             auto_load: Si True, intenta cargar modelos guardados automáticamente
             models_dir: Directorio donde buscar los modelos (ej: 'models/Atlantico'). Si None, usa MODELS_DIR
+            ucp: Nombre del UCP para obtener festivos (ej: 'Antioquia', 'Atlantico'). 
+                 Si None, intenta inferirlo del models_dir o usa 'Antioquia' por defecto
         """
-        self.calendar_classifier = CalendarClassifier()
         self.models_dir = Path(models_dir) if models_dir else Path(MODELS_DIR)
+        
+        # Determinar UCP: primero del parámetro, luego del models_dir, luego default
+        if ucp is None:
+            # Intentar extraer del models_dir (ej: 'models/Atlantico' -> 'Atlantico')
+            if 'models_dir' in locals() and models_dir:
+                parts = Path(models_dir).parts
+                if len(parts) > 1 and parts[-2] == 'models':
+                    ucp = parts[-1]
+            
+            # Si aún no hay UCP, usar default
+            if ucp is None:
+                ucp = 'Antioquia'
+        
+        self.ucp = ucp
+        self.calendar_classifier = CalendarClassifier(ucp=self.ucp)
 
         # Cargar o usar desagregadores proporcionados
         if auto_load:
@@ -292,7 +309,7 @@ class HourlyDisaggregationEngine:
 
         # Entrenar desagregador especial
         logger.info("\n2. Entrenando desagregador para días especiales...")
-        self.special_disaggregator = SpecialDaysDisaggregator(n_clusters=n_clusters_special)
+        self.special_disaggregator = SpecialDaysDisaggregator(n_clusters=n_clusters_special, ucp=self.ucp)
         self.special_disaggregator.fit(df, date_column='FECHA')
 
         if save:

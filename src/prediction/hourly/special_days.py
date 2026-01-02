@@ -27,20 +27,22 @@ class SpecialDaysDisaggregator:
     patrones únicos de demanda en fechas especiales.
     """
 
-    def __init__(self, n_clusters: int = 15, random_state: int = 42):
+    def __init__(self, n_clusters: int = 15, random_state: int = 42, ucp: str = 'Antioquia'):
         """
         Inicializa el desagregador de días especiales.
 
         Args:
             n_clusters: Número de clusters para K-Means (menor que días normales)
             random_state: Semilla aleatoria para reproducibilidad
+            ucp: Nombre del UCP para obtener festivos (ej: 'Antioquia', 'Atlantico')
         """
         self.n_clusters = n_clusters
         self.random_state = random_state
+        self.ucp = ucp
         self.kmeans = None
         self.cluster_profiles = None
         self.cluster_by_date = None  # Mapeo mm-dd -> cluster
-        self.calendar_classifier = CalendarClassifier()
+        self.calendar_classifier = CalendarClassifier(ucp=self.ucp)
         self.is_fitted = False
 
     def fit(self, df: pd.DataFrame, date_column: str = 'FECHA') -> 'SpecialDaysDisaggregator':
