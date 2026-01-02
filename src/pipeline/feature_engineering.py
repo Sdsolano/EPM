@@ -197,26 +197,45 @@ class FeatureEngineer:
                 demand_features.append(col_name)
                 logger.info(f"      ✓ {col_name} creado")
 
-            # Rolling statistics para TOTAL
+            # Rolling statistics para TOTAL (excluyendo época navideña)
+            # IMPORTANTE: Excluir época navideña (dic 23 - ene 6) para evitar contaminación
+            # Crear máscara para época navideña
+            epoca_navidena_mask = (
+                ((df['month'] == 12) & (df['day'] >= 23)) |
+                ((df['month'] == 1) & (df['day'] <= 6))
+            )
+
+            # Crear copia de TOTAL con época navideña como NaN (para rolling stats limpias)
+            df['TOTAL_clean'] = df['TOTAL'].copy()
+            df.loc[epoca_navidena_mask, 'TOTAL_clean'] = np.nan
+
             for window in ROLLING_WINDOWS:
-                # Media móvil
+                # Media móvil (excluyendo época navideña)
                 col_name = f'total_rolling_mean_{window}d'
-                df[col_name] = df['TOTAL'].rolling(window=window, min_periods=1).mean()
+                df[col_name] = df['TOTAL_clean'].rolling(window=window, min_periods=max(1, window//2)).mean()
+                # Rellenar NaN con rolling normal como fallback (para primeros días del dataset)
+                df[col_name] = df[col_name].fillna(df['TOTAL'].rolling(window=window, min_periods=1).mean())
                 demand_features.append(col_name)
 
-                # Desviación estándar móvil
+                # Desviación estándar móvil (excluyendo época navideña)
                 col_name = f'total_rolling_std_{window}d'
-                df[col_name] = df['TOTAL'].rolling(window=window, min_periods=1).std()
+                df[col_name] = df['TOTAL_clean'].rolling(window=window, min_periods=max(1, window//2)).std()
+                df[col_name] = df[col_name].fillna(df['TOTAL'].rolling(window=window, min_periods=1).std())
                 demand_features.append(col_name)
 
-                # Mínimo y máximo móvil
+                # Mínimo y máximo móvil (excluyendo época navideña)
                 col_name = f'total_rolling_min_{window}d'
-                df[col_name] = df['TOTAL'].rolling(window=window, min_periods=1).min()
+                df[col_name] = df['TOTAL_clean'].rolling(window=window, min_periods=max(1, window//2)).min()
+                df[col_name] = df[col_name].fillna(df['TOTAL'].rolling(window=window, min_periods=1).min())
                 demand_features.append(col_name)
 
                 col_name = f'total_rolling_max_{window}d'
-                df[col_name] = df['TOTAL'].rolling(window=window, min_periods=1).max()
+                df[col_name] = df['TOTAL_clean'].rolling(window=window, min_periods=max(1, window//2)).max()
+                df[col_name] = df[col_name].fillna(df['TOTAL'].rolling(window=window, min_periods=1).max())
                 demand_features.append(col_name)
+
+            # Eliminar columna temporal
+            df = df.drop(columns=['TOTAL_clean'])
 
         # Lags de periodos horarios (seleccionar periodos clave: picos de demanda)
         key_periods = ['P8', 'P12', 'P18', 'P20']  # Horas pico típicas
@@ -239,7 +258,7 @@ class FeatureEngineer:
         return df
 
     def _create_seasonality_features(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Crea características de estacionalidad"""
+        """Crea características de estacionalidad y contexto temporal"""
         seasonality_features = []
 
         # Temporadas en Colombia (2 temporadas principales: lluvia y seca)
@@ -264,8 +283,56 @@ class FeatureEngineer:
         df['week_of_month'] = (df['day'] - 1) // 7 + 1
         seasonality_features.append('week_of_month')
 
+        # ========================================
+        # NUEVAS FEATURES: Contexto de Época Especial
+        # ========================================
+        # Feature 1: Flag de época navideña (dic 23 - ene 6)
+        df['es_epoca_navidena'] = (
+            ((df['month'] == 12) & (df['day'] >= 23)) |
+            ((df['month'] == 1) & (df['day'] <= 6))
+        ).astype(int)
+        seasonality_features.append('es_epoca_navidena')
+
+        # Feature 2: Flag de post-época especial (ene 7-15)
+        # Período de recuperación/normalización después de navidad
+        df['es_post_epoca_especial'] = (
+            (df['month'] == 1) & (df['day'] >= 7) & (df['day'] <= 15)
+        ).astype(int)
+        seasonality_features.append('es_post_epoca_especial')
+
+        # Feature 3: Días desde último festivo (captura recuperación gradual)
+        # Calcular distancia al festivo más cercano ANTERIOR
+        if 'is_festivo' in df.columns:
+            df['dias_desde_ultimo_festivo'] = 0
+            ultimo_festivo_idx = -999  # Inicializar muy atrás
+
+            for idx in df.index:
+                if df.loc[idx, 'is_festivo'] == 1:
+                    ultimo_festivo_idx = idx
+                    df.loc[idx, 'dias_desde_ultimo_festivo'] = 0
+                else:
+                    if ultimo_festivo_idx >= 0:
+                        df.loc[idx, 'dias_desde_ultimo_festivo'] = idx - ultimo_festivo_idx
+                    else:
+                        # Si no hay festivo anterior, usar 30 como valor por defecto
+                        df.loc[idx, 'dias_desde_ultimo_festivo'] = 30
+
+            # Saturar en 30 días (más allá de 30 días, el efecto se estabiliza)
+            df['dias_desde_ultimo_festivo'] = df['dias_desde_ultimo_festivo'].clip(upper=30)
+            seasonality_features.append('dias_desde_ultimo_festivo')
+        else:
+            logger.warning("   ⚠️  Columna 'is_festivo' no encontrada. Feature 'dias_desde_ultimo_festivo' no creada.")
+
+        # Feature 4: Flag de temporada alta de consumo (ene 16 - dic 22, excluye época navideña)
+        df['es_temporada_alta'] = (
+            ~((df['month'] == 12) & (df['day'] >= 23)) &
+            ~((df['month'] == 1) & (df['day'] <= 6))
+        ).astype(int)
+        seasonality_features.append('es_temporada_alta')
+
         self.feature_names.extend(seasonality_features)
         logger.info(f"   ✓ {len(seasonality_features)} features de estacionalidad creadas")
+        logger.info(f"     (incluye 4 nuevas features de contexto temporal)")
 
         return df
 

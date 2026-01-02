@@ -108,3 +108,5 @@ tests/test_future_events.py
 
 models/
 /models
+/.claude
+.claude/settings.local.json

@@ -305,8 +305,9 @@ class ForecastPipeline:
             0.039,  # P24 (23:00-00:00)
         ]
 
-        # Verificar que sume 1.0
-        assert abs(sum(hourly_distribution) - 1.0) < 0.001, "La distribución debe sumar 1.0"
+        # Normalizar para que sume exactamente 1.0
+        total_dist = sum(hourly_distribution)
+        hourly_distribution = [x / total_dist for x in hourly_distribution]
 
         return {f'P{i}': total_daily * hourly_distribution[i-1] for i in range(1, 25)}
 
@@ -657,6 +658,44 @@ class ForecastPipeline:
         features['is_december'] = int(fecha.month == 12)
         features['week_of_month'] = (fecha.day - 1) // 7 + 1
 
+        # ========================================
+        # NUEVAS FEATURES: Contexto de Época Especial
+        # ========================================
+        # Feature 1: Flag de época navideña (dic 23 - ene 6)
+        features['es_epoca_navidena'] = int(
+            (fecha.month == 12 and fecha.day >= 23) or
+            (fecha.month == 1 and fecha.day <= 6)
+        )
+
+        # Feature 2: Flag de post-época especial (ene 7-15)
+        features['es_post_epoca_especial'] = int(
+            fecha.month == 1 and 7 <= fecha.day <= 15
+        )
+
+        # Feature 3: Días desde último festivo (buscar en df_temp)
+        # Buscar festivos anteriores en df_temp
+        if 'is_festivo' in df_temp.columns:
+            festivos_anteriores = df_temp[
+                (df_temp['fecha'] < pd.Timestamp(fecha)) &
+                (df_temp['is_festivo'] == 1)
+            ]
+            if len(festivos_anteriores) > 0:
+                ultimo_festivo = festivos_anteriores['fecha'].max()
+                dias_desde_festivo = (pd.Timestamp(fecha) - ultimo_festivo).days
+                features['dias_desde_ultimo_festivo'] = min(dias_desde_festivo, 30)  # Saturar en 30
+            else:
+                # Si no hay festivos anteriores, usar 30
+                features['dias_desde_ultimo_festivo'] = 30
+        else:
+            # Si no existe columna is_festivo, usar 30
+            features['dias_desde_ultimo_festivo'] = 30
+
+        # Feature 4: Flag de temporada alta
+        features['es_temporada_alta'] = int(
+            not ((fecha.month == 12 and fecha.day >= 23) or
+                 (fecha.month == 1 and fecha.day <= 6))
+        )
+
         # Estacionales (sin/cos)
         features['dayofweek_sin'] = np.sin(2 * np.pi * fecha.dayofweek / 7)
         features['dayofweek_cos'] = np.cos(2 * np.pi * fecha.dayofweek / 7)
@@ -763,6 +802,7 @@ class ForecastPipeline:
             """
             Obtiene valores de una ventana de tiempo basada en fechas.
             CRITICO: Solo usa datos historicos REALES, NO predicciones.
+            NUEVO: Excluye época navideña (dic 23 - ene 6) para evitar contaminación.
 
             Args:
                 df: DataFrame con datos (historicos + predicciones)
@@ -784,7 +824,31 @@ class ForecastPipeline:
                 fecha_fin = target_date - timedelta(days=1)
                 mask = (df['fecha'].dt.date >= fecha_inicio.date()) & (df['fecha'].dt.date <= fecha_fin.date())
 
+            # NUEVO FILTRO: Excluir época navideña (dic 23 - ene 6) de rolling statistics
+            # Esto previene que períodos de demanda anormalmente baja contaminen las predicciones
+            epoca_navidena_mask = (
+                ((df['fecha'].dt.month == 12) & (df['fecha'].dt.day >= 23)) |
+                ((df['fecha'].dt.month == 1) & (df['fecha'].dt.day <= 6))
+            )
+            mask = mask & ~epoca_navidena_mask  # Excluir días de época navideña
+
             valores = df.loc[mask, column].values
+
+            # Si después de excluir época navideña no quedan suficientes valores,
+            # expandir la ventana hacia atrás (buscar más días históricos)
+            if len(valores) < max(3, days_back // 2):  # Al menos 3 días o la mitad de la ventana
+                # Expandir ventana hasta tener suficientes datos
+                days_back_extended = days_back * 2  # Duplicar ventana
+                fecha_inicio_extended = fecha_fin - timedelta(days=days_back_extended - 1)
+                mask_extended = (df['fecha'].dt.date >= fecha_inicio_extended.date()) & (df['fecha'].dt.date <= fecha_fin.date())
+                mask_extended = mask_extended & ~epoca_navidena_mask
+                valores = df.loc[mask_extended, column].values
+
+                # Si aún no hay suficientes, tomar lo que haya (sin filtro de época navideña como último recurso)
+                if len(valores) < 3:
+                    mask_fallback = (df['fecha'].dt.date >= fecha_inicio.date()) & (df['fecha'].dt.date <= fecha_fin.date())
+                    valores = df.loc[mask_fallback, column].values
+
             return valores
 
         # Últimos 7 días (SOLO DATOS HISTORICOS REALES)

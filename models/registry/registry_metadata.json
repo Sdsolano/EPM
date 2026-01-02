@@ -2196,6 +2196,117 @@
         }
       },
       "is_champion": false
+    },
+    "xgboost_20260102_173513": {
+      "model_id": "xgboost_20260102_173513",
+      "model_name": "xgboost",
+      "version": "20260102_173513",
+      "timestamp": "2026-01-02T17:35:13.109041",
+      "path": "models\\registry\\xgboost_20260102_173513.joblib",
+      "metrics": {
+        "mape": 2.1561226372416202,
+        "correlation": 0.9415553465068242,
+        "rmape": 2.2899584663194235,
+        "mae": 631.2426275164985,
+        "rmse": 871.1887283978544,
+        "r2": 0.8761456681359219
+      },
+      "metadata": {
+        "training_time": 2.589745,
+        "n_features": 55,
+        "n_train_samples": 2572,
+        "cv_results": {
+          "mean_rmape": 3.8225551498571626,
+          "std_rmape": 0.7823203103433575,
+          "mean_mape": 3.4768177846152764,
+          "std_mape": 0.6809425407034917,
+          "all_rmapes": [
+            4.456695642768287,
+            2.7203498969209203,
+            4.290619909882281
+          ],
+          "all_mapes": [
+            4.091830327744252,
+            2.5275609427704713,
+            3.811062083331105
+          ]
+        }
+      },
+      "is_champion": false
+    },
+    "lightgbm_20260102_173513": {
+      "model_id": "lightgbm_20260102_173513",
+      "model_name": "lightgbm",
+      "version": "20260102_173513",
+      "timestamp": "2026-01-02T17:35:13.154046",
+      "path": "models\\registry\\lightgbm_20260102_173513.joblib",
+      "metrics": {
+        "mape": 2.244021610695798,
+        "correlation": 0.9330519762791674,
+        "rmape": 2.4050338756523795,
+        "mae": 649.0156888324835,
+        "rmse": 902.541533607721,
+        "r2": 0.8670705834760117
+      },
+      "metadata": {
+        "training_time": 0.330032,
+        "n_features": 55,
+        "n_train_samples": 2572,
+        "cv_results": {
+          "mean_rmape": 3.6987223836641205,
+          "std_rmape": 0.7520506881503274,
+          "mean_mape": 3.3384992007337857,
+          "std_mape": 0.6362130959268533,
+          "all_rmapes": [
+            4.234903223399915,
+            2.635174273754675,
+            4.226089653837771
+          ],
+          "all_mapes": [
+            3.8025928710855528,
+            2.438909517496584,
+            3.7739952136192203
+          ]
+        }
+      },
+      "is_champion": false
+    },
+    "randomforest_20260102_173513": {
+      "model_id": "randomforest_20260102_173513",
+      "model_name": "randomforest",
+      "version": "20260102_173513",
+      "timestamp": "2026-01-02T17:35:13.312886",
+      "path": "models\\registry\\randomforest_20260102_173513.joblib",
+      "metrics": {
+        "mape": 2.8140553754022872,
+        "correlation": 0.9172428577100076,
+        "rmape": 3.067950163632639,
+        "mae": 825.1358644443687,
+        "rmse": 1083.4398593666033,
+        "r2": 0.8084437513585474
+      },
+      "metadata": {
+        "training_time": 0.667476,
+        "n_features": 55,
+        "n_train_samples": 2572,
+        "cv_results": {
+          "mean_rmape": 3.962461815115901,
+          "std_rmape": 0.6771739472944285,
+          "mean_mape": 3.5410076886502915,
+          "std_mape": 0.5456321138204824,
+          "all_rmapes": [
+            4.092351348984997,
+            3.0758155427154517,
+            4.719218553647253
+          ],
+          "all_mapes": [
+            3.6995903450864502,
+            2.807720747865469,
+            4.115711972998956
+          ]
+        }
+      },
+      "is_champion": false
     }
   },
   "champion": "xgboost_20251120_161227",
@@ -2390,6 +2501,27 @@
       "model_id": "xgboost_20251120_161227",
       "reason": "Mejor rmape: 1.1954",
       "timestamp": "2025-12-02T17:44:00.434408"
+    },
+    {
+      "action": "register",
+      "model_id": "xgboost_20260102_173513",
+      "timestamp": "2026-01-02T17:35:13.109041"
+    },
+    {
+      "action": "register",
+      "model_id": "lightgbm_20260102_173513",
+      "timestamp": "2026-01-02T17:35:13.154046"
+    },
+    {
+      "action": "register",
+      "model_id": "randomforest_20260102_173513",
+      "timestamp": "2026-01-02T17:35:13.312886"
+    },
+    {
+      "action": "promote_champion",
+      "model_id": "xgboost_20251120_161227",
+      "reason": "Mejor rmape: 1.1954",
+      "timestamp": "2026-01-02T17:35:13.339820"
     }
   ]
 }
