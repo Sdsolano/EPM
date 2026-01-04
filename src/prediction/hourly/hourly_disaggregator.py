@@ -12,8 +12,16 @@ from pathlib import Path
 import pickle
 from typing import Optional, Tuple
 import logging
+from datetime import timedelta, datetime
 
 from ...config.settings import FEATURES_DATA_DIR, MODELS_DIR
+
+# Importar CalendarClassifier para excluir festivos
+try:
+    from .calendar_utils import CalendarClassifier
+except ImportError:
+    CalendarClassifier = None
+    logging.warning("CalendarClassifier no disponible. No se excluirán festivos del entrenamiento.")
 
 logger = logging.getLogger(__name__)
 
@@ -24,26 +32,44 @@ class HourlyDisaggregator:
 
     Entrena un modelo de clustering sobre patrones históricos normalizados
     y luego predice la distribución horaria para nuevos días.
+    
+    IMPORTANTE: El entrenamiento usa solo los últimos 3 meses de datos históricos
+    y excluye festivos y fines de semana (solo días laborales) para capturar
+    patrones de demanda más recientes y relevantes.
     """
 
-    def __init__(self, n_clusters: int = 35, random_state: int = 42):
+    def __init__(self, n_clusters: int = 35, random_state: int = 42, ucp: str = 'Antioquia'):
         """
         Inicializa el desagregador.
 
         Args:
             n_clusters: Número de clusters para K-Means
             random_state: Semilla aleatoria para reproducibilidad
+            ucp: Nombre del UCP para identificar festivos (default: 'Antioquia')
         """
         self.n_clusters = n_clusters
         self.random_state = random_state
+        self.ucp = ucp
         self.kmeans = None
         self.cluster_profiles = None
         self.cluster_by_dayofweek = None
         self.is_fitted = False
+        self.training_date = None  # Fecha de entrenamiento (para validar antigüedad)
+        
+        # Inicializar CalendarClassifier para excluir festivos
+        if CalendarClassifier is not None:
+            self.calendar_classifier = CalendarClassifier(ucp=self.ucp)
+        else:
+            self.calendar_classifier = None
+            logger.warning("CalendarClassifier no disponible. Los festivos no se excluirán.")
 
     def fit(self, df: pd.DataFrame, date_column: str = 'FECHA') -> 'HourlyDisaggregator':
         """
         Entrena el modelo de clustering con datos históricos.
+        
+        IMPORTANTE: Filtra automáticamente:
+        - Solo últimos 3 meses antes de la fecha más reciente
+        - Solo días laborales (lunes-viernes, excluye festivos y fines de semana)
         """
 
         logger.info(f"Entrenando desagregador horario con {len(df)} días históricos...")
@@ -58,6 +84,50 @@ class HourlyDisaggregator:
         df = df.copy()
         df[date_column] = pd.to_datetime(df[date_column])
         df.dropna(inplace=True)
+        
+        # ========================================
+        # FILTRO 1: Solo últimos 3 meses
+        # ========================================
+        fecha_mas_reciente = df[date_column].max()
+        fecha_corte = fecha_mas_reciente - timedelta(days=90)  # 3 meses = ~90 días
+        
+        logger.info(f"Filtrando datos: últimos 3 meses (desde {fecha_corte.date()} hasta {fecha_mas_reciente.date()})")
+        mask_fecha = df[date_column] >= fecha_corte
+        df = df[mask_fecha].copy()
+        
+        logger.info(f"Días después de filtro de fecha: {len(df)}")
+        
+        # ========================================
+        # FILTRO 2: Solo días laborales (lunes-viernes, dayofweek 0-4)
+        # ========================================
+        df['dayofweek'] = df[date_column].dt.dayofweek
+        mask_laborales = df['dayofweek'] < 5  # 0=Lunes, 4=Viernes
+        df = df[mask_laborales].copy()
+        
+        logger.info(f"Días laborales después de filtro: {len(df)}")
+        
+        # ========================================
+        # FILTRO 3: Excluir festivos
+        # ========================================
+        if self.calendar_classifier is not None:
+            # Pre-cargar festivos para todos los años en el DataFrame
+            years = df[date_column].dt.year.unique()
+            for year in years:
+                self.calendar_classifier._load_festivos_for_year(year)
+            
+            # Filtrar festivos
+            df['es_festivo'] = df[date_column].apply(self.calendar_classifier.is_holiday)
+            mask_no_festivos = ~df['es_festivo']
+            df = df[mask_no_festivos].copy()
+            
+            logger.info(f"Días laborales (sin festivos) después de filtro: {len(df)}")
+        else:
+            logger.warning("CalendarClassifier no disponible. No se excluyen festivos.")
+        
+        if len(df) < 30:
+            logger.warning(f"⚠ Pocos datos después de filtrar ({len(df)} días). Considerar aumentar ventana histórica.")
+        
+        logger.info(f"✓ Usando {len(df)} días laborales recientes para entrenamiento")
 
         # Matriz día × 24 períodos
         X = df[period_cols].values
@@ -111,8 +181,12 @@ class HourlyDisaggregator:
             .agg(lambda x: x.mode()[0] if len(x.mode()) > 0 else x.iloc[0])
         )
 
+        # Guardar fecha de entrenamiento
+        self.training_date = datetime.now()
         self.is_fitted = True
         logger.info(f"✓ Desagregador entrenado con {self.n_clusters} clusters")
+        logger.info(f"  Fecha de entrenamiento: {self.training_date.strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info(f"  Datos usados: últimos 3 meses (desde {fecha_corte.date()} hasta {fecha_mas_reciente.date()})")
 
         return self
 
@@ -211,6 +285,8 @@ class HourlyDisaggregator:
                 'cluster_by_dayofweek': self.cluster_by_dayofweek,
                 'n_clusters': self.n_clusters,
                 'random_state': self.random_state,
+                'ucp': self.ucp,
+                'training_date': self.training_date,  # Guardar fecha de entrenamiento
             }, f)
 
         logger.info(f"✓ Modelo guardado en {filepath}")
@@ -237,14 +313,27 @@ class HourlyDisaggregator:
 
         instance = cls(
             n_clusters=data['n_clusters'],
-            random_state=data['random_state']
+            random_state=data['random_state'],
+            ucp=data.get('ucp', 'Antioquia')  # Retrocompatibilidad: default si no existe
         )
         instance.kmeans = data['kmeans']
         instance.cluster_profiles = data['cluster_profiles']
         instance.cluster_by_dayofweek = data['cluster_by_dayofweek']
+        instance.training_date = data.get('training_date')  # Retrocompatibilidad: puede no existir
         instance.is_fitted = True
 
-        logger.info(f"✓ Modelo cargado desde {filepath}")
+        # Advertir si el modelo es muy antiguo (más de 4 meses)
+        if instance.training_date:
+            days_old = (datetime.now() - instance.training_date).days
+            if days_old > 120:  # 4 meses
+                logger.warning(
+                    f"⚠ Modelo entrenado hace {days_old} días ({days_old//30} meses). "
+                    f"Considerar re-entrenar para usar patrones más recientes."
+                )
+            logger.info(f"✓ Modelo cargado desde {filepath} (entrenado: {instance.training_date.strftime('%Y-%m-%d') if instance.training_date else 'fecha desconocida'})")
+        else:
+            logger.info(f"✓ Modelo cargado desde {filepath} (modelo antiguo sin fecha de entrenamiento)")
+        
         return instance
 
 
