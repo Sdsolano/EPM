@@ -9,6 +9,7 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 from typing import Optional, Dict, Union
+from datetime import timedelta
 import logging
 
 from .hourly_disaggregator import HourlyDisaggregator

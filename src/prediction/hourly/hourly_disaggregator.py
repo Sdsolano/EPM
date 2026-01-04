@@ -34,9 +34,9 @@ class HourlyDisaggregator:
     y luego predice la distribución horaria para nuevos días.
     
     IMPORTANTE: El entrenamiento usa solo los últimos 3 meses de datos históricos
-    y excluye festivos y fines de semana (solo días laborales) para capturar
+    y excluye solo festivos (mantiene días laborales y fines de semana) para capturar
     patrones de demanda más recientes y relevantes.
-    """
+"""
 
     def __init__(self, n_clusters: int = 35, random_state: int = 42, ucp: str = 'Antioquia'):
         """
@@ -70,7 +70,7 @@ class HourlyDisaggregator:
         
         IMPORTANTE: Filtra automáticamente:
         - Solo últimos 3 meses antes de la fecha más reciente
-        - Solo días laborales (lunes-viernes, excluye festivos y fines de semana)
+        - Excluye solo festivos (mantiene días laborales y fines de semana)
         """
 
         logger.info(f"Entrenando desagregador horario con {len(df)} días históricos...")
@@ -99,16 +99,7 @@ class HourlyDisaggregator:
         logger.info(f"Días después de filtro de fecha: {len(df)}")
         
         # ========================================
-        # FILTRO 2: Solo días laborales (lunes-viernes, dayofweek 0-4)
-        # ========================================
-        df['dayofweek'] = df[date_column].dt.dayofweek
-        mask_laborales = df['dayofweek'] < 5  # 0=Lunes, 4=Viernes
-        df = df[mask_laborales].copy()
-        
-        logger.info(f"Días laborales después de filtro: {len(df)}")
-        
-        # ========================================
-        # FILTRO 3: Excluir festivos
+        # FILTRO 2: Excluir festivos (mantiene días laborales y fines de semana)
         # ========================================
         if self.calendar_classifier is not None:
             # Pre-cargar festivos para todos los años en el DataFrame
@@ -121,14 +112,14 @@ class HourlyDisaggregator:
             mask_no_festivos = ~df['es_festivo']
             df = df[mask_no_festivos].copy()
             
-            logger.info(f"Días laborales (sin festivos) después de filtro: {len(df)}")
+            logger.info(f"Días (sin festivos) después de filtro: {len(df)}")
         else:
             logger.warning("CalendarClassifier no disponible. No se excluyen festivos.")
         
         if len(df) < 30:
             logger.warning(f"⚠ Pocos datos después de filtrar ({len(df)} días). Considerar aumentar ventana histórica.")
         
-        logger.info(f"✓ Usando {len(df)} días laborales recientes para entrenamiento")
+        logger.info(f"✓ Usando {len(df)} días recientes para entrenamiento (días laborales y fines de semana, excluyendo festivos)")
 
         # Matriz día × 24 períodos
         X = df[period_cols].values
