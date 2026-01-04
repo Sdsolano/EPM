@@ -36,7 +36,8 @@ class HourlyDisaggregationEngine:
         special_disaggregator: Optional[SpecialDaysDisaggregator] = None,
         auto_load: bool = True,
         models_dir: Optional[str] = None,
-        ucp: Optional[str] = None
+        ucp: Optional[str] = None,
+        historical_data_path: Optional[str] = None
     ):
         """
         Inicializa el motor de desagregación.
@@ -48,8 +49,10 @@ class HourlyDisaggregationEngine:
             models_dir: Directorio donde buscar los modelos (ej: 'models/Atlantico'). Si None, usa MODELS_DIR
             ucp: Nombre del UCP para obtener festivos (ej: 'Antioquia', 'Atlantico'). 
                  Si None, intenta inferirlo del models_dir o usa 'Antioquia' por defecto
+            historical_data_path: Ruta a datos históricos (para re-entrenamiento automático si es necesario)
         """
         self.models_dir = Path(models_dir) if models_dir else Path(MODELS_DIR)
+        self.historical_data_path = historical_data_path
         
         # Determinar UCP: primero del parámetro, luego del models_dir, luego default
         if ucp is None:
@@ -65,6 +68,7 @@ class HourlyDisaggregationEngine:
         
         self.ucp = ucp
         self.calendar_classifier = CalendarClassifier(ucp=self.ucp)
+        self.last_retrain_date = None  # Última fecha para la cual se re-entrenó
 
         # Cargar o usar desagregadores proporcionados
         if auto_load:
@@ -104,7 +108,8 @@ class HourlyDisaggregationEngine:
         date: Union[str, pd.Timestamp],
         total_daily: float,
         validate: bool = True,
-        return_senda: bool = True
+        return_senda: bool = True,
+        auto_retrain: bool = True
     ) -> Dict:
         """
         Predice la distribución horaria para una fecha y total diario.
@@ -114,6 +119,7 @@ class HourlyDisaggregationEngine:
             total_daily: Demanda total del día (MWh)
             validate: Si True, valida que la suma sea correcta
             return_senda: Si True, incluye patrón normalizado de referencia (senda)
+            auto_retrain: Si True, re-entrena automáticamente si los clusters no son relevantes para esta fecha
 
         Returns:
             Dict con:
@@ -127,6 +133,40 @@ class HourlyDisaggregationEngine:
                 - validation: Dict con información de validación
         """
         date = pd.to_datetime(date)
+
+        # Verificar si necesita re-entrenar (solo para días normales)
+        if auto_retrain and self.normal_disaggregator.is_fitted:
+            needs_retrain = False
+            
+            # Si no hay training_data_end_date, necesita re-entrenar
+            if self.normal_disaggregator.training_data_end_date is None:
+                needs_retrain = True
+            else:
+                # Si ya re-entrenamos recientemente para una fecha cercana (dentro de 30 días), no re-entrenar
+                # Esto evita re-entrenar en cada predicción consecutiva
+                if self.last_retrain_date is not None:
+                    days_since_last_retrain = abs((date - self.last_retrain_date).days)
+                    if days_since_last_retrain <= 30:
+                        needs_retrain = False  # Ya re-entrenamos recientemente para fecha cercana
+                    else:
+                        # Verificar si la fecha está dentro del rango relevante
+                        # El modelo es relevante si la fecha está dentro de 3 meses ANTES de training_data_end_date
+                        # O si está después pero muy cerca (dentro de 30 días)
+                        fecha_limite_inferior = self.normal_disaggregator.training_data_end_date - timedelta(days=90)
+                        fecha_limite_superior = self.normal_disaggregator.training_data_end_date + timedelta(days=30)
+                        is_in_relevant_range = fecha_limite_inferior <= date <= fecha_limite_superior
+                        needs_retrain = not is_in_relevant_range
+                else:
+                    # Verificar si la fecha está dentro del rango relevante
+                    fecha_limite_inferior = self.normal_disaggregator.training_data_end_date - timedelta(days=90)
+                    fecha_limite_superior = self.normal_disaggregator.training_data_end_date + timedelta(days=30)
+                    is_in_relevant_range = fecha_limite_inferior <= date <= fecha_limite_superior
+                    needs_retrain = not is_in_relevant_range
+            
+            if needs_retrain:
+                logger.info(f"⚠ Clusters no relevantes para fecha {date.date()}. Re-entrenando con datos relevantes...")
+                self._retrain_normal_disaggregator_for_date(date)
+                self.last_retrain_date = date  # Recordar que re-entrenamos para esta fecha
 
         # Clasificar el día
         day_info = self.calendar_classifier.get_full_classification(date)
@@ -218,6 +258,46 @@ class HourlyDisaggregationEngine:
             return self._results_to_dataframe(results)
         else:
             return results
+
+    def _retrain_normal_disaggregator_for_date(self, prediction_date: pd.Timestamp) -> None:
+        """
+        Re-entrena el desagregador normal con datos relevantes para una fecha de predicción.
+        
+        Filtra los datos históricos para usar solo los últimos 3 meses ANTES de la fecha
+        de predicción.
+        
+        Args:
+            prediction_date: Fecha de predicción
+        """
+        if not self.historical_data_path or not Path(self.historical_data_path).exists():
+            logger.warning(
+                f"⚠ No se puede re-entrenar: historical_data_path no disponible. "
+                f"Usando clusters existentes (pueden no ser óptimos para {prediction_date.date()})"
+            )
+            return
+        
+        try:
+            logger.info(f"📂 Cargando datos históricos desde {self.historical_data_path}...")
+            df = pd.read_csv(self.historical_data_path)
+            df['FECHA'] = pd.to_datetime(df['FECHA'])
+            df.dropna(inplace=True)
+            
+            # Re-entrenar con datos filtrados (fit() ya filtra los últimos 3 meses)
+            # Pero necesitamos filtrar los datos ANTES de la fecha de predicción
+            # Entonces, solo usar datos donde fecha <= prediction_date
+            df = df[df['FECHA'] <= prediction_date].copy()
+            
+            if len(df) < 30:
+                logger.warning(f"⚠ Pocos datos históricos disponibles ({len(df)} días). Usando clusters existentes.")
+                return
+            
+            logger.info(f"🔄 Re-entrenando clusters con {len(df)} días históricos (hasta {prediction_date.date()})...")
+            self.normal_disaggregator.fit(df, date_column='FECHA')
+            logger.info(f"✓ Clusters re-entrenados exitosamente para fecha {prediction_date.date()}")
+            
+        except Exception as e:
+            logger.error(f"❌ Error re-entrenando clusters: {e}")
+            logger.warning(f"   Usando clusters existentes (pueden no ser óptimos para {prediction_date.date()})")
 
     def _results_to_dataframe(self, results: list) -> pd.DataFrame:
         """Convierte lista de resultados a DataFrame."""

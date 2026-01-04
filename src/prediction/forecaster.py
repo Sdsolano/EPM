@@ -167,11 +167,16 @@ class ForecastPipeline:
                     self.hourly_engine = HourlyDisaggregationEngine(
                         auto_load=True,
                         models_dir=models_dir,
-                        ucp=self.ucp
+                        ucp=self.ucp,
+                        historical_data_path=self.historical_data_path  # Pasar ruta de datos para auto-reentrenamiento
                     )
                     logger.info(f"✓ Sistema de desagregación horaria cargado para {self.ucp}")
                 else:
-                    self.hourly_engine = HourlyDisaggregationEngine(auto_load=True, ucp=self.ucp)
+                    self.hourly_engine = HourlyDisaggregationEngine(
+                        auto_load=True, 
+                        ucp=self.ucp,
+                        historical_data_path=self.historical_data_path  # Pasar ruta de datos para auto-reentrenamiento
+                    )
                     logger.info("✓ Sistema de desagregación horaria cargado")
             except Exception as e:
                 logger.warning(f"⚠ No se pudo cargar sistema de desagregación: {e}")

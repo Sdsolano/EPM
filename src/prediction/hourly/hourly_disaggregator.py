@@ -55,6 +55,7 @@ class HourlyDisaggregator:
         self.cluster_by_dayofweek = None
         self.is_fitted = False
         self.training_date = None  # Fecha de entrenamiento (para validar antigüedad)
+        self.training_data_end_date = None  # Fecha más reciente de datos usados para entrenar
         
         # Inicializar CalendarClassifier para excluir festivos
         if CalendarClassifier is not None:
@@ -181,14 +182,38 @@ class HourlyDisaggregator:
             .agg(lambda x: x.mode()[0] if len(x.mode()) > 0 else x.iloc[0])
         )
 
-        # Guardar fecha de entrenamiento
+        # Guardar fecha de entrenamiento y rango de datos usados
         self.training_date = datetime.now()
+        self.training_data_end_date = fecha_mas_reciente  # Fecha más reciente de datos usados
         self.is_fitted = True
         logger.info(f"✓ Desagregador entrenado con {self.n_clusters} clusters")
         logger.info(f"  Fecha de entrenamiento: {self.training_date.strftime('%Y-%m-%d %H:%M:%S')}")
         logger.info(f"  Datos usados: últimos 3 meses (desde {fecha_corte.date()} hasta {fecha_mas_reciente.date()})")
 
         return self
+    
+    def is_relevant_for_date(self, prediction_date: pd.Timestamp) -> bool:
+        """
+        Verifica si el modelo es relevante para una fecha de predicción.
+        
+        El modelo es relevante si la fecha de predicción está dentro de los últimos
+        3 meses ANTES de la fecha más reciente usada para entrenar.
+        
+        Args:
+            prediction_date: Fecha para la cual se quiere predecir
+            
+        Returns:
+            True si el modelo es relevante, False si necesita re-entrenarse
+        """
+        if not self.is_fitted or self.training_data_end_date is None:
+            return False
+        
+        prediction_date = pd.to_datetime(prediction_date)
+        # El modelo es relevante si la fecha está dentro de 3 meses ANTES de training_data_end_date
+        fecha_limite_inferior = self.training_data_end_date - timedelta(days=90)
+        
+        # Relevante si: fecha_limite_inferior <= prediction_date <= training_data_end_date
+        return fecha_limite_inferior <= prediction_date <= self.training_data_end_date
 
 
     def predict_hourly_profile(
@@ -287,6 +312,7 @@ class HourlyDisaggregator:
                 'random_state': self.random_state,
                 'ucp': self.ucp,
                 'training_date': self.training_date,  # Guardar fecha de entrenamiento
+                'training_data_end_date': self.training_data_end_date,  # Fecha más reciente de datos
             }, f)
 
         logger.info(f"✓ Modelo guardado en {filepath}")
@@ -320,19 +346,19 @@ class HourlyDisaggregator:
         instance.cluster_profiles = data['cluster_profiles']
         instance.cluster_by_dayofweek = data['cluster_by_dayofweek']
         instance.training_date = data.get('training_date')  # Retrocompatibilidad: puede no existir
+        instance.training_data_end_date = data.get('training_data_end_date')  # Retrocompatibilidad
         instance.is_fitted = True
 
-        # Advertir si el modelo es muy antiguo (más de 4 meses)
-        if instance.training_date:
-            days_old = (datetime.now() - instance.training_date).days
-            if days_old > 120:  # 4 meses
-                logger.warning(
-                    f"⚠ Modelo entrenado hace {days_old} días ({days_old//30} meses). "
-                    f"Considerar re-entrenar para usar patrones más recientes."
-                )
-            logger.info(f"✓ Modelo cargado desde {filepath} (entrenado: {instance.training_date.strftime('%Y-%m-%d') if instance.training_date else 'fecha desconocida'})")
+        # Log información del modelo cargado
+        if instance.training_data_end_date:
+            logger.info(f"✓ Modelo cargado desde {filepath}")
+            logger.info(f"  Datos de entrenamiento: hasta {instance.training_data_end_date.strftime('%Y-%m-%d')}")
+            if instance.training_date:
+                logger.info(f"  Fecha de entrenamiento: {instance.training_date.strftime('%Y-%m-%d %H:%M:%S')}")
+        elif instance.training_date:
+            logger.info(f"✓ Modelo cargado desde {filepath} (entrenado: {instance.training_date.strftime('%Y-%m-%d')})")
         else:
-            logger.info(f"✓ Modelo cargado desde {filepath} (modelo antiguo sin fecha de entrenamiento)")
+            logger.info(f"✓ Modelo cargado desde {filepath} (modelo antiguo sin metadatos)")
         
         return instance
 
