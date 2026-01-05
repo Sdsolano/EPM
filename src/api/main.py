@@ -16,7 +16,7 @@ from fastapi import FastAPI, HTTPException, status
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List, Dict, Any, Tuple
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 import traceback
 import pandas as pd
@@ -104,6 +104,24 @@ class BaseCurveResponse(BaseModel):
         ...,
         description="Curvas base por fecha (formato: {'YYYY-MM-DD': [P1, P2, ..., P24]})"
     )
+
+class ForecastTypeItem(BaseModel):
+    """Entrada para mapear el tipo de pronóstico por día"""
+    codigo: Optional[str] = Field(None, description="Código de referencia")
+    ucp: Optional[str] = Field(None, description="UCP asociada")
+    fecha: str = Field(..., description="Fecha del día (YYYY-MM-DD)")
+    tipopronostico: str = Field(..., description="Tipo de pronóstico a devolver para ese día")
+
+    @field_validator('fecha')
+    @classmethod
+    def validate_item_date(cls, v: str) -> str:
+        try:
+            datetime.strptime(v, '%Y-%m-%d')
+        except ValueError:
+            raise ValueError('Formato de fecha inválido en data[].fecha. Usar YYYY-MM-DD')
+        return v
+
+
 class PredictRequest(BaseModel):
     """Schema para solicitud de predicción"""
     # power_data_path: str = Field(
@@ -257,6 +275,46 @@ class PredictResponse(BaseModel):
                 }
             }
         }
+
+
+class PredictWithBaseCurveRequest(PredictRequest):
+    """Schema para solicitud combinada de predicción + curva base"""
+    fecha_inicio: Optional[str] = Field(
+        None,
+        description="Fecha inicio del rango para curva base (YYYY-MM-DD). Si no se envía, se usa fecha_inicio de la predicción."
+    )
+    fecha_fin: Optional[str] = Field(
+        None,
+        description="Fecha fin del rango para curva base (YYYY-MM-DD). Si no se envía, se usa fecha_fin de la predicción."
+    )
+
+    @field_validator('fecha_inicio', 'fecha_fin')
+    @classmethod
+    def validate_optional_date_format(cls, v: Optional[str]) -> Optional[str]:
+        """Valida formato de fechas cuando se envían opcionalmente."""
+        if v is None:
+            return v
+        try:
+            datetime.strptime(v, '%Y-%m-%d')
+        except ValueError:
+            raise ValueError('Formato de fecha inválido. Usar YYYY-MM-DD')
+        return v
+    
+    data: Optional[List[ForecastTypeItem]] = Field(
+        None,
+        description="Lista opcional de fechas y tipopronostico a devolver junto con la respuesta."
+    )
+
+
+class PredictWithBaseCurveResponse(BaseModel):
+    """Schema para respuesta combinada de predicción + curva base"""
+    # prediction: PredictResponse = Field(..., description="Resultado completo de /predict")
+    # base_curve: BaseCurveResponse = Field(..., description="Resultado de /base-curve para el mismo rango")
+    resultado: Dict[str, Dict[str, float]]
+    # forecast_types: List[ForecastTypeItem] = Field(
+    #     default_factory=list,
+    #     description="Listado de tipopronostico por fecha (filtrado a las fechas calculadas)"
+    # )
 
 
 class ReasonResponse(BaseModel):
@@ -1098,8 +1156,7 @@ async def predict_demand(request: ReasonRequest):
 
 
 
-@app.post("/predict", response_model=PredictResponse, status_code=status.HTTP_200_OK)
-async def predict_demand(request: PredictRequest):
+async def run_predict_flow(request: PredictRequest) -> PredictResponse:
     """
     Genera predicción de demanda energética para los próximos N días con granularidad horaria
 
@@ -1584,6 +1641,140 @@ async def predict_demand(request: PredictRequest):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error inesperado en el servidor: {str(e)}"
+        )
+
+
+@app.post("/predict", response_model=PredictResponse, status_code=status.HTTP_200_OK)
+async def predict_demand(request: PredictRequest):
+    """Endpoint /predict que delega la lógica principal a run_predict_flow."""
+    return await run_predict_flow(request)
+
+
+@app.post(
+    "/predict-with-base-curve",
+    response_model=PredictWithBaseCurveResponse,
+    status_code=status.HTTP_200_OK
+)
+async def predict_with_base_curve(request: PredictWithBaseCurveRequest):
+    """
+    Endpoint combinado que ejecuta la lógica de /predict y /base-curve en una sola llamada.
+    Genera la predicción y luego calcula la curva base para el mismo rango (o el provisto).
+    """
+    try:
+        logger.info("\n🔀 Iniciando flujo combinado de predicción + curva base")
+
+        # Determinar rango de fechas usando fecha_inicio/fecha_fin o, en su defecto, las fechas del array data
+        fechas_candidatas: List[str] = []
+        if request.fecha_inicio:
+            fechas_candidatas.append(request.fecha_inicio)
+        if request.fecha_fin:
+            fechas_candidatas.append(request.fecha_fin)
+        if request.data:
+            fechas_candidatas.extend([item.fecha for item in request.data])
+
+        if len(fechas_candidatas) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Se requiere fecha_inicio/fecha_fin o al menos una fecha en data[]"
+            )
+
+        fecha_inicio_str = request.fecha_inicio or min(fechas_candidatas)
+        fecha_fin_str = request.fecha_fin or max(fechas_candidatas)
+
+        fecha_inicio_dt = datetime.strptime(fecha_inicio_str, '%Y-%m-%d')
+        fecha_fin_dt = datetime.strptime(fecha_fin_str, '%Y-%m-%d')
+
+        if fecha_fin_dt < fecha_inicio_dt:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="fecha_fin debe ser igual o posterior a fecha_inicio"
+            )
+
+        # Derivar parámetros para la predicción:
+        # - end_date: día anterior a fecha_inicio (según solicitud)
+        # - n_days: cantidad de días entre fecha_inicio y fecha_fin (incluyendo ambos)
+        derived_end_date = (fecha_inicio_dt - timedelta(days=1)).strftime('%Y-%m-%d')
+        derived_n_days = (fecha_fin_dt - fecha_inicio_dt).days + 1
+        if derived_n_days < 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Rango de fechas inválido: n_days calculado < 1"
+            )
+
+        predict_payload = PredictRequest(
+            ucp=request.ucp,
+            end_date=derived_end_date,
+            n_days=derived_n_days,
+            force_retrain=request.force_retrain,
+            offset_scalar=request.offset_scalar
+        )
+
+        # Ejecutar flujo de predicción existente con los parámetros derivados
+        prediction_response = await run_predict_flow(predict_payload)
+
+        # Determinar rango para curvas base (ya validado arriba)
+        fecha_inicio = fecha_inicio_str
+        fecha_fin = fecha_fin_str
+
+        logger.info(f"Calculando curva base para rango {fecha_inicio} -> {fecha_fin} (n_days={derived_n_days})")
+
+        # Calcular curvas base reutilizando la lógica existente
+        curves = await run_in_threadpool(
+            calculate_base_curves,
+            request.ucp,
+            fecha_inicio,
+            fecha_fin
+        )
+
+        logger.info("✅ Flujo combinado completado")
+
+        # Preparar tipopronostico por fecha, filtrando solo las fechas que están en la predicción
+        data_curves=BaseCurveResponse(curves=curves).curves
+        hourly_predictions = prediction_response.predictions
+        data_prediction = {
+            item.fecha: item.model_dump()
+            for item in hourly_predictions
+        }
+        forecast_list = request.data
+        resultado = {}
+
+        for item in forecast_list:
+            fecha = item.fecha
+
+            # MODELO IA → ya viene como dict con P1..P24
+            if item.tipopronostico == "Modelo IA":
+                pred = data_prediction[fecha]
+
+                resultado[fecha] = {
+                    f"P{i}": pred[f"P{i}"]
+                    for i in range(1, 25)
+                }
+
+            # MODELO BASE → viene como lista [0..23]
+            elif item.tipopronostico == "Modelo Base":
+                curva = data_curves[fecha]
+
+                resultado[fecha] = {
+                    f"P{i}": curva[i - 1]
+                    for i in range(1, 25)
+                }
+        print(resultado)
+
+        return PredictWithBaseCurveResponse(
+            # prediction=prediction_response,
+            # base_curve=BaseCurveResponse(curves=curves),
+            resultado=resultado
+            
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en flujo combinado: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error ejecutando flujo combinado: {str(e)}"
         )
 
 @app.post('/get_events', response_model=EventsResponse, status_code=status.HTTP_200_OK)
