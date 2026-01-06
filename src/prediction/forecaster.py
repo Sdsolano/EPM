@@ -1010,20 +1010,18 @@ class ForecastPipeline:
             # ========================================
             # Usa valores históricos del año anterior para corregir:
             # 1. Festivos especiales (8 dic, 25 dic, 1 ene)
-            # 2. Temporada navideña (25 dic - 7 ene) - período de menor consumo
+            # 2. Temporada navideña (23 dic - 6 ene) - SOLO para festivos y fines de semana
+            # IMPORTANTE: NO aplicar ajuste a días hábiles en temporada navideña
             lag_1y = features.get('total_lag_1y', 0)
             aplicar_ajuste = False
             weight_historical = 0.60  # Por defecto: ajuste moderado
             
-            # Verificar si está en temporada navideña (25 dic - 7 ene)
-            # Esto incluye días entre Navidad y Epifanía donde el consumo es menor
+            # Verificar si está en temporada navideña (23 dic - 6 ene)
             es_temporada_navideña = False
             if fecha.month == 12 and fecha.day >= 23:
                 es_temporada_navideña = True
-                aplicar_ajuste = True
             elif fecha.month == 1 and fecha.day <= 6:
                 es_temporada_navideña = True
-                aplicar_ajuste = True
             
             # Verificar si es festivo especial
             if features['is_festivo']:
@@ -1037,7 +1035,18 @@ class ForecastPipeline:
                     # Otros festivos (fuera de temporada navideña): ajuste moderado
                     aplicar_ajuste = True
                     weight_historical = 0.60
-                # Si es festivo DENTRO de temporada navideña, ya se aplicó el ajuste arriba
+                elif es_temporada_navideña:
+                    # Festivos dentro de temporada navideña: ajuste moderado
+                    aplicar_ajuste = True
+                    weight_historical = 0.60
+            
+            # Para temporada navideña: aplicar ajuste SOLO a fines de semana (no días hábiles)
+            if es_temporada_navideña and not features['is_festivo']:
+                if features['is_weekend']:
+                    # Fines de semana en temporada navideña: aplicar ajuste
+                    aplicar_ajuste = True
+                    weight_historical = 0.60
+                # Días hábiles en temporada navideña: NO aplicar ajuste (mantener predicción del modelo)
             
             # Aplicar ajuste si corresponde y tenemos datos históricos
             if aplicar_ajuste and lag_1y > 0:
