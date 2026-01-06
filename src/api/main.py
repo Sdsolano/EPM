@@ -331,9 +331,8 @@ class HourlyDiff(BaseModel):
 
 
 class SingleDayComparisons(BaseModel):
-    """Comparaciones por hora contra históricos prev_year / prev_week"""
-    prev_year: Optional[Dict[str, HourlyDiff]] = None
-    prev_week: Optional[Dict[str, HourlyDiff]] = None
+    """Comparaciones por hora contra el día de referencia solicitado"""
+    referencia: Optional[Dict[str, HourlyDiff]] = None
 
 
 class AdjustedComparison(BaseModel):
@@ -344,9 +343,8 @@ class AdjustedComparison(BaseModel):
 
 
 class SingleDayAdjustments(BaseModel):
-    """Ajustes aplicados a prev_year y prev_week"""
-    prev_year: Optional[AdjustedComparison] = None
-    prev_week: Optional[AdjustedComparison] = None
+    """Ajustes aplicados contra el día de referencia"""
+    referencia: Optional[AdjustedComparison] = None
 
 
 class SingleDayPredictResponse(BaseModel):
@@ -354,11 +352,11 @@ class SingleDayPredictResponse(BaseModel):
     prediction: PredictResponse = Field(..., description="Resultado de la predicción para el día solicitado")
     history: Dict[str, HistoricalDay] = Field(
         default_factory=dict,
-        description="Historial: prev_year y prev_week si existen datos"
+        description="Historial: día de referencia solicitado si existe"
     )
     comparisons: SingleDayComparisons = Field(
         default_factory=SingleDayComparisons,
-        description="Comparaciones horarias contra prev_year y prev_week"
+        description="Comparaciones horarias contra el día de referencia"
     )
     adjustments: SingleDayAdjustments = Field(
         default_factory=SingleDayAdjustments,
@@ -370,6 +368,7 @@ class SingleDayPredictRequest(BaseModel):
     """Schema para predicción de un solo día específico"""
     ucp: str = Field(..., description="UCP para cálculos")
     fecha: str = Field(..., description="Fecha objetivo de la predicción (YYYY-MM-DD)")
+    fecha_referencia: str = Field(..., description="Fecha histórica con la que se comparará (YYYY-MM-DD)")
     force_retrain: bool = Field(False, description="Forzar reentrenamiento del modelo")
     offset_scalar: Optional[float] = Field(
         None,
@@ -384,6 +383,15 @@ class SingleDayPredictRequest(BaseModel):
             datetime.strptime(v, '%Y-%m-%d')
         except ValueError:
             raise ValueError('Formato de fecha inválido. Usar YYYY-MM-DD')
+        return v
+
+    @field_validator('fecha_referencia')
+    @classmethod
+    def validate_fecha_referencia(cls, v: str) -> str:
+        try:
+            datetime.strptime(v, '%Y-%m-%d')
+        except ValueError:
+            raise ValueError('Formato de fecha_referencia inválido. Usar YYYY-MM-DD')
         return v
 
 
@@ -1776,11 +1784,12 @@ async def predict_single_day(request: SingleDayPredictRequest):
     """
     Endpoint para generar predicción de un único día específico.
     Calcula n_days=1 y usa end_date = fecha objetivo - 1 día.
-    Además retorna historial del mismo día del año anterior y de 7 días antes.
+    Además retorna historial del día de referencia solicitado y comparaciones/ajustes.
     """
     try:
         target_dt = datetime.strptime(request.fecha, '%Y-%m-%d')
         derived_end_date = (target_dt - timedelta(days=1)).strftime('%Y-%m-%d')
+        reference_dt = datetime.strptime(request.fecha_referencia, '%Y-%m-%d')
 
         predict_payload = PredictRequest(
             ucp=request.ucp,
@@ -1793,29 +1802,15 @@ async def predict_single_day(request: SingleDayPredictRequest):
         logger.info(f"🎯 Predicción de un día: {request.fecha} (end_date derivado: {derived_end_date})")
         prediction_response = await run_predict_flow(predict_payload)
 
-        # Historial: mismo día año anterior y 7 días antes
-        def safe_prev_year(d: datetime) -> datetime:
-            try:
-                return d.replace(year=d.year - 1)
-            except ValueError:
-                return d - timedelta(days=365)
-
-        prev_year_date = safe_prev_year(target_dt).strftime('%Y-%m-%d')
-        prev_week_date = (target_dt - timedelta(days=7)).strftime('%Y-%m-%d')
-
+        # Historial: día de referencia solicitado
+        reference_date = reference_dt.strftime('%Y-%m-%d')
         history: Dict[str, HistoricalDay] = {}
 
-        prev_year_profile = _get_historical_day_profile(request.ucp, prev_year_date)
-        if prev_year_profile:
-            history["prev_year"] = prev_year_profile
+        ref_profile = _get_historical_day_profile(request.ucp, reference_date)
+        if ref_profile:
+            history["referencia"] = ref_profile
         else:
-            logger.info(f"ℹ Sin historial para prev_year ({prev_year_date})")
-
-        prev_week_profile = _get_historical_day_profile(request.ucp, prev_week_date)
-        if prev_week_profile:
-            history["prev_week"] = prev_week_profile
-        else:
-            logger.info(f"ℹ Sin historial para prev_week ({prev_week_date})")
+            logger.info(f"ℹ Sin historial para fecha_referencia ({reference_date})")
 
         # Comparaciones horarias contra históricos disponibles
         comparisons = SingleDayComparisons()
@@ -1901,12 +1896,9 @@ async def predict_single_day(request: SingleDayPredictRequest):
                     scale_factor=scale_factor
                 )
 
-            if "prev_year" in history:
-                comparisons.prev_year = build_diffs(history["prev_year"])
-                adjustments.prev_year = build_adjusted(history["prev_year"])
-            if "prev_week" in history:
-                comparisons.prev_week = build_diffs(history["prev_week"])
-                adjustments.prev_week = build_adjusted(history["prev_week"])
+            if "referencia" in history:
+                comparisons.referencia = build_diffs(history["referencia"])
+                adjustments.referencia = build_adjusted(history["referencia"])
 
         return SingleDayPredictResponse(
             prediction=prediction_response,
