@@ -1023,15 +1023,17 @@ class ForecastPipeline:
             elif fecha.month == 1 and fecha.day <= 6:
                 es_temporada_navideña = True
             
-            # Verificar si es festivo especial
-            if features['is_festivo']:
-                month_day = f"{fecha.month:02d}-{fecha.day:02d}"
-                very_special_holidays = ['12-25', '12-08', '01-01']  # Navidad, Inmaculada, Año Nuevo
-                
-                if month_day in very_special_holidays:
-                    aplicar_ajuste = True
-                    weight_historical = 0.70  # Ajuste más fuerte para festivos muy especiales
-                elif not es_temporada_navideña:
+            # Días muy especiales (incluye 24 dic aunque no sea festivo oficial)
+            month_day = f"{fecha.month:02d}-{fecha.day:02d}"
+            very_special_holidays = ['12-24', '12-25', '12-08', '01-01']  # Nochebuena, Navidad, Inmaculada, Año Nuevo
+            
+            # Verificar si es día muy especial (festivo oficial o 24 de diciembre)
+            if month_day in very_special_holidays:
+                aplicar_ajuste = True
+                weight_historical = 0.70  # Ajuste más fuerte para festivos muy especiales
+            # Verificar si es festivo especial (otros festivos)
+            elif features['is_festivo']:
+                if not es_temporada_navideña:
                     # Otros festivos (fuera de temporada navideña): ajuste moderado
                     aplicar_ajuste = True
                     weight_historical = 0.60
@@ -1053,7 +1055,14 @@ class ForecastPipeline:
                 # Aplicar promedio ponderado
                 demanda_pred = (weight_historical * lag_1y) + ((1 - weight_historical) * demanda_pred_original)
                 
-                tipo_ajuste = "temporada navideña" if es_temporada_navideña else "festivo especial"
+                # Determinar tipo de ajuste para logging
+                if month_day in very_special_holidays:
+                    tipo_ajuste = "día muy especial (Nochebuena/Navidad/Año Nuevo/Inmaculada)"
+                elif es_temporada_navideña:
+                    tipo_ajuste = "temporada navideña"
+                else:
+                    tipo_ajuste = "festivo especial"
+                
                 logger.info(f"   🔧 Ajuste post-predicción aplicado ({tipo_ajuste})")
                 logger.info(f"      - Valor histórico (1 año): {lag_1y:,.2f} MW")
                 logger.info(f"      - Predicción modelo original: {demanda_pred_original:,.2f} MW")

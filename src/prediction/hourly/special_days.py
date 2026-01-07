@@ -62,17 +62,26 @@ class SpecialDaysDisaggregator:
         df = df.copy()
         df[date_column] = pd.to_datetime(df[date_column])
 
-        # Filtrar solo festivos
+        # Filtrar festivos oficiales
         df['es_festivo'] = df[date_column].apply(self.calendar_classifier.is_holiday)
-        df_festivos = df[df['es_festivo']].copy()
+        
+        # Días muy especiales que deben tratarse como festivos aunque no sean oficiales
+        # (ej: 24 de diciembre - Nochebuena)
+        very_special_dates = ['12-24']  # Nochebuena
+        df['mmdd'] = df[date_column].dt.strftime("%m-%d")
+        df['es_dia_muy_especial'] = df['mmdd'].isin(very_special_dates)
+        
+        # Incluir festivos oficiales Y días muy especiales
+        df_festivos = df[(df['es_festivo']) | (df['es_dia_muy_especial'])].copy()
 
         if len(df_festivos) == 0:
             raise ValueError("No se encontraron días festivos en los datos históricos")
 
-        logger.info(f"Encontrados {len(df_festivos)} días festivos en históricos")
+        logger.info(f"Encontrados {len(df_festivos)} días festivos y especiales en históricos")
+        if df['es_dia_muy_especial'].sum() > 0:
+            logger.info(f"  - Incluyendo {df['es_dia_muy_especial'].sum()} días muy especiales (24 dic)")
 
-        # Crear identificador mm-dd
-        df_festivos['mmdd'] = df_festivos[date_column].dt.strftime("%m-%d")
+        # mmdd ya está creado en df_festivos (heredado del df original)
 
         # Agrupar por fecha (promedio de múltiples años del mismo festivo)
         period_cols = [f'P{i}' for i in range(1, 25)]
@@ -122,12 +131,23 @@ class SpecialDaysDisaggregator:
             date: Fecha a verificar
 
         Returns:
-            True si es festivo y está en el histórico
+            True si es festivo y está en el histórico, o si es un día muy especial
+            como el 24 de diciembre (Nochebuena) aunque no sea festivo oficial.
         """
+        mmdd = date.strftime("%m-%d")
+        
+        # Días muy especiales que deben tratarse como festivos para desagregación
+        # aunque no sean festivos oficiales (ej: 24 de diciembre - Nochebuena)
+        very_special_dates = ['12-24']  # Nochebuena
+        
+        # Si es un día muy especial, verificar si está en el histórico
+        if mmdd in very_special_dates:
+            return mmdd in self.cluster_by_date
+        
+        # Para otros días, debe ser festivo oficial
         if not self.calendar_classifier.is_holiday(date):
             return False
 
-        mmdd = date.strftime("%m-%d")
         return mmdd in self.cluster_by_date
 
     def predict_hourly_profile(

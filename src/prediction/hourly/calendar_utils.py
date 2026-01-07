@@ -236,13 +236,21 @@ class CalendarClassifier:
 
         Días especiales: festivos importantes que tienen patrones únicos
         (Navidad, Año Nuevo, Día del Trabajo, etc.)
+        Incluye el 24 de diciembre (Nochebuena) aunque no sea festivo oficial.
         """
+        month_day = date.strftime('%m-%d')
+        
+        # Días muy especiales (incluye 24 dic aunque no sea festivo oficial)
+        very_special_dates = ['01-01', '12-24', '12-25', '12-08']
+        if month_day in very_special_dates:
+            return True
+        
+        # Otros festivos con patrones especiales
         if not self.is_holiday(date):
             return False
         
         # Festivos con patrones muy diferentes (verificar por fecha mm-dd)
-        special_dates = ['01-01', '12-25', '05-01', '07-20', '12-08']
-        month_day = date.strftime('%m-%d')
+        special_dates = ['05-01', '07-20']
         
         return month_day in special_dates
 
