@@ -43,8 +43,8 @@ ENV/
 
 # Data files (exclude large CSV files, keep structure)
 
-data/raw/*.xlsx
-data/raw/*.xltx
+data/raw/*.csv
+data/raw/*.csv
 data/processed/*.csv
 data/predictions/*.csv
 
@@ -110,3 +110,6 @@ models/
 /models
 /.claude
 .claude/settings.local.json
+data/raw/*
+data/raw/Antioquia/datos.csv
+/data/raw/Antioquia
