@@ -317,6 +317,84 @@ class PredictWithBaseCurveResponse(BaseModel):
     # )
 
 
+class HistoricalDay(BaseModel):
+    """Perfil histórico de un día (P1-P24 y opcional TOTAL)"""
+    fecha: str = Field(..., description="Fecha del día histórico")
+    valores: Dict[str, float] = Field(..., description="Valores por período (P1..P24) y TOTAL si está disponible")
+
+
+class HourlyDiff(BaseModel):
+    """Comparación horaria contra un histórico"""
+    delta: float = Field(..., description="Predicción - histórico")
+    delta_pct: Optional[float] = Field(None, description="(delta / histórico) * 100. None si histórico es 0.")
+    relacion: str = Field(..., description="superior | inferior | igual")
+
+
+class SingleDayComparisons(BaseModel):
+    """Comparaciones por hora contra el día de referencia solicitado"""
+    referencia: Optional[Dict[str, HourlyDiff]] = None
+
+
+class AdjustedComparison(BaseModel):
+    """Perfil ajustado y diffs resultantes (manteniendo el total original)"""
+    profile: Dict[str, float] = Field(..., description="Perfil ajustado P1..P24")
+    adjusted_deltas: Dict[str, HourlyDiff] = Field(..., description="Deltas vs histórico después del ajuste")
+    scale_factor: float = Field(..., description="Factor de re-escalado para conservar el total original")
+
+
+class SingleDayAdjustments(BaseModel):
+    """Ajustes aplicados contra el día de referencia"""
+    referencia: Optional[AdjustedComparison] = None
+
+
+class SingleDayPredictResponse(BaseModel):
+    """Respuesta para predicción de un solo día con historial relacionado"""
+    prediction: PredictResponse = Field(..., description="Resultado de la predicción para el día solicitado")
+    history: Dict[str, HistoricalDay] = Field(
+        default_factory=dict,
+        description="Historial: día de referencia solicitado si existe"
+    )
+    comparisons: SingleDayComparisons = Field(
+        default_factory=SingleDayComparisons,
+        description="Comparaciones horarias contra el día de referencia"
+    )
+    adjustments: SingleDayAdjustments = Field(
+        default_factory=SingleDayAdjustments,
+        description="Ajustes aplicados cuando |delta_pct| > 5% manteniendo el total de la predicción"
+    )
+
+
+class SingleDayPredictRequest(BaseModel):
+    """Schema para predicción de un solo día específico"""
+    ucp: str = Field(..., description="UCP para cálculos")
+    fecha: str = Field(..., description="Fecha objetivo de la predicción (YYYY-MM-DD)")
+    fecha_referencia: str = Field(..., description="Fecha histórica con la que se comparará (YYYY-MM-DD)")
+    force_retrain: bool = Field(False, description="Forzar reentrenamiento del modelo")
+    offset_scalar: Optional[float] = Field(
+        None,
+        description="Escalar opcional para ajustar la predicción (ej: 1.2 aumenta 20%)",
+        gt=0.0
+    )
+
+    @field_validator('fecha')
+    @classmethod
+    def validate_fecha(cls, v: str) -> str:
+        try:
+            datetime.strptime(v, '%Y-%m-%d')
+        except ValueError:
+            raise ValueError('Formato de fecha inválido. Usar YYYY-MM-DD')
+        return v
+
+    @field_validator('fecha_referencia')
+    @classmethod
+    def validate_fecha_referencia(cls, v: str) -> str:
+        try:
+            datetime.strptime(v, '%Y-%m-%d')
+        except ValueError:
+            raise ValueError('Formato de fecha_referencia inválido. Usar YYYY-MM-DD')
+        return v
+
+
 class ReasonResponse(BaseModel):
     """Schema para respuesta de predicción"""
     reason: str = Field(..., description="Razón por la cual se recomienda o no reentrenar")
@@ -1648,6 +1726,195 @@ async def run_predict_flow(request: PredictRequest) -> PredictResponse:
 async def predict_demand(request: PredictRequest):
     """Endpoint /predict que delega la lógica principal a run_predict_flow."""
     return await run_predict_flow(request)
+
+
+def _get_historical_day_profile(ucp: str, date_str: str) -> Optional[HistoricalDay]:
+    """
+    Obtiene el perfil histórico de un día específico (P1-P24 y TOTAL si existe).
+    Retorna None si no se encuentra o faltan columnas P1-P24.
+    """
+    candidate_paths = [
+        Path(f"data/raw/{ucp}/datos.csv"),
+        Path(f"data/features/{ucp}/data_with_features_latest.csv"),
+        Path("data/raw/datos.csv"),
+        Path("data/features/data_with_features_latest.csv"),
+    ]
+
+    for path in candidate_paths:
+        if not path.exists():
+            continue
+        try:
+            df = pd.read_csv(path)
+            if "FECHA" in df.columns:
+                df = df.rename(columns={"FECHA": "fecha"})
+            df["fecha"] = pd.to_datetime(df["fecha"])
+
+            if "UCP" in df.columns:
+                df = df[df["UCP"] == ucp]
+
+            day_df = df[df["fecha"] == pd.to_datetime(date_str)]
+            if day_df.empty:
+                continue
+
+            period_cols = [f"P{i}" for i in range(1, 25)]
+            if not all(col in day_df.columns for col in period_cols):
+                continue
+
+            row = day_df.iloc[0]
+            valores = {f"P{i}": float(row[f"P{i}"]) for i in range(1, 25)}
+            if "TOTAL" in row:
+                try:
+                    valores["TOTAL"] = float(row["TOTAL"])
+                except Exception:
+                    pass
+
+            return HistoricalDay(
+                fecha=pd.to_datetime(row["fecha"]).strftime("%Y-%m-%d"),
+                valores=valores
+            )
+        except Exception as e:
+            logger.warning(f"⚠ No se pudo leer historial desde {path}: {e}")
+            continue
+
+    return None
+
+
+@app.post("/predict-day", response_model=SingleDayPredictResponse, status_code=status.HTTP_200_OK)
+async def predict_single_day(request: SingleDayPredictRequest):
+    """
+    Endpoint para generar predicción de un único día específico.
+    Calcula n_days=1 y usa end_date = fecha objetivo - 1 día.
+    Además retorna historial del día de referencia solicitado y comparaciones/ajustes.
+    """
+    try:
+        target_dt = datetime.strptime(request.fecha, '%Y-%m-%d')
+        derived_end_date = (target_dt - timedelta(days=1)).strftime('%Y-%m-%d')
+        reference_dt = datetime.strptime(request.fecha_referencia, '%Y-%m-%d')
+
+        predict_payload = PredictRequest(
+            ucp=request.ucp,
+            end_date=derived_end_date,
+            n_days=1,
+            force_retrain=request.force_retrain,
+            offset_scalar=request.offset_scalar
+        )
+
+        logger.info(f"🎯 Predicción de un día: {request.fecha} (end_date derivado: {derived_end_date})")
+        prediction_response = await run_predict_flow(predict_payload)
+
+        # Historial: día de referencia solicitado
+        reference_date = reference_dt.strftime('%Y-%m-%d')
+        history: Dict[str, HistoricalDay] = {}
+
+        ref_profile = _get_historical_day_profile(request.ucp, reference_date)
+        if ref_profile:
+            history["referencia"] = ref_profile
+        else:
+            logger.info(f"ℹ Sin historial para fecha_referencia ({reference_date})")
+
+        # Comparaciones horarias contra históricos disponibles
+        comparisons = SingleDayComparisons()
+        adjustments = SingleDayAdjustments()
+        if prediction_response.predictions:
+            pred_day_dict = prediction_response.predictions[0].model_dump()
+            # Total original para preservar luego en ajustes
+            pred_total = sum(float(pred_day_dict.get(f"P{i}", 0.0)) for i in range(1, 25))
+
+            def build_diffs(hist_profile: HistoricalDay) -> Dict[str, HourlyDiff]:
+                diffs: Dict[str, HourlyDiff] = {}
+                for i in range(1, 25):
+                    key = f"P{i}"
+                    if key not in hist_profile.valores or key not in pred_day_dict:
+                        continue
+                    pred_val = float(pred_day_dict[key])
+                    hist_val = float(hist_profile.valores[key])
+                    delta = pred_val - hist_val
+                    if hist_val == 0:
+                        delta_pct = None
+                    else:
+                        delta_pct = (delta / hist_val) * 100
+                    if abs(delta) < 1e-9:
+                        relacion = "igual"
+                    elif delta > 0:
+                        relacion = "superior"
+                    else:
+                        relacion = "inferior"
+                    diffs[key] = HourlyDiff(
+                        delta=delta,
+                        delta_pct=delta_pct,
+                        relacion=relacion
+                    )
+                return diffs
+
+            def build_adjusted(hist_profile: HistoricalDay) -> AdjustedComparison:
+                adjusted_values = {}
+                period_cols = [f"P{i}" for i in range(1, 25)]
+
+                # Paso 1: Ajustar solo horas con |delta_pct| > 5%
+                for key in period_cols:
+                    if key not in hist_profile.valores or key not in pred_day_dict:
+                        continue
+                    pred_val = float(pred_day_dict[key])
+                    hist_val = float(hist_profile.valores[key])
+                    if hist_val == 0:
+                        adjusted_values[key] = pred_val
+                        continue
+                    delta_pct = (pred_val - hist_val) / hist_val * 100
+                    if abs(delta_pct) > 5:
+                        # Llevar el delta a exactamente ±5%
+                        sign = 1 if delta_pct > 0 else -1
+                        adjusted_values[key] = hist_val * (1 + sign * 0.05)
+                    else:
+                        adjusted_values[key] = pred_val
+
+                # Si faltó alguna hora (por columnas faltantes), usar el valor original
+                for key in period_cols:
+                    if key not in adjusted_values and key in pred_day_dict:
+                        adjusted_values[key] = float(pred_day_dict[key])
+
+                # Paso 2: Re-escalar para conservar el total original
+                adjusted_sum = sum(adjusted_values.values())
+                if adjusted_sum > 0:
+                    scale_factor = pred_total / adjusted_sum
+                else:
+                    scale_factor = 1.0
+
+                final_profile = {
+                    key: adjusted_values[key] * scale_factor
+                    for key in period_cols
+                    if key in adjusted_values
+                }
+
+                # Paso 3: Calcular deltas finales vs histórico
+                final_diffs = build_diffs(
+                    HistoricalDay(fecha=hist_profile.fecha, valores=final_profile)
+                )
+
+                return AdjustedComparison(
+                    profile=final_profile,
+                    adjusted_deltas=final_diffs,
+                    scale_factor=scale_factor
+                )
+
+            if "referencia" in history:
+                comparisons.referencia = build_diffs(history["referencia"])
+                adjustments.referencia = build_adjusted(history["referencia"])
+
+        return SingleDayPredictResponse(
+            prediction=prediction_response,
+            history=history,
+            comparisons=comparisons,
+            adjustments=adjustments
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en /predict-day: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error generando predicción de un día: {str(e)}"
+        )
 
 
 @app.post(
