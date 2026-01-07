@@ -67,8 +67,8 @@ class SpecialDaysDisaggregator:
         df['es_festivo'] = df[date_column].apply(self.calendar_classifier.is_holiday)
         
         # Días muy especiales que deben tratarse como festivos aunque no sean oficiales
-        # (ej: 24 de diciembre - Nochebuena)
-        very_special_dates = ['12-24']  # Nochebuena
+        # (ej: 24 de diciembre - Nochebuena, 2 de enero)
+        very_special_dates = ['12-24', '01-02']  # Nochebuena, 2 de enero
         df['mmdd'] = df[date_column].dt.strftime("%m-%d")
         df['es_dia_muy_especial'] = df['mmdd'].isin(very_special_dates)
         
@@ -189,8 +189,8 @@ class SpecialDaysDisaggregator:
         mmdd = date.strftime("%m-%d")
         
         # Días muy especiales que deben tratarse como festivos para desagregación
-        # aunque no sean festivos oficiales (ej: 24 de diciembre - Nochebuena)
-        very_special_dates = ['12-24']  # Nochebuena
+        # aunque no sean festivos oficiales (ej: 24 de diciembre - Nochebuena, 2 de enero)
+        very_special_dates = ['12-24', '01-02']  # Nochebuena, 2 de enero
         
         # Si es un día muy especial, siempre tratarlo como especial
         if mmdd in very_special_dates:

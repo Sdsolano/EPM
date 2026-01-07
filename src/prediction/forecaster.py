@@ -1023,9 +1023,9 @@ class ForecastPipeline:
             elif fecha.month == 1 and fecha.day <= 6:
                 es_temporada_navideña = True
             
-            # Días muy especiales (incluye 24 dic aunque no sea festivo oficial)
+            # Días muy especiales (incluye 24 dic y 2 ene aunque no sean festivos oficiales)
             month_day = f"{fecha.month:02d}-{fecha.day:02d}"
-            very_special_holidays = ['12-24', '12-25', '12-08', '01-01']  # Nochebuena, Navidad, Inmaculada, Año Nuevo
+            very_special_holidays = ['12-24', '12-25', '12-08', '01-01', '01-02']  # Nochebuena, Navidad, Inmaculada, Año Nuevo, 2 de enero
             
             # Verificar si es día muy especial (festivo oficial o 24 de diciembre)
             if month_day in very_special_holidays:
@@ -1057,7 +1057,7 @@ class ForecastPipeline:
                 
                 # Determinar tipo de ajuste para logging
                 if month_day in very_special_holidays:
-                    tipo_ajuste = "día muy especial (Nochebuena/Navidad/Año Nuevo/Inmaculada)"
+                    tipo_ajuste = "día muy especial (Nochebuena/Navidad/Año Nuevo/2 de enero/Inmaculada)"
                 elif es_temporada_navideña:
                     tipo_ajuste = "temporada navideña"
                 else:

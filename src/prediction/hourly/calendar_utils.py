@@ -240,8 +240,8 @@ class CalendarClassifier:
         """
         month_day = date.strftime('%m-%d')
         
-        # Días muy especiales (incluye 24 dic aunque no sea festivo oficial)
-        very_special_dates = ['01-01', '12-24', '12-25', '12-08']
+        # Días muy especiales (incluye 24 dic y 2 ene aunque no sean festivos oficiales)
+        very_special_dates = ['01-01', '01-02', '12-24', '12-25', '12-08']
         if month_day in very_special_dates:
             return True
         

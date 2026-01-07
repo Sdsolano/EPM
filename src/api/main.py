@@ -2182,8 +2182,13 @@ def calculate_base_curves(
         is_weekend = calendar_classifier.is_weekend(fecha)
         is_christmas = is_christmas_season(fecha)
         
-        # MÉTODO 0: Si está en temporada navideña, usar promedio histórico de últimos 3 años
+        # MÉTODO 0: Si está en temporada navideña, usar estrategia híbrida que considera día de la semana
+        # ESTRATEGIA MEJORADA: Usar cluster normal según día de la semana, pero escalado con total histórico del mismo día navideño
+        # Esto captura tanto el patrón del día de la semana como el nivel de demanda navideña
         if is_christmas:
+            # Identificar días muy especiales (Navidad y Año Nuevo)
+            is_very_special = (fecha.month == 12 and fecha.day == 25) or (fecha.month == 1 and fecha.day == 1)
+            
             # Buscar todos los años anteriores con mismo mes-día (últimos 3 años)
             historical_same_day = df_historico[
                 (df_historico['fecha'].dt.month == fecha.month) &
@@ -2196,11 +2201,142 @@ def calculate_base_curves(
                 historical_same_day = historical_same_day.sort_values('fecha', ascending=False)
                 if len(historical_same_day) > 3:
                     historical_same_day = historical_same_day.head(3)
-                    logger.debug(f"  {fecha_str} (temporada navideña): usando últimos 3 años de {len(historical_same_day)} disponibles")
                 
-                # Promediar perfiles horarios
-                hourly_profile = historical_same_day[period_cols].mean().values
-                logger.debug(f"  {fecha_str} (temporada navideña): {len(historical_same_day)} años históricos")
+                # Calcular total promedio histórico del mismo día navideño
+                avg_total_historico = historical_same_day['TOTAL'].mean() if 'TOTAL' in historical_same_day.columns else historical_same_day[period_cols].sum(axis=1).mean()
+                
+                if is_very_special:
+                    # Para Navidad y Año Nuevo: usar perfil histórico normalizado del mismo día
+                    # IMPORTANTE: Usar solo los últimos 2 años para evitar incluir años muy antiguos
+                    if len(historical_same_day) > 1:
+                        historical_recent = historical_same_day.head(2)
+                        totals_historical = historical_recent[period_cols].sum(axis=1)
+                        normalized_profiles = historical_recent[period_cols].div(totals_historical, axis=0)
+                        avg_normalized_profile = normalized_profiles.mean().values
+                        avg_total_historico_reciente = historical_recent['TOTAL'].mean() if 'TOTAL' in historical_recent.columns else historical_recent[period_cols].sum(axis=1).mean()
+                        hourly_profile = avg_normalized_profile * avg_total_historico_reciente
+                        logger.debug(f"  {fecha_str} (día muy especial): perfil histórico normalizado × total reciente ({avg_total_historico_reciente:.2f})")
+                    else:
+                        totals_historical = historical_same_day[period_cols].sum(axis=1)
+                        normalized_profiles = historical_same_day[period_cols].div(totals_historical, axis=0)
+                        avg_normalized_profile = normalized_profiles.mean().values
+                        hourly_profile = avg_normalized_profile * avg_total_historico
+                        logger.debug(f"  {fecha_str} (día muy especial): perfil histórico normalizado × total histórico ({avg_total_historico:.2f})")
+                else:
+                    # Para otros días navideños: usar cluster normal según día de la semana, pero escalado con total ajustado
+                    # ESTRATEGIA MEJORADA: Aplicar ajustes más agresivos para días hábiles durante toda la temporada navideña
+                    is_late_christmas = (fecha.month == 12 and fecha.day >= 28) or (fecha.month == 1 and fecha.day <= 6)
+                    is_weekday = fecha.dayofweek < 5  # Lunes a Viernes
+                    
+                    if hourly_engine and hourly_engine.normal_disaggregator.is_fitted:
+                        try:
+                            # Obtener perfil normalizado del cluster según día de la semana
+                            result = hourly_engine.normal_disaggregator.predict_hourly_profile(
+                                fecha, 1.0, return_normalized=True  # Usar 1.0 para obtener solo el perfil normalizado
+                            )
+                            if isinstance(result, tuple):
+                                _, normalized_profile, _ = result
+                            else:
+                                # Si no retorna tupla, calcular perfil desde cluster
+                                dayofweek = fecha.dayofweek
+                                cluster_id = hourly_engine.normal_disaggregator.cluster_by_dayofweek.get(dayofweek, 0)
+                                normalized_profile = hourly_engine.normal_disaggregator.cluster_profiles.loc[cluster_id].values
+                            
+                            # Calcular total a usar según el día - ESTRATEGIA MEJORADA
+                            fecha_corte_reciente = fecha - pd.DateOffset(days=60)
+                            df_recientes_habiles = df_historico[
+                                (df_historico['fecha'] >= fecha_corte_reciente) &
+                                (df_historico['fecha'] < fecha) &
+                                (df_historico['fecha'].dt.dayofweek == fecha.dayofweek) &  # Mismo día de la semana
+                                (~df_historico['fecha'].apply(lambda x: calendar_classifier.is_holiday(pd.to_datetime(x))))
+                            ].copy()
+                            
+                            if is_weekday:
+                                # Días hábiles: usar enfoque híbrido más agresivo
+                                if len(df_recientes_habiles) > 0:
+                                    avg_total_reciente_habiles = df_recientes_habiles['TOTAL'].mean() if 'TOTAL' in df_recientes_habiles.columns else df_recientes_habiles[period_cols].sum(axis=1).mean()
+                                    
+                                    if is_late_christmas:
+                                        # Días hábiles del 28 en adelante: 60% histórico navideño + 40% reciente hábiles
+                                        total_final = avg_total_historico * 0.6 + avg_total_reciente_habiles * 0.4
+                                        logger.debug(f"  {fecha_str} (temporada navideña tardía hábil): cluster × total mixto 60/40 (hist={avg_total_historico:.2f}, reciente={avg_total_reciente_habiles:.2f}, final={total_final:.2f})")
+                                    else:
+                                        # Días hábiles tempranos (23-27 dic): 50% histórico navideño + 50% reciente hábiles
+                                        # Esto captura mejor que días hábiles tienen demanda más alta incluso en temporada navideña
+                                        total_final = avg_total_historico * 0.5 + avg_total_reciente_habiles * 0.5
+                                        logger.debug(f"  {fecha_str} (temporada navideña temprana hábil): cluster × total mixto 50/50 (hist={avg_total_historico:.2f}, reciente={avg_total_reciente_habiles:.2f}, final={total_final:.2f})")
+                                else:
+                                    # Sin datos recientes: usar ajustes más agresivos
+                                    if is_late_christmas:
+                                        total_final = avg_total_historico * 1.10  # +10% para días tardíos hábiles
+                                    else:
+                                        total_final = avg_total_historico * 1.08  # +8% para días tempranos hábiles
+                                    logger.debug(f"  {fecha_str} (temporada navideña hábil): cluster × total histórico ajustado ({total_final:.2f})")
+                            else:
+                                # Días no hábiles (sábado/domingo)
+                                if is_late_christmas:
+                                    total_final = avg_total_historico * 1.05  # +5% para días tardíos no hábiles
+                                else:
+                                    total_final = avg_total_historico * 1.03  # +3% para días tempranos no hábiles
+                                logger.debug(f"  {fecha_str} (temporada navideña no hábil): cluster × total histórico ajustado ({total_final:.2f})")
+                            
+                            hourly_profile = normalized_profile * total_final
+                        except Exception as e:
+                            logger.warning(f"  {fecha_str} (temporada navideña): error con cluster ({e}), usando perfil histórico")
+                            # Fallback: usar perfil histórico normalizado con ajustes mejorados
+                            totals_historical = historical_same_day[period_cols].sum(axis=1)
+                            normalized_profiles = historical_same_day[period_cols].div(totals_historical, axis=0)
+                            avg_normalized_profile = normalized_profiles.mean().values
+                            
+                            # Aplicar ajustes mejorados
+                            fecha_corte_reciente = fecha - pd.DateOffset(days=60)
+                            df_recientes_habiles = df_historico[
+                                (df_historico['fecha'] >= fecha_corte_reciente) &
+                                (df_historico['fecha'] < fecha) &
+                                (df_historico['fecha'].dt.dayofweek == fecha.dayofweek) &
+                                (~df_historico['fecha'].apply(lambda x: calendar_classifier.is_holiday(pd.to_datetime(x))))
+                            ].copy()
+                            
+                            if is_weekday and len(df_recientes_habiles) > 0:
+                                avg_total_reciente_habiles = df_recientes_habiles['TOTAL'].mean() if 'TOTAL' in df_recientes_habiles.columns else df_recientes_habiles[period_cols].sum(axis=1).mean()
+                                if is_late_christmas:
+                                    total_final = avg_total_historico * 0.6 + avg_total_reciente_habiles * 0.4
+                                else:
+                                    total_final = avg_total_historico * 0.5 + avg_total_reciente_habiles * 0.5
+                            elif is_weekday:
+                                total_final = avg_total_historico * 1.10 if is_late_christmas else avg_total_historico * 1.08
+                            else:
+                                total_final = avg_total_historico * 1.05 if is_late_christmas else avg_total_historico * 1.03
+                            
+                            hourly_profile = avg_normalized_profile * total_final
+                    else:
+                        # Sin cluster disponible: usar perfil histórico normalizado con ajustes mejorados
+                        totals_historical = historical_same_day[period_cols].sum(axis=1)
+                        normalized_profiles = historical_same_day[period_cols].div(totals_historical, axis=0)
+                        avg_normalized_profile = normalized_profiles.mean().values
+                        
+                        # Aplicar ajustes mejorados
+                        fecha_corte_reciente = fecha - pd.DateOffset(days=60)
+                        df_recientes_habiles = df_historico[
+                            (df_historico['fecha'] >= fecha_corte_reciente) &
+                            (df_historico['fecha'] < fecha) &
+                            (df_historico['fecha'].dt.dayofweek == fecha.dayofweek) &
+                            (~df_historico['fecha'].apply(lambda x: calendar_classifier.is_holiday(pd.to_datetime(x))))
+                        ].copy()
+                        
+                        if is_weekday and len(df_recientes_habiles) > 0:
+                            avg_total_reciente_habiles = df_recientes_habiles['TOTAL'].mean() if 'TOTAL' in df_recientes_habiles.columns else df_recientes_habiles[period_cols].sum(axis=1).mean()
+                            if is_late_christmas:
+                                total_final = avg_total_historico * 0.6 + avg_total_reciente_habiles * 0.4
+                            else:
+                                total_final = avg_total_historico * 0.5 + avg_total_reciente_habiles * 0.5
+                        elif is_weekday:
+                            total_final = avg_total_historico * 1.10 if is_late_christmas else avg_total_historico * 1.08
+                        else:
+                            total_final = avg_total_historico * 1.05 if is_late_christmas else avg_total_historico * 1.03
+                        
+                        hourly_profile = avg_normalized_profile * total_final
+                        logger.debug(f"  {fecha_str} (temporada navideña): perfil histórico normalizado × total ({total_final:.2f})")
             else:
                 # Fallback: usar promedio de todos los días de temporada navideña del mismo día en años anteriores (últimos 3 años)
                 historical_christmas = df_historico[
@@ -2216,14 +2352,89 @@ def calculate_base_curves(
                     normalized = historical_christmas[period_cols].div(totals, axis=0)
                     avg_normalized = normalized.mean().values
                     
-                    # Escalar con total promedio
-                    avg_total = historical_christmas['TOTAL'].mean() if 'TOTAL' in historical_christmas.columns else historical_christmas[period_cols].sum(axis=1).mean()
-                    hourly_profile = avg_normalized * avg_total
-                    logger.debug(f"  {fecha_str} (temporada navideña): fallback con {len(historical_christmas)} días históricos (últimos 3 años)")
+                    # Identificar si es día muy especial
+                    is_very_special = (fecha.month == 12 and fecha.day == 25) or (fecha.month == 1 and fecha.day == 1)
+                    avg_total_historico = historical_christmas['TOTAL'].mean() if 'TOTAL' in historical_christmas.columns else historical_christmas[period_cols].sum(axis=1).mean()
+                    
+                    if is_very_special:
+                        # Para Navidad y Año Nuevo: usar perfil histórico normalizado
+                        hourly_profile = avg_normalized * avg_total_historico
+                        logger.debug(f"  {fecha_str} (temporada navideña, día especial): fallback con perfil histórico")
+                    else:
+                        # Para otros días: usar cluster normal según día de la semana con ajuste para días tardíos
+                        is_late_christmas = (fecha.month == 12 and fecha.day >= 28) or (fecha.month == 1 and fecha.day <= 6)
+                        is_weekday = fecha.dayofweek < 5  # Lunes a Viernes
+                        
+                        if hourly_engine and hourly_engine.normal_disaggregator.is_fitted:
+                            try:
+                                result = hourly_engine.normal_disaggregator.predict_hourly_profile(
+                                    fecha, 1.0, return_normalized=True
+                                )
+                                if isinstance(result, tuple):
+                                    _, normalized_profile, _ = result
+                                else:
+                                    dayofweek = fecha.dayofweek
+                                    cluster_id = hourly_engine.normal_disaggregator.cluster_by_dayofweek.get(dayofweek, 0)
+                                    normalized_profile = hourly_engine.normal_disaggregator.cluster_profiles.loc[cluster_id].values
+                                
+                                # Aplicar ajuste para días tardíos y hábiles
+                                if is_late_christmas and is_weekday:
+                                    fecha_corte_reciente = fecha - pd.DateOffset(days=60)
+                                    df_recientes_habiles = df_historico[
+                                        (df_historico['fecha'] >= fecha_corte_reciente) &
+                                        (df_historico['fecha'] < fecha) &
+                                        (df_historico['fecha'].dt.dayofweek == fecha.dayofweek) &
+                                        (~df_historico['fecha'].apply(lambda x: calendar_classifier.is_holiday(pd.to_datetime(x))))
+                                    ].copy()
+                                    
+                                    if len(df_recientes_habiles) > 0:
+                                        avg_total_reciente_habiles = df_recientes_habiles['TOTAL'].mean() if 'TOTAL' in df_recientes_habiles.columns else df_recientes_habiles[period_cols].sum(axis=1).mean()
+                                        total_final = avg_total_historico * 0.7 + avg_total_reciente_habiles * 0.3
+                                    else:
+                                        total_final = avg_total_historico * 1.05
+                                elif is_late_christmas:
+                                    total_final = avg_total_historico * 1.03
+                                else:
+                                    total_final = avg_total_historico
+                                
+                                hourly_profile = normalized_profile * total_final
+                                logger.debug(f"  {fecha_str} (temporada navideña): fallback con cluster día semana (total={total_final:.2f})")
+                            except Exception as e:
+                                logger.warning(f"  {fecha_str} (temporada navideña): error con cluster en fallback ({e})")
+                                # Aplicar ajuste también en fallback
+                                if is_late_christmas and is_weekday:
+                                    total_final = avg_total_historico * 1.05
+                                elif is_late_christmas:
+                                    total_final = avg_total_historico * 1.03
+                                else:
+                                    total_final = avg_total_historico
+                                hourly_profile = avg_normalized * total_final
+                        else:
+                            # Aplicar ajuste también sin cluster
+                            if is_late_christmas and is_weekday:
+                                total_final = avg_total_historico * 1.05
+                            elif is_late_christmas:
+                                total_final = avg_total_historico * 1.03
+                            else:
+                                total_final = avg_total_historico
+                            hourly_profile = avg_normalized * total_final
+                            logger.debug(f"  {fecha_str} (temporada navideña): fallback con perfil histórico (total={total_final:.2f})")
                 else:
                     # Último fallback: usar cluster de días especiales
                     if hourly_engine and hourly_engine.special_disaggregator.is_fitted:
-                        avg_total = df_historico['TOTAL'].mean() if 'TOTAL' in df_historico.columns else df_historico[period_cols].sum(axis=1).mean()
+                        # Intentar usar total reciente para escalar
+                        fecha_corte_reciente = fecha - pd.DateOffset(days=60)
+                        df_recientes = df_historico[
+                            (df_historico['fecha'] >= fecha_corte_reciente) &
+                            (df_historico['fecha'] < fecha) &
+                            (~df_historico['fecha'].apply(lambda x: calendar_classifier.is_holiday(pd.to_datetime(x))))
+                        ].copy()
+                        
+                        if len(df_recientes) > 0:
+                            avg_total = df_recientes['TOTAL'].mean() if 'TOTAL' in df_recientes.columns else df_recientes[period_cols].sum(axis=1).mean()
+                        else:
+                            avg_total = df_historico['TOTAL'].mean() if 'TOTAL' in df_historico.columns else df_historico[period_cols].sum(axis=1).mean()
+                        
                         result = hourly_engine.special_disaggregator.predict_hourly_profile(fecha, avg_total, return_normalized=False)
                         if result is not None:
                             if isinstance(result, tuple):
@@ -2236,8 +2447,19 @@ def calculate_base_curves(
                             hourly_profile = np.zeros(24)
                         logger.debug(f"  {fecha_str} (temporada navideña): usando cluster especial")
                     else:
-                        # Fallback final: perfil plano
-                        avg_total = df_historico['TOTAL'].mean() if 'TOTAL' in df_historico.columns else df_historico[period_cols].sum(axis=1).mean()
+                        # Fallback final: perfil plano con total reciente
+                        fecha_corte_reciente = fecha - pd.DateOffset(days=60)
+                        df_recientes = df_historico[
+                            (df_historico['fecha'] >= fecha_corte_reciente) &
+                            (df_historico['fecha'] < fecha) &
+                            (~df_historico['fecha'].apply(lambda x: calendar_classifier.is_holiday(pd.to_datetime(x))))
+                        ].copy()
+                        
+                        if len(df_recientes) > 0:
+                            avg_total = df_recientes['TOTAL'].mean() if 'TOTAL' in df_recientes.columns else df_recientes[period_cols].sum(axis=1).mean()
+                        else:
+                            avg_total = df_historico['TOTAL'].mean() if 'TOTAL' in df_historico.columns else df_historico[period_cols].sum(axis=1).mean()
+                        
                         hourly_profile = np.full(24, avg_total / 24)
                         logger.warning(f"  {fecha_str} (temporada navideña): usando perfil plano (sin datos)")
         
