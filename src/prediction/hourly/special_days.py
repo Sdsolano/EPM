@@ -42,6 +42,7 @@ class SpecialDaysDisaggregator:
         self.kmeans = None
         self.cluster_profiles = None
         self.cluster_by_date = None  # Mapeo mm-dd -> cluster
+        self.average_holiday_profile = None  # Perfil promedio de todos los festivos (para festivos no entrenados)
         self.calendar_classifier = CalendarClassifier(ucp=self.ucp)
         self.is_fitted = False
 
@@ -115,6 +116,54 @@ class SpecialDaysDisaggregator:
             df_agrupado.groupby('mmdd')['cluster']
             .agg(lambda x: x.mode()[0] if len(x.mode()) > 0 else x.iloc[0])
         )
+        
+        # Calcular perfil promedio de festivos del último año (para festivos no entrenados)
+        # Usar solo festivos del último año disponible para tener patrones más recientes
+        if len(df_agrupado) > 0:
+            # Obtener el último año disponible
+            last_year = df_agrupado.index.max().year
+            logger.info(f"  - Calculando perfil promedio usando festivos del último año disponible: {last_year}")
+            
+            # Filtrar festivos del último año en df_agrupado (ya tiene promedios por fecha)
+            df_festivos_last_year = df_agrupado[df_agrupado.index.year == last_year]
+            
+            if len(df_festivos_last_year) > 0:
+                # Normalizar cada perfil y promediarlos
+                all_profiles_normalized = []
+                for idx, row in df_festivos_last_year.iterrows():
+                    profile = row[period_cols].values
+                    total = profile.sum()
+                    if total > 0:
+                        all_profiles_normalized.append(profile / total)
+                
+                if len(all_profiles_normalized) > 0:
+                    self.average_holiday_profile = np.mean(all_profiles_normalized, axis=0)
+                    # Normalizar para asegurar que suma = 1
+                    self.average_holiday_profile = self.average_holiday_profile / self.average_holiday_profile.sum()
+                    logger.info(f"  - Perfil promedio calculado usando {len(all_profiles_normalized)} festivos del año {last_year}")
+                else:
+                    logger.warning("  - No se pudieron normalizar perfiles del último año")
+                    self.average_holiday_profile = None
+            else:
+                logger.warning(f"  - No se encontraron festivos para el año {last_year}, usando promedio general")
+                # Fallback: usar promedio de todos los festivos si no hay del último año
+                all_profiles_normalized = []
+                for idx, row in df_agrupado.iterrows():
+                    profile = row[period_cols].values
+                    total = profile.sum()
+                    if total > 0:
+                        all_profiles_normalized.append(profile / total)
+                
+                if len(all_profiles_normalized) > 0:
+                    self.average_holiday_profile = np.mean(all_profiles_normalized, axis=0)
+                    self.average_holiday_profile = self.average_holiday_profile / self.average_holiday_profile.sum()
+                    logger.info(f"  - Perfil promedio calculado usando todos los festivos históricos (fallback)")
+                else:
+                    logger.warning("  - No se pudo calcular perfil promedio de festivos")
+                    self.average_holiday_profile = None
+        else:
+            logger.warning("  - No hay datos agrupados para calcular perfil promedio")
+            self.average_holiday_profile = None
 
         self.is_fitted = True
         logger.info(f"✓ Desagregador de días especiales entrenado")
@@ -131,8 +180,11 @@ class SpecialDaysDisaggregator:
             date: Fecha a verificar
 
         Returns:
-            True si es festivo y está en el histórico, o si es un día muy especial
+            True si es festivo (aunque no esté en el histórico), o si es un día muy especial
             como el 24 de diciembre (Nochebuena) aunque no sea festivo oficial.
+            
+        Nota: Si es festivo pero no está en cluster_by_date, se usará el perfil
+        promedio de festivos en predict_hourly_profile().
         """
         mmdd = date.strftime("%m-%d")
         
@@ -140,15 +192,16 @@ class SpecialDaysDisaggregator:
         # aunque no sean festivos oficiales (ej: 24 de diciembre - Nochebuena)
         very_special_dates = ['12-24']  # Nochebuena
         
-        # Si es un día muy especial, verificar si está en el histórico
+        # Si es un día muy especial, siempre tratarlo como especial
         if mmdd in very_special_dates:
-            return mmdd in self.cluster_by_date
+            return True
         
-        # Para otros días, debe ser festivo oficial
-        if not self.calendar_classifier.is_holiday(date):
-            return False
+        # Si es festivo oficial, tratarlo como especial (aunque no esté en histórico)
+        # Esto permite usar perfil promedio de festivos para festivos nuevos/atípicos
+        if self.calendar_classifier.is_holiday(date):
+            return True
 
-        return mmdd in self.cluster_by_date
+        return False
 
     def predict_hourly_profile(
         self,
@@ -180,14 +233,21 @@ class SpecialDaysDisaggregator:
 
         # Obtener mm-dd
         mmdd = date.strftime("%m-%d")
-        cluster_id = self.cluster_by_date.get(mmdd)
+        cluster_id = self.cluster_by_date.get(mmdd) if self.cluster_by_date is not None else None
 
-        if cluster_id is None:
-            logger.warning(f"No hay cluster para festivo {mmdd}")
-            return None
-
-        # Obtener perfil normalizado
-        normalized_profile = self.cluster_profiles.loc[cluster_id].values
+        # Si está en el histórico, usar su cluster específico
+        if cluster_id is not None:
+            # Obtener perfil normalizado del cluster
+            normalized_profile = self.cluster_profiles.loc[cluster_id].values
+        else:
+            # Festivo no entrenado: usar perfil promedio de festivos
+            if self.average_holiday_profile is None:
+                logger.warning(f"No hay cluster para festivo {mmdd} y no hay perfil promedio disponible")
+                return None
+            
+            normalized_profile = self.average_holiday_profile
+            cluster_id = -1  # Indicador de que se usó perfil promedio
+            logger.info(f"Festivo {mmdd} no está en histórico, usando perfil promedio de festivos")
 
         # Escalar por total diario
         hourly_prediction = normalized_profile * total_daily
@@ -238,6 +298,7 @@ class SpecialDaysDisaggregator:
                 'kmeans': self.kmeans,
                 'cluster_profiles': self.cluster_profiles,
                 'cluster_by_date': self.cluster_by_date,
+                'average_holiday_profile': self.average_holiday_profile,
                 'n_clusters': self.n_clusters,
                 'random_state': self.random_state,
             }, f)
@@ -263,7 +324,14 @@ class SpecialDaysDisaggregator:
         instance.kmeans = data['kmeans']
         instance.cluster_profiles = data['cluster_profiles']
         instance.cluster_by_date = data['cluster_by_date']
+        # Cargar perfil promedio (compatibilidad hacia atrás: puede no existir en modelos antiguos)
+        instance.average_holiday_profile = data.get('average_holiday_profile', None)
         instance.is_fitted = True
+
+        if instance.average_holiday_profile is None:
+            logger.warning("Modelo cargado sin perfil promedio de festivos. Re-entrenar para habilitar soporte de festivos no entrenados.")
+        else:
+            logger.info("Perfil promedio de festivos cargado (soporte para festivos no entrenados habilitado)")
 
         logger.info(f"✓ Modelo de días especiales cargado desde {filepath}")
         return instance
