@@ -47,10 +47,15 @@ En el dashboard de Railway, ve a tu servicio y luego a la pestaña **"Variables"
 ### 4. Configuración Automática
 
 Railway detectará automáticamente:
-- ✅ **Python** como lenguaje
+- ✅ **Python 3.11** desde `runtime.txt` y `nixpacks.toml`
 - ✅ **requirements.txt** para dependencias
 - ✅ **nixpacks.toml** para configuración de build
 - ✅ **Comando de inicio** desde `nixpacks.toml`
+
+**Nota importante**: Si el build falla con "pip: command not found", asegúrate de que:
+1. `runtime.txt` existe con `python-3.11`
+2. `nixpacks.toml` tiene `[providers] python = "3.11"`
+3. No hay fases de install personalizadas que sobrescriban la instalación de Python
 
 ### 5. Verificar el Despliegue
 
