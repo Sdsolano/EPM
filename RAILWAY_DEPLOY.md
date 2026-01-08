@@ -46,16 +46,18 @@ En el dashboard de Railway, ve a tu servicio y luego a la pestaña **"Variables"
 
 ### 4. Configuración Automática
 
-Railway detectará automáticamente:
-- ✅ **Python 3.11** desde `runtime.txt` y `nixpacks.toml`
+Railway usará el **Dockerfile** para construir la aplicación:
+- ✅ **Python 3.10** (imagen base `python:3.10-slim`)
 - ✅ **requirements.txt** para dependencias
-- ✅ **nixpacks.toml** para configuración de build
-- ✅ **Comando de inicio** desde `nixpacks.toml`
+- ✅ **Dockerfile** para configuración de build
+- ✅ **Comando de inicio** desde `railway.json`
 
-**Nota importante**: Si el build falla con "pip: command not found", asegúrate de que:
-1. `runtime.txt` existe con `python-3.11`
-2. `nixpacks.toml` tiene `[providers] python = "3.11"`
-3. No hay fases de install personalizadas que sobrescriban la instalación de Python
+**Nota**: Si prefieres usar nixpacks en lugar de Dockerfile, puedes cambiar en `railway.json`:
+```json
+"builder": "NIXPACKS"
+```
+
+El Dockerfile es más confiable para proyectos con dependencias complejas como LightGBM y XGBoost.
 
 ### 5. Verificar el Despliegue
 
