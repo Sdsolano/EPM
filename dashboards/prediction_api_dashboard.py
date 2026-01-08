@@ -1251,6 +1251,8 @@ def main():
         st.session_state.base_curves_df = None
     if 'base_curves_response' not in st.session_state:
         st.session_state.base_curves_response = None
+    if 'base_curves_request' not in st.session_state:
+        st.session_state.base_curves_request = None
     if 'base_curves_historical_df' not in st.session_state:
         st.session_state.base_curves_historical_df = None
     
@@ -1268,6 +1270,18 @@ def main():
                     fecha_inicio_str = base_curve_fecha_inicio.strftime('%Y-%m-%d')
                     fecha_fin_str = base_curve_fecha_fin.strftime('%Y-%m-%d')
                     
+                    # Guardar información del request
+                    request_info = {
+                        "url": f"{api_url}/base-curve",
+                        "method": "POST",
+                        "payload": {
+                            "ucp": base_curve_ucp,
+                            "fecha_inicio": fecha_inicio_str,
+                            "fecha_fin": fecha_fin_str
+                        }
+                    }
+                    st.session_state.base_curves_request = request_info
+                    
                     response = call_base_curve_api(
                         api_url=api_url,
                         ucp=base_curve_ucp,
@@ -1279,6 +1293,7 @@ def main():
                     st.error(f"❌ Error obteniendo curvas base: {response['error']}")
                     st.session_state.base_curves_df = None
                     st.session_state.base_curves_response = None
+                    st.session_state.base_curves_request = None
                 else:
                     st.success("✅ Curvas base obtenidas exitosamente!")
                     
@@ -1409,9 +1424,23 @@ def main():
         with st.expander("📄 Ver datos completos de curvas base"):
             st.dataframe(base_curves_df, use_container_width=True)
         
-        # Mostrar respuesta completa de la API en expander (para debugging)
-        with st.expander("🔍 Ver respuesta completa de la API"):
-            st.json(st.session_state.base_curves_response)
+        # Mostrar request y respuesta completa de la API en expander (para debugging)
+        with st.expander("🔍 Ver Request y Response de la API"):
+            # Mostrar Request
+            st.subheader("📤 Request")
+            if st.session_state.base_curves_request is not None:
+                st.json(st.session_state.base_curves_request)
+            else:
+                st.info("No hay información del request disponible")
+            
+            st.markdown("---")
+            
+            # Mostrar Response
+            st.subheader("📥 Response")
+            if st.session_state.base_curves_response is not None:
+                st.json(st.session_state.base_curves_response)
+            else:
+                st.info("No hay respuesta disponible")
 
 
 if __name__ == "__main__":

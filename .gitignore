@@ -113,5 +113,5 @@ models/
 data/raw/*
 data/raw/Antioquia/datos.csv
 /data/raw/Antioquia
-2026-01-07T19-23_export.csv
-after_fixes.csv
+dashboards/performance_hourly_dashboard.py
+/dashboards
