@@ -27,10 +27,13 @@ RUN pip install --upgrade pip && \
 # Copiar el resto del código
 COPY . .
 
+# Copiar y hacer ejecutable el script de inicio
+COPY start.sh /app/start.sh
+RUN chmod +x /app/start.sh
+
 # Exponer el puerto (Railway lo sobrescribirá con $PORT)
 EXPOSE 8000
 
-# Comando de inicio (Railway sobrescribirá el puerto con $PORT)
-# El código en main.py ya maneja el puerto dinámico
-CMD uvicorn src.api.main:app --host 0.0.0.0 --port ${PORT:-8000}
+# Usar el script de inicio que maneja correctamente la variable PORT
+CMD ["/app/start.sh"]
 
