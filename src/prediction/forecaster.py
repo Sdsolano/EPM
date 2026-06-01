@@ -47,6 +47,14 @@ try:
 except ImportError:
     FestivosAPIClient = None
 
+# Importar utilidades de Semana Santa
+try:
+    from .easter_utils import get_smart_historical_lag, detect_easter_day_type
+except ImportError:
+    get_smart_historical_lag = None
+    detect_easter_day_type = None
+    logger.warning("⚠ easter_utils no disponible. Semana Santa usará lag tradicional.")
+
 # Configurar logging
 logging.basicConfig(
     level=logging.INFO,
@@ -769,15 +777,30 @@ class ForecastPipeline:
         # ========================================
         # Útiles para festivos especiales y patrones estacionales específicos
         # Maneja años bisiestos correctamente usando pd.DateOffset
+        # NUEVO: Maneja Semana Santa de forma inteligente (busca días equivalentes)
         from pandas import DateOffset
-        
+
         for years_back in [1, 2, 3]:  # 1 año, 2 años, 3 años
-            fecha_lag_anual = fecha - DateOffset(years=years_back)
             col_name = f'total_lag_{years_back}y'
-            
-            # Intentar buscar fecha exacta
+
+            # Intentar búsqueda inteligente de Semana Santa (si está disponible)
+            if get_smart_historical_lag is not None:
+                lag_value, is_easter_adjusted = get_smart_historical_lag(
+                    fecha,
+                    df_temp,
+                    years_back=years_back,
+                    column='demanda_total'
+                )
+
+                if lag_value > 0:
+                    features[col_name] = lag_value
+                    # Si encontramos valor, continuar al siguiente lag
+                    continue
+
+            # Fallback: búsqueda tradicional por fecha exacta
+            fecha_lag_anual = fecha - DateOffset(years=years_back)
             features[col_name] = get_value_by_date(df_temp, fecha_lag_anual, 'demanda_total')
-            
+
             # Si no se encuentra (primeros años o falta de datos), usar fallback
             # Fallback: promedio de días del mismo mes-día en años anteriores disponibles
             if features[col_name] == 0:
@@ -787,7 +810,7 @@ class ForecastPipeline:
                     (df_temp['fecha'].dt.day == fecha.day) &
                     (df_temp['fecha'].dt.date < fecha.date())
                 ]
-                
+
                 if len(same_month_day) > 0:
                     # Usar promedio de años anteriores del mismo día
                     features[col_name] = same_month_day['demanda_total'].mean()
@@ -1088,20 +1111,62 @@ class ForecastPipeline:
             if aplicar_ajuste and lag_1y > 0:
                 # Aplicar promedio ponderado
                 demanda_pred = (weight_historical * lag_1y) + ((1 - weight_historical) * demanda_pred_original)
-                
+
                 # Determinar tipo de ajuste para logging
-                if month_day in very_special_holidays:
+                # Detectar si es Semana Santa
+                easter_day_type = None
+                if detect_easter_day_type is not None:
+                    easter_day_type = detect_easter_day_type(fecha)
+
+                if easter_day_type:
+                    tipo_ajuste = f"Semana Santa ({easter_day_type})"
+                elif month_day in very_special_holidays:
                     tipo_ajuste = "día muy especial (Nochebuena/Navidad/Año Nuevo/2 de enero/Inmaculada)"
                 elif es_temporada_navideña:
                     tipo_ajuste = "temporada navideña"
                 else:
                     tipo_ajuste = "festivo especial"
-                
+
                 logger.info(f"   🔧 Ajuste post-predicción aplicado ({tipo_ajuste})")
                 logger.info(f"      - Valor histórico (1 año): {lag_1y:,.2f} MW")
                 logger.info(f"      - Predicción modelo original: {demanda_pred_original:,.2f} MW")
                 logger.info(f"      - Predicción final (ponderada {int(weight_historical*100)}% histórico): {demanda_pred:,.2f} MW")
             
+            # ========================================
+            # AJUSTE TEMPORAL: Régimen de Alta Demanda (desde 24 marzo 2026)
+            # ========================================
+            # NOTA: Este es un ajuste TEMPORAL debido a un cambio estructural observado
+            # desde el 24 de marzo de 2026 (+5.3% en demanda base).
+            # REMOVER este ajuste cuando tengamos suficientes datos del nuevo régimen
+            # para reentrenar el modelo (estimado: 6-12 meses, revisar sept 2026).
+            #
+            # NO aplicar en:
+            # - Semana Santa (ya tienen su propio ajuste)
+            # - Días muy especiales (Navidad, Año Nuevo, etc.)
+            REGIME_CHANGE_DATE = datetime(2026, 3, 25)
+            REGIME_ADJUSTMENT_FACTOR = 1.053  # +5.3%
+
+            # Verificar si es Semana Santa
+            es_semana_santa = False
+            if detect_easter_day_type is not None:
+                es_semana_santa = detect_easter_day_type(fecha) is not None
+
+            # Aplicar ajuste solo si:
+            # 1. Fecha >= 24 marzo 2026
+            # 2. NO es Semana Santa (ya ajustada)
+            # 3. NO es día muy especial (ya ajustado)
+            if (fecha >= REGIME_CHANGE_DATE and
+                not es_semana_santa and
+                month_day not in very_special_holidays):
+
+                demanda_pred_antes_ajuste = demanda_pred
+                demanda_pred = demanda_pred * REGIME_ADJUSTMENT_FACTOR
+
+                logger.info(f"   🔧 Ajuste temporal de régimen aplicado (+5.3%)")
+                logger.info(f"      - Predicción antes del ajuste: {demanda_pred_antes_ajuste:,.2f} MW")
+                logger.info(f"      - Predicción ajustada: {demanda_pred:,.2f} MW")
+                logger.info(f"      - NOTA: Ajuste temporal, revisar en sept 2026")
+
             # Log adicional para debugging
             logger.info(f"   Demanda predicha: {demanda_pred:,.2f} MW")
             logger.info(f"   Features clave: is_weekend={features['is_weekend']}, is_festivo={features['is_festivo']}")
