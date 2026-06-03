@@ -309,13 +309,13 @@ class PredictRequest(BaseModel):
     #     'data/raw/clima_new.csv',
     #     description="Ruta al archivo CSV con datos meteorológicos API EPM (se usa por defecto data/raw/clima_new.csv si no se especifica)"
     # )
-    # start_date: Optional[str] = Field(
-    #     None,
-    #     description="Fecha inicial para filtrar datos históricos (formato: YYYY-MM-DD)"
-    # )
     ucp: str = Field(
         None,
         description="Selección de UCP para calculos"
+    )
+    start_date: Optional[str] = Field(
+        None,
+        description="Fecha inicial para filtrar datos de entrenamiento (formato: YYYY-MM-DD). Si no se especifica, usa por defecto '2015-01-01'. Solo aplica cuando force_retrain=true"
     )
     end_date: Optional[str] = Field(
         None,
@@ -337,7 +337,7 @@ class PredictRequest(BaseModel):
         gt=0.0
     )
 
-    @field_validator( 'end_date')
+    @field_validator('start_date', 'end_date')
     @classmethod
     def validate_date_format(cls, v: Optional[str]) -> Optional[str]:
         """Valida formato de fechas"""
@@ -614,13 +614,13 @@ class ReasonRequest(BaseModel):
     #     'data/raw/clima_new.csv',
     #     description="Ruta al archivo CSV con datos meteorológicos API EPM (se usa por defecto data/raw/clima_new.csv si no se especifica)"
     # )
-    # start_date: Optional[str] = Field(
-    #     None,
-    #     description="Fecha inicial para filtrar datos históricos (formato: YYYY-MM-DD)"
-    # )
     ucp: str = Field(
         None,
         description="Selección de UCP para calculos"
+    )
+    start_date: Optional[str] = Field(
+        None,
+        description="Fecha inicial para filtrar datos de entrenamiento (formato: YYYY-MM-DD). Si no se especifica, usa por defecto '2015-01-01'. Solo aplica cuando force_retrain=true"
     )
     end_date: Optional[str] = Field(
         None,
@@ -630,6 +630,17 @@ class ReasonRequest(BaseModel):
         False,
         description="Forzar reentrenamiento del modelo aunque exista uno. Si es True, entrena los 3 modelos y selecciona automáticamente el mejor basado en rMAPE"
     )
+
+    @field_validator('start_date', 'end_date')
+    @classmethod
+    def validate_date_format(cls, v: Optional[str]) -> Optional[str]:
+        """Valida formato de fechas"""
+        if v is not None:
+            try:
+                datetime.strptime(v, '%Y-%m-%d')
+            except ValueError:
+                raise ValueError('Formato de fecha inválido. Usar YYYY-MM-DD')
+        return v
 
 
 class HealthResponse(BaseModel):
@@ -1157,10 +1168,18 @@ async def predict_demand(request: ReasonRequest):
             weather_data_path = f'data/raw/{request.ucp}/clima_new.csv'
             output_dir = Path(f'data/features/{request.ucp}')
 
+            # Usar start_date del request o '2015-01-01' por defecto
+            training_start_date = request.start_date or '2015-01-01'
+
+            if request.start_date and request.force_retrain:
+                logger.info(f"⏱️ Usando fecha de inicio personalizada para entrenamiento: {request.start_date}")
+            elif request.start_date and not request.force_retrain:
+                logger.info(f"ℹ️ start_date especificado pero force_retrain=False. Se ignorará start_date y se usará el modelo existente si está disponible.")
+
             df_with_features, _ = run_automated_pipeline(
                 power_data_path=power_data_path,
                 weather_data_path=weather_data_path,
-                start_date='2015-01-01',
+                start_date=training_start_date,
                 end_date=request.end_date,
                 output_dir=output_dir
             )
@@ -1468,10 +1487,18 @@ async def run_predict_flow(request: PredictRequest) -> PredictResponse:
             weather_data_path = f'data/raw/{request.ucp}/clima_new.csv'
             output_dir = Path(f'data/features/{request.ucp}')
 
+            # Usar start_date del request o '2015-01-01' por defecto
+            training_start_date = request.start_date or '2015-01-01'
+
+            if request.start_date and request.force_retrain:
+                logger.info(f"⏱️ Usando fecha de inicio personalizada para entrenamiento: {request.start_date}")
+            elif request.start_date and not request.force_retrain:
+                logger.info(f"ℹ️ start_date especificado pero force_retrain=False. Se ignorará start_date y se usará el modelo existente si está disponible.")
+
             df_with_features, _ = run_automated_pipeline(
                 power_data_path=power_data_path,
                 weather_data_path=weather_data_path,
-                start_date='2015-01-01',
+                start_date=training_start_date,
                 end_date=request.end_date,
                 output_dir=output_dir
             )
