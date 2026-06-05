@@ -107,10 +107,14 @@ def _seleccionar_curvas_tipicas(
 ) -> List[Dict[str, Any]]:
     """
     De una lista de curvas (barra, fecha, periodos), devuelve hasta n_max más típicas
-    por forma y nivel: normaliza L2, mide centralidad (menor distancia media = más típica).
+    por forma Y nivel: calcula distancia euclidiana directa, mide centralidad
+    (menor distancia media = más típica).
     Si hay menos de n_max curvas, devuelve todas las encontradas.
 
-    IMPORTANTE: Primero filtra outliers usando IQR antes de calcular tipicidad.
+    IMPORTANTE:
+    - Primero filtra outliers usando IQR antes de calcular tipicidad
+    - NO normaliza por L2, por lo que considera tanto forma como magnitud/nivel
+    - Curvas similares en patrón Y escala serán seleccionadas como típicas
     """
     if not curvas:
         return []
@@ -124,16 +128,15 @@ def _seleccionar_curvas_tipicas(
         return curvas_filtradas
 
     X, keys = _curvas_a_matriz(curvas_filtradas)
-    # Normalizar por L2 para que forma y nivel relativo cuenten
-    norms = np.linalg.norm(X, axis=1, keepdims=True)
-    norms[norms == 0] = 1.0
-    Xn = X / norms
+
+    # NO normalizar - usar valores originales para considerar forma Y nivel
+    # Esto permite que curvas con magnitudes similares se agrupen juntas
 
     # Distancia euclidiana entre todas las filas (menor distancia media = más típica/central)
-    n = len(Xn)
+    n = len(X)
     mean_dists = np.zeros(n)
     for i in range(n):
-        d = np.array([np.linalg.norm(Xn[i] - Xn[j]) for j in range(n) if j != i])
+        d = np.array([np.linalg.norm(X[i] - X[j]) for j in range(n) if j != i])
         mean_dists[i] = float(d.mean()) if len(d) else 0.0
 
     # Más típicas = menor distancia media (más centrales)

@@ -98,9 +98,13 @@ POST /factores/calculos/curvas-tipicas
 ### Algoritmo de Selección
 
 1. Obtiene todas las curvas clusterizadas del rango/MC/tipo_día
-2. Normaliza por L2 (compara **forma**, no nivel absoluto)
-3. Calcula centralidad (menor distancia media = más típica)
-4. Devuelve hasta `n_max` más típicas
+2. Filtra outliers usando método IQR (Q1-1.5×IQR, Q3+1.5×IQR)
+3. Calcula distancia euclidiana directa (considera **forma Y nivel**)
+4. Mide centralidad (menor distancia media = más típica/central)
+5. Devuelve hasta `n_max` más típicas
+
+**Nota:** El algoritmo NO normaliza por L2, por lo que curvas con magnitudes similares
+y patrones similares serán seleccionadas juntas. Esto permite agrupar por demanda similar.
 
 ---
 
@@ -338,7 +342,7 @@ console.log('FDP:', resultado.fdp);
 
 ## Notas Importantes
 
-1. **Curvas típicas por forma:** El algoritmo normaliza por L2, comparando solo la forma del patrón horario, no el nivel absoluto.
+1. **Curvas típicas por forma Y nivel:** El algoritmo considera tanto el patrón horario como la magnitud de la demanda. Curvas con formas y niveles similares serán agrupadas juntas.
 2. **n_max es un máximo:** Si pides 8 curvas pero solo hay 4 típicas, devuelve 4.
 3. **FDP requiere A y R:** Para calcular FDP necesitas medidas tanto de tipo Activa como Reactiva.
 4. **Suma FDA = 1.0:** El algoritmo FDA garantiza que cada período sume exactamente 1.0.
