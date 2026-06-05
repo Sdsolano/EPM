@@ -150,16 +150,17 @@ def _calcular_fda_normalizado(df: pd.DataFrame) -> pd.DataFrame:
     Aplica algoritmo FDA: normaliza valores para que cada período sume exactamente 1.0.
 
     Algoritmo:
-    1. Normalizar: dividir cada valor por la suma de su período (para que sume 1.0)
-    2. Calcular el ajuste fino necesario (diferencia con 1.0 por errores de redondeo)
-    3. Aplicar ajuste al valor máximo de cada período
-    4. Resultado: cada período suma exactamente 1.0
+    1. Normalizar: dividir cada valor por la suma de su período
+    2. Redondear a PRECISION_DECIMALES
+    3. Calcular diferencia real con 1.0 (causada por redondeo)
+    4. Aplicar ajuste al valor máximo de cada período para que sume exactamente 1.0
+    5. Resultado: cada período suma exactamente 1.0
 
     Args:
         df: DataFrame con periodos p1-p24 (valores absolutos de potencia)
 
     Returns:
-        DataFrame con factores FDA normalizados (cada período suma 1.0)
+        DataFrame con factores FDA normalizados (cada período suma EXACTAMENTE 1.0)
     """
     # Paso 1: Normalizar dividiendo por la suma de cada período
     sumas_por_periodo = df[PERIODOS_COLUMNAS].sum()
@@ -170,25 +171,27 @@ def _calcular_fda_normalizado(df: pd.DataFrame) -> pd.DataFrame:
     # Normalizar: cada valor / suma del período
     df_normalizado = df[PERIODOS_COLUMNAS].div(sumas_por_periodo)
 
-    # Paso 2: Calcular ajuste fino (por errores de redondeo después de normalizar)
-    sumas_normalizadas = df_normalizado.sum()
-    ajustes_por_periodo = 1.0 - sumas_normalizadas
+    # Paso 2: REDONDEAR PRIMERO (esto puede causar que la suma no sea exactamente 1.0)
+    df_redondeado = df_normalizado.round(PRECISION_DECIMALES)
 
-    # Paso 3: Encontrar máximos por período (en valores normalizados)
-    maximos_por_periodo = df_normalizado.max()
-    maximos_ajustados = maximos_por_periodo + ajustes_por_periodo
+    # Paso 3: Calcular la diferencia REAL después del redondeo
+    sumas_redondeadas = df_redondeado.sum()
+    ajustes_necesarios = 1.0 - sumas_redondeadas
 
-    # Paso 4: Aplicar ajuste solo al máximo de cada período
-    def aplicar_ajuste_row(row):
-        return pd.Series([
-            round(maximos_ajustados[col], PRECISION_DECIMALES) if abs(row[col] - maximos_por_periodo[col]) < 1e-9
-            else round(row[col], PRECISION_DECIMALES)
-            for col in PERIODOS_COLUMNAS
-        ], index=PERIODOS_COLUMNAS)
+    # Paso 4: Identificar el índice del máximo en cada columna
+    idx_maximos = df_redondeado.idxmax()
 
-    df_ajustado = df_normalizado.apply(aplicar_ajuste_row, axis=1)
+    # Paso 5: Aplicar el ajuste al máximo de cada período
+    df_ajustado = df_redondeado.copy()
+    for col in PERIODOS_COLUMNAS:
+        if abs(ajustes_necesarios[col]) > 1e-10:  # Solo ajustar si hay diferencia significativa
+            idx_max = idx_maximos[col]
+            df_ajustado.loc[idx_max, col] = round(
+                df_ajustado.loc[idx_max, col] + ajustes_necesarios[col],
+                PRECISION_DECIMALES
+            )
 
-    return df_ajustado.round(PRECISION_DECIMALES)
+    return df_ajustado
 
 
 # =============================================================================
