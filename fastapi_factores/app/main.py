@@ -7,6 +7,7 @@ from app.routes.medidas import router as medidas_router
 from app.routes.rangos import router as rangos_router
 from app.routes.utilidades import router as utilidades_router
 from app.routes.calculos import router as calculos_router
+from app.circuitos.routes import router as circuitos_router
 
 load_dotenv()
 
@@ -18,6 +19,7 @@ app.include_router(medidas_router)
 app.include_router(rangos_router)
 app.include_router(utilidades_router)
 app.include_router(calculos_router)
+app.include_router(circuitos_router)
 
 
 @app.get("/")
