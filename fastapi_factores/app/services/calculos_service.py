@@ -221,10 +221,12 @@ def _calcular_fdp_vectorizado(df_a: pd.DataFrame, df_r: pd.DataFrame) -> pd.Data
     on_cols = ['barra', 'fecha'] if 'barra' in df_a.columns and 'barra' in df_r.columns else ['fecha']
     cols_a = on_cols + PERIODOS_COLUMNAS
     cols_r = on_cols + PERIODOS_COLUMNAS
+    # LEFT JOIN: barras sin datos reactivos quedan con NaN en columnas _r → FDP = 1.0
     df_merged = pd.merge(
         df_a[cols_a],
         df_r[cols_r],
         on=on_cols,
+        how='left',
         suffixes=('_a', '_r')
     )
 
@@ -235,7 +237,7 @@ def _calcular_fdp_vectorizado(df_a: pd.DataFrame, df_r: pd.DataFrame) -> pd.Data
         col_fdp = f'fdp_p{i}'
 
         P = df_merged[col_a].values
-        Q = df_merged[col_r].values
+        Q = df_merged[col_r].fillna(0).values  # NaN (sin reactiva) → Q=0 → FDP=1.0
 
         # Vectorizado con numpy.where para manejar división por cero
         df_merged[col_fdp] = np.where(
