@@ -2422,19 +2422,22 @@ async def analyze_deviation_with_openai(
 - Magnitud del error: {abs(mape):.2f}%
 - Tipo de desvío: {tipo_desvio}
 
-**Tarea:**
-Busca en internet eventos, acontecimientos o situaciones que ocurrieron en {ucp}, Colombia en la fecha {fecha} o días cercanos que pudieron causar este desvío en la demanda de energía eléctrica.
+**Tarea principal — Demanda No Atendida XM:**
+Primero, busca en el portal de XM (https://ido.xm.com.co/Views/Ido/ido) los registros de "Demanda No Atendida Versión" para la fecha {fecha}. También puedes buscar en https://ido.xm.com.co/Views/Eventos/demanda.aspx?q=noprogramada y https://ido.xm.com.co/Views/Eventos/demanda.aspx?q=programada para esa fecha. Si encuentras eventos de demanda no atendida (DNA), reporta: área afectada, MWh no atendidos, subestación y descripción del evento.
+
+**Tarea secundaria — Contexto general:**
+Busca en internet eventos, acontecimientos o situaciones que ocurrieron en {ucp}, Colombia en la fecha {fecha} o días cercanos que pudieron causar este desvío.
 
 Considera:
 - Eventos climáticos (tormentas, olas de calor/frío, lluvias intensas)
 - Eventos públicos masivos (conciertos, partidos de fútbol, festivales)
 - Días festivos locales o nacionales
-- Apagones o fallas en el suministro eléctrico
+- Apagones o fallas en el suministro eléctrico registrados en XM
 - Eventos políticos o sociales (paros, manifestaciones)
 - Cambios en actividad industrial o comercial
-- Cualquier otro acontecimiento relevante
 
-Proporciona un análisis conciso (máximo 2-3 oraciones) explicando las causas más probables encontradas."""
+**Formato de respuesta (máximo 3-4 oraciones):**
+Indica primero si se encontraron eventos de Demanda No Atendida en XM IDO para esa fecha (con datos concretos si los hay), y luego las causas más probables del desvío según el contexto general encontrado."""
 
         logger.info(f"🤖 Consultando OpenAI para análisis de desvío en {fecha}...")
 
