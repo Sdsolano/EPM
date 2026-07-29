@@ -18,6 +18,7 @@ from typing import Optional, List, Dict, Any, Tuple
 from pathlib import Path
 from datetime import datetime, timedelta
 import logging
+import re
 import traceback
 import pandas as pd
 from fastapi.concurrency import run_in_threadpool
@@ -2384,6 +2385,41 @@ async def get_events(request: EventsRequest):
         events = {}
 
 
+# Frases con las que el modelo narra su proceso de búsqueda; el texto va directo a la UI del cliente
+_META_SEARCH_PATTERN = re.compile(
+    "|".join([
+        r"no (?:pude|puedo|logr[éo])\s+(?:encontrar|acceder|hallar|consultar)",
+        r"no (?:se )?(?:encontr|hall)\w*\s+(?:registros?|informaci[oó]n|evidencia|entradas?|datos)",
+        r"no (?:hay|existen)\s+(?:registros?|informaci[oó]n|datos|evidencia)\s+(?:p[uú]blic\w+|disponibles?|consultables?)",
+        r"no tengo acceso",
+        r"visor\s+[\w\s]*no\s+(?:entreg|permit|arroj|devolv)",
+        r"vistas\s+p[uú]blicas",
+        r"fuentes?\s+(?:que\s+)?(?:consultad\w+|revisad\w+)",
+        r"seg[uú]n\s+(?:las|los)\s+\w+\s+que\s+(?:revis|consult)\w+",
+    ]),
+    re.IGNORECASE
+)
+_CITATION_PATTERN = re.compile(r"\s*\(\s*(?:https?://)?(?:[\w\-]+\.)+[a-z]{2,}(?:\.[a-z]{2})?\s*\)")
+
+
+def sanitize_analysis_text(text: str) -> str:
+    """
+    Deja el análisis listo para mostrar al cliente: elimina citas de dominios y
+    las oraciones donde el modelo narra qué no encontró o qué fuentes revisó.
+    """
+    if not text:
+        return text
+
+    cleaned = _CITATION_PATTERN.sub("", text)
+    sentences = re.split(r"(?<=[.!?])\s+", cleaned)
+    kept = [s.strip() for s in sentences if s.strip() and not _META_SEARCH_PATTERN.search(s)]
+
+    if not kept:
+        return "No se identificaron eventos documentados que expliquen el desvío en la fecha analizada."
+
+    return " ".join(kept)
+
+
 async def analyze_deviation_with_openai(
     ucp: str,
     fecha: str,
@@ -2414,7 +2450,7 @@ async def analyze_deviation_with_openai(
         else:
             tipo_desvio = "sobreestimación (demanda real menor a la predicha)"
 
-        prompt = f"""Eres un analista energético experto. Necesito que investigues en internet las posibles causas de un desvío en la predicción de demanda energética.
+        prompt = f"""Eres un analista energético experto. Investiga las causas de un desvío en la predicción de demanda energética y redacta el hallazgo final tal como lo leerá el cliente en un informe.
 
 **Contexto:**
 - UCP: {ucp}, Colombia
@@ -2422,22 +2458,18 @@ async def analyze_deviation_with_openai(
 - Magnitud del error: {abs(mape):.2f}%
 - Tipo de desvío: {tipo_desvio}
 
-**Tarea principal — Demanda No Atendida XM:**
-Primero, busca en el portal de XM (https://ido.xm.com.co/Views/Ido/ido) los registros de "Demanda No Atendida Versión" para la fecha {fecha}. También puedes buscar en https://ido.xm.com.co/Views/Eventos/demanda.aspx?q=noprogramada y https://ido.xm.com.co/Views/Eventos/demanda.aspx?q=programada para esa fecha. Si encuentras eventos de demanda no atendida (DNA), reporta: área afectada, MWh no atendidos, subestación y descripción del evento.
+**Orden de búsqueda:**
+1. Prioridad: Demanda No Atendida (DNA) en el portal IDO de XM para la fecha {fecha} (https://ido.xm.com.co/Views/Ido/ido, https://ido.xm.com.co/Views/Eventos/demanda.aspx?q=noprogramada y https://ido.xm.com.co/Views/Eventos/demanda.aspx?q=programada). Si hay eventos de DNA, repórtalos con área afectada, MWh no atendidos, subestación y descripción.
+2. Fallback: si no hay información de DNA para esa fecha, busca en internet eventos ocurridos en {ucp}, Colombia el {fecha} o en días cercanos: clima (olas de calor o frío, tormentas, lluvias intensas), eventos masivos (conciertos, partidos, festivales), festivos locales o nacionales, apagones o fallas de suministro, paros o manifestaciones, y cambios en la actividad industrial o comercial.
 
-**Tarea secundaria — Contexto general:**
-Busca en internet eventos, acontecimientos o situaciones que ocurrieron en {ucp}, Colombia en la fecha {fecha} o días cercanos que pudieron causar este desvío.
+**Reglas de redacción (obligatorias):**
+- Entrega solo el hallazgo, en tono profesional y afirmativo.
+- No describas el proceso de búsqueda ni las fuentes consultadas. Está prohibido escribir frases como "no pude encontrar", "no hay registros públicos", "el visor no entregó", "no tengo acceso" o "según las vistas que revisé".
+- Si no hay evidencia de DNA, explica el desvío directamente con lo encontrado en internet, sin mencionar la ausencia de DNA.
+- Si tampoco hay eventos documentados, expón las causas más probables según las condiciones típicas de la zona y la fecha (clima, calendario, estacionalidad), redactadas como hipótesis técnicas afirmativas.
+- No incluyas URLs, nombres de dominio ni citas entre paréntesis.
 
-Considera:
-- Eventos climáticos (tormentas, olas de calor/frío, lluvias intensas)
-- Eventos públicos masivos (conciertos, partidos de fútbol, festivales)
-- Días festivos locales o nacionales
-- Apagones o fallas en el suministro eléctrico registrados en XM
-- Eventos políticos o sociales (paros, manifestaciones)
-- Cambios en actividad industrial o comercial
-
-**Formato de respuesta (máximo 3-4 oraciones):**
-Indica primero si se encontraron eventos de Demanda No Atendida en XM IDO para esa fecha (con datos concretos si los hay), y luego las causas más probables del desvío según el contexto general encontrado."""
+**Formato:** 3 a 4 oraciones en prosa continua, sin títulos ni listas."""
 
         logger.info(f"🤖 Consultando OpenAI para análisis de desvío en {fecha}...")
 
@@ -2458,7 +2490,7 @@ Indica primero si se encontraron eventos de Demanda No Atendida en XM IDO para e
             )
         )
 
-        analysis = response.output_text.strip()
+        analysis = sanitize_analysis_text(response.output_text.strip())
         logger.info(f"✓ Análisis recibido para {fecha}: {len(analysis)} caracteres")
 
         return analysis
@@ -2512,7 +2544,9 @@ MAPEs: {mapes_str}
 Análisis individuales:
 {chr(10).join([f"- {r.fecha}: {r.analisis}" for r in resultados])}
 
-Resume los patrones o causas comunes identificadas."""
+Resume los patrones o causas comunes identificadas.
+
+Reglas de redacción: el texto va directo a un informe para el cliente, así que usa tono profesional y afirmativo, no describas el proceso de búsqueda ni las fuentes, no menciones información faltante o no encontrada, y no incluyas URLs ni citas entre paréntesis."""
 
             try:
                 api_key = os.getenv('API_KEY')
@@ -2524,7 +2558,7 @@ Resume los patrones o causas comunes identificadas."""
                             input=[{"role": "user", "content": resumen_prompt}]
                         )
                     )
-                    resumen_general = response.output_text.strip()
+                    resumen_general = sanitize_analysis_text(response.output_text.strip())
                 else:
                     resumen_general = "Resumen no disponible (API_KEY no configurada)"
             except Exception as e:
@@ -3004,58 +3038,45 @@ def calculate_base_curves(
                         logger.warning(f"  {fecha_str} (festivo): usando perfil plano (sin datos)")
         
         # MÉTODO 2: Si es día normal, usar cluster + total promedio histórico
-        # ESTRATEGIA: Usar días del mismo día de la semana del mes más reciente disponible
-        # Esto captura mejor el comportamiento actual de la demanda
+        # ESTRATEGIA: Priorizar datos del mismo mes (captura cambios de nivel recientes),
+        # con fallback al mes anterior y luego a ventana de 2 meses.
         else:
             # Obtener el día de la semana (0=lunes, 6=domingo)
             target_dow = fecha.dayofweek
-            
-            # Buscar días del mismo día de la semana en el mes más reciente disponible
-            # IMPORTANTE: Excluir días festivos para no sesgar el promedio
-            # Intentar primero el mes anterior completo
-            month_ago = fecha - pd.DateOffset(months=1)
-            historical_recent = df_historico[
-                (df_historico['fecha'].dt.year == month_ago.year) &
-                (df_historico['fecha'].dt.month == month_ago.month) &
+
+            def _filtrar_festivos(df_in):
+                if len(df_in) == 0:
+                    return df_in
+                return df_in[
+                    ~df_in['fecha'].apply(lambda x: calendar_classifier.is_holiday(pd.to_datetime(x)))
+                ].copy()
+
+            # Prioridad 1: mismo mes actual, mismo DOW, antes de la fecha
+            historical_recent = _filtrar_festivos(df_historico[
+                (df_historico['fecha'].dt.year == fecha.year) &
+                (df_historico['fecha'].dt.month == fecha.month) &
                 (df_historico['fecha'].dt.dayofweek == target_dow) &
                 (df_historico['fecha'] < fecha)
-            ].copy()
-            
-            # Filtrar días festivos
-            if len(historical_recent) > 0:
-                historical_recent = historical_recent[
-                    ~historical_recent['fecha'].apply(lambda x: calendar_classifier.is_holiday(pd.to_datetime(x)))
-                ].copy()
-            
+            ].copy())
+
             if len(historical_recent) == 0:
-                # Si no hay datos del mes anterior, buscar en el mes actual (si hay datos anteriores a la fecha)
-                historical_recent = df_historico[
-                    (df_historico['fecha'].dt.year == fecha.year) &
-                    (df_historico['fecha'].dt.month == fecha.month) &
+                # Prioridad 2: mes anterior, mismo DOW
+                month_ago = fecha - pd.DateOffset(months=1)
+                historical_recent = _filtrar_festivos(df_historico[
+                    (df_historico['fecha'].dt.year == month_ago.year) &
+                    (df_historico['fecha'].dt.month == month_ago.month) &
                     (df_historico['fecha'].dt.dayofweek == target_dow) &
                     (df_historico['fecha'] < fecha)
-                ].copy()
-                
-                # Filtrar días festivos
-                if len(historical_recent) > 0:
-                    historical_recent = historical_recent[
-                        ~historical_recent['fecha'].apply(lambda x: calendar_classifier.is_holiday(pd.to_datetime(x)))
-                    ].copy()
-            
+                ].copy())
+
             if len(historical_recent) == 0:
-                # Si aún no hay datos, buscar en los últimos 2 meses (cualquier mes)
+                # Prioridad 3: últimos 2 meses, mismo DOW
                 two_months_ago = fecha - pd.DateOffset(months=2)
-                historical_recent = df_historico[
+                historical_recent = _filtrar_festivos(df_historico[
                     (df_historico['fecha'] >= two_months_ago) &
                     (df_historico['fecha'] < fecha) &
                     (df_historico['fecha'].dt.dayofweek == target_dow)
-                ].copy()
-                
-                # Filtrar días festivos
-                if len(historical_recent) > 0:
-                    historical_recent = historical_recent[
-                        ~historical_recent['fecha'].apply(lambda x: calendar_classifier.is_holiday(pd.to_datetime(x)))
-                    ].copy()
+                ].copy())
             
             # Variable para almacenar datos históricos a usar para perfil horario
             historical_for_profile = None
