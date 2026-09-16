@@ -32,7 +32,12 @@ from src.prediction.forecaster import ForecastPipeline
 from src.prediction.hourly import HourlyDisaggregationEngine
 from src.prediction.hourly.adjustment_validator import HourlyAdjustmentValidator
 from src.pipeline.update_csv import full_update_csv
+from src.prediction.xm_ido_client import XMIdoClient, formatear_eventos_dna
 from fastapi.concurrency import run_in_threadpool
+
+# Cliente del portal IDO de XM (DNA) — instancia única a nivel de módulo
+# para reutilizar el token de Azure B2C (dura 1h) entre requests.
+_xm_ido_client = XMIdoClient()
 
 # Cargar variables de entorno
 load_dotenv()
@@ -2450,7 +2455,25 @@ async def analyze_deviation_with_openai(
         else:
             tipo_desvio = "sobreestimación (demanda real menor a la predicha)"
 
-        prompt = f"""Eres un analista energético experto. Investiga las causas de un desvío en la predicción de demanda energética y redacta el hallazgo final tal como lo leerá el cliente en un informe.
+        # Datos REALES de DNA desde el portal IDO de XM (no depende de que el
+        # modelo logre "navegar" ido.xm.com.co con su propio web_search, que
+        # es poco confiable — de ahí sanitize_analysis_text/_META_SEARCH_PATTERN
+        # más abajo, pensado originalmente para limpiar cuando esa búsqueda fallaba).
+        try:
+            eventos_dna = await run_in_threadpool(
+                _xm_ido_client.get_eventos_dna_para_fecha, fecha
+            )
+        except Exception as ex:
+            logger.warning(f"⚠ No se pudo consultar XM IDO para {fecha}: {ex}")
+            eventos_dna = []
+
+        dna_texto = formatear_eventos_dna(eventos_dna)
+        hay_dna = bool(eventos_dna)
+        logger.info(
+            f"[XM_IDO] {len(eventos_dna)} evento(s) de DNA encontrados para {fecha}"
+        )
+
+        prompt = f"""Eres un analista energético experto. Redacta el hallazgo final sobre las causas de un desvío en la predicción de demanda energética, tal como lo leerá el cliente en un informe.
 
 **Contexto:**
 - UCP: {ucp}, Colombia
@@ -2458,20 +2481,26 @@ async def analyze_deviation_with_openai(
 - Magnitud del error: {abs(mape):.2f}%
 - Tipo de desvío: {tipo_desvio}
 
-**Orden de búsqueda:**
-1. Prioridad: Demanda No Atendida (DNA) en el portal IDO de XM para la fecha {fecha} (https://ido.xm.com.co/Views/Ido/ido, https://ido.xm.com.co/Views/Eventos/demanda.aspx?q=noprogramada y https://ido.xm.com.co/Views/Eventos/demanda.aspx?q=programada). Si hay eventos de DNA, repórtalos con área afectada, MWh no atendidos, subestación y descripción.
-2. Fallback: si no hay información de DNA para esa fecha, busca en internet eventos ocurridos en {ucp}, Colombia el {fecha} o en días cercanos: clima (olas de calor o frío, tormentas, lluvias intensas), eventos masivos (conciertos, partidos, festivales), festivos locales o nacionales, apagones o fallas de suministro, paros o manifestaciones, y cambios en la actividad industrial o comercial.
+**Datos reales de Demanda No Atendida (DNA), portal IDO de XM, para {fecha}:**
+{dna_texto}
+
+**Instrucciones:**
+{"- Ya tienes arriba los eventos de DNA reales para esta fecha (verificados directamente contra XM IDO) — básate en ellos como causa principal del desvío. No busques ni menciones el portal IDO por tu cuenta, ya se consultó." if hay_dna else "- No hubo DNA reportada en XM IDO para esta fecha. Busca en internet eventos ocurridos en " + ucp + ", Colombia el " + fecha + " o en días cercanos: clima (olas de calor o frío, tormentas, lluvias intensas), eventos masivos (conciertos, partidos, festivales), festivos locales o nacionales, apagones o fallas de suministro, paros o manifestaciones, y cambios en la actividad industrial o comercial."}
 
 **Reglas de redacción (obligatorias):**
 - Entrega solo el hallazgo, en tono profesional y afirmativo.
 - No describas el proceso de búsqueda ni las fuentes consultadas. Está prohibido escribir frases como "no pude encontrar", "no hay registros públicos", "el visor no entregó", "no tengo acceso" o "según las vistas que revisé".
-- Si no hay evidencia de DNA, explica el desvío directamente con lo encontrado en internet, sin mencionar la ausencia de DNA.
-- Si tampoco hay eventos documentados, expón las causas más probables según las condiciones típicas de la zona y la fecha (clima, calendario, estacionalidad), redactadas como hipótesis técnicas afirmativas.
+- Si no hay evidencia de DNA ni de eventos documentados en internet, expón las causas más probables según las condiciones típicas de la zona y la fecha (clima, calendario, estacionalidad), redactadas como hipótesis técnicas afirmativas.
 - No incluyas URLs, nombres de dominio ni citas entre paréntesis.
 
 **Formato:** 3 a 4 oraciones en prosa continua, sin títulos ni listas."""
 
         logger.info(f"🤖 Consultando OpenAI para análisis de desvío en {fecha}...")
+
+        # Sólo se le da la herramienta de web_search cuando de verdad la
+        # necesita (fallback sin DNA) — si ya hay DNA real, no tiene nada
+        # que buscar y solo agregaría ruido/latencia.
+        tools = [] if hay_dna else [{"type": "web_search"}]
 
         response = await run_in_threadpool(
             lambda: client.responses.create(
@@ -2482,11 +2511,7 @@ async def analyze_deviation_with_openai(
                         "content": prompt
                     }
                 ],
-                tools=[
-                    {
-                        "type": "web_search"
-                    }
-                ]
+                tools=tools
             )
         )
 
@@ -2581,6 +2606,54 @@ Reglas de redacción: el texto va directo a un informe para el cliente, así que
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error analizando desvíos: {str(e)}"
+        )
+
+
+class XmIdoEvento(BaseModel):
+    tipo: str
+    area: str
+    descripcion: str
+    energia: float
+    fechaini: str
+    fechafin: str
+    municipio: str = ""
+    subestacion: str = ""
+
+
+class XmIdoEventosResponse(BaseModel):
+    fecha_inicio: str
+    fecha_fin: str
+    total: int
+    eventos: List[XmIdoEvento]
+
+
+@app.get('/xm-ido/eventos-dna', response_model=XmIdoEventosResponse, status_code=status.HTTP_200_OK)
+async def xm_ido_eventos_dna(fecha_inicio: str, fecha_fin: str):
+    """
+    Trae eventos de Demanda No Atendida (programada + no programada) del
+    portal IDO de XM (https://ido.xm.com.co) para un rango de fechas —
+    fuente oficial en vivo (ver XMIdoClient), sin depender de OpenAI.
+
+    fecha_inicio / fecha_fin en formato YYYY-MM-DD.
+    """
+    try:
+        eventos = await run_in_threadpool(
+            lambda: (
+                _xm_ido_client.get_demanda_no_atendida(fecha_inicio, fecha_fin)
+                + _xm_ido_client.get_demanda_programada(fecha_inicio, fecha_fin)
+            )
+        )
+        return XmIdoEventosResponse(
+            fecha_inicio=fecha_inicio,
+            fecha_fin=fecha_fin,
+            total=len(eventos),
+            eventos=eventos,
+        )
+    except Exception as e:
+        logger.error(f"Error consultando XM IDO ({fecha_inicio} -> {fecha_fin}): {e}")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"No se pudo consultar el portal IDO de XM: {str(e)}"
         )
 
 
