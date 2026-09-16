@@ -2,7 +2,6 @@
 Streamlit para visualizar Curvas Típicas
 """
 
-import os
 import streamlit as st
 import requests
 import pandas as pd
@@ -11,7 +10,7 @@ from datetime import datetime
 
 st.set_page_config(page_title="Curvas Típicas", page_icon="📈", layout="wide")
 
-API_BASE_URL = os.getenv("API_BASE_URL", "https://pronosticos.jmdatalabs.co")
+API_BASE_URL = "http://localhost:8000"
 
 st.title("📈 Visualización de Curvas Típicas")
 
@@ -237,7 +236,7 @@ if ejecutar:
                 st.error(f"Error {response.status_code}: {response.text}")
 
         except requests.exceptions.ConnectionError:
-            st.error(f"No se pudo conectar a la API en {API_BASE_URL}")
+            st.error("No se pudo conectar a la API. Asegúrate de que FastAPI esté corriendo en http://localhost:8000")
         except Exception as e:
             st.error(f"Error: {str(e)}")
 
