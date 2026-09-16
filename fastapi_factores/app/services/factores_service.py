@@ -74,7 +74,7 @@ def consultar_barra_factor_nombre(barra: str, tipo: str, codigo_rpm: List[str], 
     in_clause, params = build_in_clause(codigo_rpm, "codigo_rpm")
     params.update({"barra": barra, "tipo": tipo})
     sql = (
-        "SELECT factor, codigo_rpm, flujo FROM barras b "
+        "SELECT factor, codigo_rpm, flujo, dividir_por_1000, valor_absoluto FROM barras b "
         "INNER JOIN agrupaciones a ON b.id=a.barra_id "
         f"WHERE barra = %(barra)s AND codigo_rpm IN {in_clause} "
         "AND substring(flujo from 1 for 1) = %(tipo)s AND b.estado='1' AND a.estado='1'"

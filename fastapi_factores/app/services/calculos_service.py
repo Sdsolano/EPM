@@ -28,6 +28,27 @@ TIPOS_DIA = ["ORDINARIO", "SABADO", "FESTIVO"]
 # FUNCIONES AUXILIARES - CLUSTERING
 # =============================================================================
 
+def aplicar_config_agrupacion(
+    valor_crudo: float,
+    factor: float,
+    dividir_por_1000: bool,
+    valor_absoluto: bool,
+) -> float:
+    """
+    Aplica la configuración de una agrupación sobre un valor crudo de
+    medida, en el orden dividir_por_1000 -> factor -> valor_absoluto.
+    `medidas` guarda siempre el valor tal cual lo manda la API — este
+    ajuste se hace al leer/usar el dato, no al insertarlo.
+    """
+    valor = float(valor_crudo)
+    if dividir_por_1000:
+        valor = valor / 1000
+    valor = valor * float(factor)
+    if valor_absoluto:
+        valor = abs(valor)
+    return valor
+
+
 def _agrupar_medidas_clusterizadas(df: pd.DataFrame) -> pd.DataFrame:
     """
     Agrupa medidas por barra+fecha y suma periodos.
@@ -335,22 +356,33 @@ def aplicar_clustering(
     # Crear DataFrame y aplicar factores
     df = pd.DataFrame(medidas)
 
-    # Crear diccionario de factores para lookup
-    factor_map = {(f['codigo_rpm'], f['flujo']): float(f['factor']) for f in factores}
+    # Crear diccionario de config (factor, dividir_por_1000, valor_absoluto)
+    # de cada agrupación para lookup
+    config_map = {
+        (f['codigo_rpm'], f['flujo']): {
+            'factor': float(f['factor']),
+            'dividir_por_1000': bool(f['dividir_por_1000']),
+            'valor_absoluto': bool(f['valor_absoluto']),
+        }
+        for f in factores
+    }
+    config_default = {'factor': 1.0, 'dividir_por_1000': False, 'valor_absoluto': False}
 
-    # Multiplicar periodos por factores
+    # Aplicar dividir_por_1000 -> factor -> valor_absoluto por periodo
     # Las columnas de la consulta son: mep1, mep2, ..., mep24
     for i in range(1, 25):
         col_medida = f'mep{i}'
         col_resultado = f'p{i}'
         if col_medida in df.columns:
-            df[col_resultado] = df.apply(
-                lambda row: round(
-                    float(row[col_medida]) * factor_map.get((row['mecodigo_rpm'], row['meflujo']), 1.0),
+            def _aplicar(row, col_medida=col_medida):
+                cfg = config_map.get((row['mecodigo_rpm'], row['meflujo']), config_default)
+                return round(
+                    aplicar_config_agrupacion(
+                        row[col_medida], cfg['factor'], cfg['dividir_por_1000'], cfg['valor_absoluto']
+                    ),
                     PRECISION_DECIMALES
-                ),
-                axis=1
-            )
+                )
+            df[col_resultado] = df.apply(_aplicar, axis=1)
 
     # Renombrar columnas para uniformidad
     df = df.rename(columns={'babarra': 'barra', 'mefecha': 'fecha'})
