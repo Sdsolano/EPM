@@ -74,7 +74,7 @@ def consultar_barra_factor_nombre(barra: str, tipo: str, codigo_rpm: List[str], 
     in_clause, params = build_in_clause(codigo_rpm, "codigo_rpm")
     params.update({"barra": barra, "tipo": tipo})
     sql = (
-        "SELECT factor, codigo_rpm, flujo FROM barras b "
+        "SELECT factor, codigo_rpm, flujo, dividir_por_1000, valor_absoluto FROM barras b "
         "INNER JOIN agrupaciones a ON b.id=a.barra_id "
         f"WHERE barra = %(barra)s AND codigo_rpm IN {in_clause} "
         "AND substring(flujo from 1 for 1) = %(tipo)s AND b.estado='1' AND a.estado='1'"
@@ -250,6 +250,43 @@ def consultar_medidas_completo(fecha_inicial: str, fecha_final: str, mc: str, e_
 
     sql += "ORDER BY ME.fecha;"
     return fetch_all(sql, params)
+
+
+def consultar_actualizaciondatos_completo(
+    fecha_inicial: str,
+    fecha_final: str,
+    mc: str,
+    tipo_dia: str,
+    dsn: Optional[str] = None,
+):
+    """Demanda TOTAL diaria de un mercado (ya sumada, tabla actualizaciondatos),
+    clasificada por tipo_dia — mismo criterio ORDINARIO/SABADO/FESTIVO que
+    consultar_medidas_completo, pero a nivel de mercado en vez de por barra."""
+    sql = (
+        "SELECT TO_CHAR(AD.fecha, 'YYYY-MM-DD') AS fecha, "
+        "AD.p1, AD.p2, AD.p3, AD.p4, AD.p5, AD.p6, AD.p7, AD.p8, AD.p9, AD.p10, "
+        "AD.p11, AD.p12, AD.p13, AD.p14, AD.p15, AD.p16, AD.p17, AD.p18, AD.p19, "
+        "AD.p20, AD.p21, AD.p22, AD.p23, AD.p24 "
+        "FROM actualizaciondatos AD "
+        "WHERE AD.fecha >= %(fecha_inicial)s AND AD.fecha <= %(fecha_final)s AND LOWER(AD.ucp) = LOWER(%(mc)s) "
+    )
+    params = {"fecha_inicial": fecha_inicial, "fecha_final": fecha_final, "mc": mc}
+
+    if tipo_dia == "ORDINARIO":
+        sql += (
+            "AND date_part('dow', AD.fecha) in (1, 2, 3, 4, 5) "
+            "AND AD.fecha not in (SELECT fecha FROM festivos WHERE ucp=%(mc)s AND fecha >= %(fecha_inicial)s AND fecha <= %(fecha_final)s) "
+        )
+    elif tipo_dia == "SABADO":
+        sql += "AND date_part('dow', AD.fecha) in (6) "
+    elif tipo_dia == "FESTIVO":
+        sql += (
+            "AND (AD.fecha in (SELECT fecha FROM festivos WHERE ucp=%(mc)s AND fecha >= %(fecha_inicial)s AND fecha <= %(fecha_final)s) "
+            "OR date_part('dow', AD.fecha) in (0)) "
+        )
+
+    sql += "ORDER BY AD.fecha;"
+    return fetch_all(sql, params, dsn=dsn)
 
 
 def consultar_medidas_calcular_completo(
