@@ -452,6 +452,39 @@ def obtener_curvas_tipicas(
     return _seleccionar_curvas_tipicas(curvas_todas, n_max)
 
 
+def obtener_curvas_tipicas_ucp(
+    fecha_inicial: str,
+    fecha_final: str,
+    mc: str,
+    tipo_dia: str,
+    n_max: int,
+    dsn: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Igual que obtener_curvas_tipicas (misma selección: filtro IQR +
+    centralidad por distancia euclidiana), pero sobre la demanda TOTAL diaria
+    del mercado (tabla actualizaciondatos) en vez de clusterizar por barra —
+    para comparar contra la curva "Demanda Real (DB)" que se muestra en
+    Actualización de datos, que es justo esa suma total.
+
+    Returns:
+        Lista de {barra, fecha, periodos} con las curvas más típicas —
+        "barra" acá es el propio nombre del mercado, solo para etiquetar.
+    """
+    filas = factores_service.consultar_actualizaciondatos_completo(
+        fecha_inicial, fecha_final, mc, tipo_dia, dsn=dsn
+    )
+    curvas = [
+        {
+            "barra": mc,
+            "fecha": f["fecha"],
+            "periodos": {f"p{i}": float(f.get(f"p{i}") or 0) for i in range(1, 25)},
+        }
+        for f in filas
+    ]
+    return _seleccionar_curvas_tipicas(curvas, n_max)
+
+
 # =============================================================================
 # FUNCIONES PRINCIPALES - FDA
 # =============================================================================

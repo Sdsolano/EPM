@@ -92,6 +92,19 @@ class CurvasTipicasRequest(BaseModel):
     database_url: Optional[str] = Field(None, description="URL de conexión a BD alternativa (ej: postgresql://user:pass@host:5432/db)")
 
 
+class CurvasTipicasUcpRequest(BaseModel):
+    """Request para obtener las N curvas más típicas de la demanda TOTAL de un
+    mercado (agregado en actualizaciondatos), no por barra individual —
+    misma selección (IQR + centralidad) que CurvasTipicasRequest, pero sobre
+    el total ya sumado que se usa en Actualización de datos."""
+    fecha_inicial: str
+    fecha_final: str
+    mc: str
+    tipo_dia: str  # ORDINARIO, SABADO, FESTIVO
+    n_max: int = Field(8, ge=1, le=100, description="Máximo de curvas típicas a devolver")
+    database_url: Optional[str] = Field(None, description="URL de conexión a BD alternativa (ej: postgresql://user:pass@host:5432/db)")
+
+
 class CalculoFDARequest(BaseModel):
     """Request para FDA: se calcula solo sobre las curvas típicas indicadas."""
     fecha_inicial: str

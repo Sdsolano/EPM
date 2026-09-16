@@ -11,6 +11,7 @@ from app.schemas.factores import (
     CalculoFDPRequest,
     ClusteringRequest,
     CurvasTipicasRequest,
+    CurvasTipicasUcpRequest,
 )
 from app.services import calculos_service as service
 
@@ -150,6 +151,44 @@ def obtener_curvas_tipicas(payload: CurvasTipicasRequest):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Error interno en curvas-tipicas: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
+
+@router.post(
+    "/curvas-tipicas-ucp",
+    summary="Curvas más típicas de la demanda TOTAL de un mercado",
+    description="""
+    Igual que /curvas-tipicas (filtro IQR + selección por centralidad), pero
+    sobre la demanda total diaria del mercado (actualizaciondatos) en vez de
+    por barra individual — para comparar contra la curva "Demanda Real (DB)"
+    de Actualización de datos, que es esa misma suma total.
+    """,
+)
+def obtener_curvas_tipicas_ucp(payload: CurvasTipicasUcpRequest):
+    try:
+        from datetime import datetime
+
+        fecha_ini = datetime.strptime(payload.fecha_inicial, "%Y-%m-%d")
+        fecha_fin = datetime.strptime(payload.fecha_final, "%Y-%m-%d")
+        if fecha_fin < fecha_ini:
+            raise ValueError("fecha_final debe ser mayor o igual a fecha_inicial")
+        if payload.tipo_dia not in ("ORDINARIO", "SABADO", "FESTIVO"):
+            raise ValueError("tipo_dia debe ser ORDINARIO, SABADO o FESTIVO")
+
+        data = service.obtener_curvas_tipicas_ucp(
+            payload.fecha_inicial,
+            payload.fecha_final,
+            payload.mc,
+            payload.tipo_dia,
+            payload.n_max,
+            dsn=payload.database_url,
+        )
+        return {"ok": True, "data": data, "n": len(data)}
+    except ValueError as e:
+        logger.error(f"Error de validación en curvas-tipicas-ucp: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error interno en curvas-tipicas-ucp: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
 
