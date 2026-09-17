@@ -42,13 +42,18 @@ class FeatureEngineer:
 
     def create_all_features(self,
                            power_df: pd.DataFrame,
-                           weather_df: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+                           weather_df: Optional[pd.DataFrame] = None,
+                           festivos_reales: Optional[set] = None) -> pd.DataFrame:
         """
         Crea todas las características automáticamente
 
         Args:
             power_df: DataFrame con datos de demanda limpio
             weather_df: DataFrame con datos meteorológicos limpio (opcional)
+            festivos_reales: Set de fechas reales festivas ('YYYY-MM-DD'), para
+                is_festivo. Si no se pasa, is_festivo se deriva de 'TIPO DIA'
+                (LABORAL/FESTIVO), que en la práctica solo distingue fin de
+                semana — ver _create_calendar_features.
 
         Returns:
             DataFrame con todas las características generadas
@@ -61,7 +66,7 @@ class FeatureEngineer:
 
         # 1. Features de calendario
         logger.info("\n1️⃣  Creando features de calendario...")
-        df = self._create_calendar_features(df)
+        df = self._create_calendar_features(df, festivos_reales)
 
         # 2. Features de demanda (lags y rolling statistics)
         logger.info("\n2️⃣  Creando features de demanda histórica...")
@@ -90,7 +95,7 @@ class FeatureEngineer:
 
         return df
 
-    def _create_calendar_features(self, df: pd.DataFrame) -> pd.DataFrame:
+    def _create_calendar_features(self, df: pd.DataFrame, festivos_reales: Optional[set] = None) -> pd.DataFrame:
         """Crea características basadas en calendario"""
         # Asegurar que FECHA es datetime
         df['FECHA'] = pd.to_datetime(df['FECHA'])
@@ -113,8 +118,16 @@ class FeatureEngineer:
         df['is_quarter_start'] = df['FECHA'].dt.is_quarter_start.astype(int)
         df['is_quarter_end'] = df['FECHA'].dt.is_quarter_end.astype(int)
 
-        # Festivo (ya viene en los datos)
-        if 'TIPO DIA' in df.columns:
+        # Festivo real (Colombia, por mercado) — si no se pasa el set de
+        # festivos reales, cae al fallback histórico de leer 'TIPO DIA'
+        # (LABORAL/FESTIVO), que cleaning.py clasifica SOLO por día de la
+        # semana (sábado/domingo = "FESTIVO"): un festivo real que caiga
+        # entre semana nunca se marca ahí. Con festivos_reales, is_festivo
+        # refleja el calendario real (independiente de is_weekend), igual
+        # que ya hace la predicción (ForecastPipeline.is_festivo).
+        if festivos_reales is not None:
+            df['is_festivo'] = df['FECHA'].dt.strftime('%Y-%m-%d').isin(festivos_reales).astype(int)
+        elif 'TIPO DIA' in df.columns:
             df['is_festivo'] = (df['TIPO DIA'] == 'FESTIVO').astype(int)
 
         # Features cíclicas para capturar naturaleza periódica

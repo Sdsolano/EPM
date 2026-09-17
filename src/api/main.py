@@ -1216,7 +1216,8 @@ async def predict_demand(request: ReasonRequest):
                 weather_data_path=weather_data_path,
                 start_date=training_start_date,
                 end_date=request.end_date,
-                output_dir=output_dir
+                output_dir=output_dir,
+                ucp=request.ucp
             )
 
             logger.info(f"✓ Pipeline completado para {request.ucp}: {len(df_with_features)} registros con {len(df_with_features.columns)} columnas")
@@ -1535,7 +1536,8 @@ async def run_predict_flow(request: PredictRequest) -> PredictResponse:
                 weather_data_path=weather_data_path,
                 start_date=training_start_date,
                 end_date=request.end_date,
-                output_dir=output_dir
+                output_dir=output_dir,
+                ucp=request.ucp
             )
 
             logger.info(f"✓ Pipeline completado para {request.ucp}: {len(df_with_features)} registros con {len(df_with_features.columns)} columnas")
@@ -2022,7 +2024,8 @@ async def run_predict_daily_flow(request: PredictRequest) -> PredictDailyRespons
                 weather_data_path=weather_data_path,
                 start_date=training_start_date,
                 end_date=request.end_date,
-                output_dir=output_dir
+                output_dir=output_dir,
+                ucp=request.ucp
             )
             logger.info(f"✓ Pipeline completado para {request.ucp}: {len(df_with_features)} registros")
         except FileNotFoundError as e:
@@ -3603,7 +3606,8 @@ async def retrain_model(ucp: str):
             weather_data_path=weather_data_path,
             start_date='2015-01-01',
             end_date=None,  # Hasta el día más reciente disponible
-            output_dir=output_dir
+            output_dir=output_dir,
+            ucp=ucp
         )
 
         logger.info(f"✓ Pipeline completado: {len(df_with_features)} registros")
