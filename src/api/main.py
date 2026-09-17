@@ -2080,6 +2080,13 @@ async def run_predict_daily_flow(request: PredictRequest) -> PredictDailyRespons
                 predictions_df['demanda_predicha'] = predictions_df['demanda_predicha'] * request.offset_scalar
 
             logger.info(f"✓ Predicciones generadas: {len(predictions_df)} días")
+        except ValueError as e:
+            # Entrada inválida (ej. end_date antes del primer dato real del
+            # mercado) — mensaje ya es claro, no hace falta el traceback.
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e)
+            )
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

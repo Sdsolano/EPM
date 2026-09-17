@@ -990,6 +990,17 @@ class ForecastPipeline:
 
         # Fecha inicial (mañana)
         ultimo_dia_historico = self.df_historico['fecha'].max()
+        if pd.isna(ultimo_dia_historico):
+            # df_historico quedó vacío después de filtrar por end_date —
+            # ej. end_date cae antes de la primera fecha con datos reales
+            # del mercado. Sin este guard, ultimo_dia_historico es NaT y
+            # revienta más abajo con un traceback críptico de pandas
+            # ("NaTType does not support strftime").
+            raise ValueError(
+                "No hay datos históricos disponibles hasta la fecha de corte "
+                "calculada (end_date). Elija una fecha de inicio posterior a "
+                "la primera fecha con datos reales de este mercado."
+            )
         primer_dia_prediccion = ultimo_dia_historico + timedelta(days=1)
         
         # Fecha final del período a predecir
