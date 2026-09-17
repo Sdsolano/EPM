@@ -31,7 +31,7 @@ from src.models.trainer import ModelTrainer
 from src.prediction.forecaster import ForecastPipeline
 from src.prediction.hourly import HourlyDisaggregationEngine
 from src.prediction.hourly.adjustment_validator import HourlyAdjustmentValidator
-from src.pipeline.update_csv import full_update_csv
+from src.pipeline.update_csv import full_update_csv, full_update_csv_diario
 from src.prediction.xm_ido_client import XMIdoClient, formatear_eventos_dna
 from fastapi.concurrency import run_in_threadpool
 
@@ -2010,9 +2010,9 @@ async def run_predict_daily_flow(request: PredictRequest) -> PredictDailyRespons
 
         # PASO 1: feature engineering — igual que /predict
         logger.info(f"\n📊 PASO 1: Procesando datos históricos y creando features para {request.ucp}...")
-        await run_in_threadpool(full_update_csv, request.ucp)
+        await run_in_threadpool(full_update_csv_diario, request.ucp)
         try:
-            power_data_path = f'data/raw/{request.ucp}/datos.csv'
+            power_data_path = f'data/raw/{request.ucp}/datos_diario.csv'
             weather_data_path = f'data/raw/{request.ucp}/clima_new.csv'
             output_dir = Path(f'data/features/{request.ucp}')
             training_start_date = request.start_date or '2015-01-01'
