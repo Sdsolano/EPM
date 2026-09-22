@@ -25,6 +25,7 @@ from src.pipeline.connectors import PowerDataConnector, WeatherDataConnector
 from src.pipeline.cleaning import PowerDataCleaner, WeatherDataCleaner
 from src.pipeline.feature_engineering import FeatureEngineer
 from src.pipeline.monitoring import PipelineExecutionTracker, DataQualityMonitor
+from src.prediction.festivos_api import FestivosAPIClient
 
 
 class DataPipelineOrchestrator:
@@ -36,16 +37,21 @@ class DataPipelineOrchestrator:
     def __init__(self,
                  power_data_path: str,
                  weather_data_path: Optional[str] = None,
-                 output_dir: Optional[Path] = None):
+                 output_dir: Optional[Path] = None,
+                 ucp: Optional[str] = None):
         """
         Args:
             power_data_path: Ruta al archivo de datos de demanda
             weather_data_path: Ruta al archivo de datos meteorológicos (opcional)
             output_dir: Directorio de salida para datos procesados
+            ucp: Nombre del mercado — si se pasa, is_festivo se calcula con
+                festivos reales (API /listarFestivos) en vez del fallback
+                de día de la semana. Ver _run_feature_engineering.
         """
         self.power_data_path = power_data_path
         self.weather_data_path = weather_data_path
         self.output_dir = output_dir or FEATURES_DATA_DIR
+        self.ucp = ucp
 
         # Asegurar que el directorio de salida existe
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -192,16 +198,35 @@ class DataPipelineOrchestrator:
             self.tracker.complete_stage("data_cleaning", success=False)
             raise
 
+    def _obtener_festivos_reales(self) -> Optional[set]:
+        """Festivos reales del mercado para el rango de fechas del histórico
+        ya cargado (self.power_df_clean) — None si no hay ucp o falla la API,
+        y create_all_features cae de vuelta al fallback de día de la semana."""
+        if not self.ucp or self.power_df_clean is None or self.power_df_clean.empty:
+            return None
+        try:
+            fechas = pd.to_datetime(self.power_df_clean['FECHA'])
+            start_date = fechas.min().strftime('%Y-%m-%d')
+            end_date = fechas.max().strftime('%Y-%m-%d')
+            festivos = FestivosAPIClient().get_festivos_set(start_date, end_date, self.ucp)
+            return festivos
+        except Exception as e:
+            print(f"[AVISO] No se pudieron obtener festivos reales para {self.ucp}: {e}")
+            return None
+
     def _run_feature_engineering(self):
         """Etapa 3: Feature Engineering"""
         self.tracker.start_stage("feature_engineering")
 
         try:
+            festivos_reales = self._obtener_festivos_reales()
+
             # Crear features
             engineer = FeatureEngineer()
             self.df_with_features = engineer.create_all_features(
                 self.power_df_clean,
-                self.weather_df_clean
+                self.weather_df_clean,
+                festivos_reales
             )
 
             # Preparar para modelado
@@ -307,7 +332,8 @@ def run_automated_pipeline(power_data_path: str,
                            weather_data_path: Optional[str] = None,
                            start_date: Optional[str] = None,
                            end_date: Optional[str] = None,
-                           output_dir: Optional[Path] = None) -> Tuple[pd.DataFrame, Dict]:
+                           output_dir: Optional[Path] = None,
+                           ucp: Optional[str] = None) -> Tuple[pd.DataFrame, Dict]:
     """
     Función principal para ejecutar el pipeline automatizado completo
 
@@ -317,6 +343,8 @@ def run_automated_pipeline(power_data_path: str,
         start_date: Fecha inicial en formato YYYY-MM-DD (opcional)
         end_date: Fecha final en formato YYYY-MM-DD (opcional)
         output_dir: Directorio de salida (opcional)
+        ucp: Nombre del mercado (opcional) — si se pasa, is_festivo usa
+            festivos reales en vez del fallback de día de la semana.
 
     Returns:
         Tuple con (DataFrame con features, reporte de ejecución)
@@ -332,7 +360,8 @@ def run_automated_pipeline(power_data_path: str,
     orchestrator = DataPipelineOrchestrator(
         power_data_path=power_data_path,
         weather_data_path=weather_data_path,
-        output_dir=output_dir
+        output_dir=output_dir,
+        ucp=ucp
     )
 
     return orchestrator.run(
