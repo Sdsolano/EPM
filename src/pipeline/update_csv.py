@@ -4,6 +4,14 @@ from datetime import datetime, timedelta
 import requests
 import os
 from pathlib import Path
+
+# PRONOSTICOS_API_BASE_URL (.env, no versionado) para apuntar al backend
+# local en desarrollo sin tocar el default de producción — se lee dentro de
+# la función (no a nivel de módulo) porque este archivo se importa antes de
+# que main.py llame a load_dotenv().
+def _pronosticos_base_url():
+    return os.getenv("PRONOSTICOS_API_BASE_URL", "https://pronosticos.jmdatalabs.co")
+
 #-- 1. Función para convertir JSON a CSV y guardarlo ---
 def json_to_csv_power(data_json,ucp_name,archivo,variable="Demanda_Real",clasificador="NORMAL"):
     df = pd.DataFrame(data_json["data"])
@@ -48,7 +56,7 @@ def regresar_nuevo_csv(ucp):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         df=pd.DataFrame([],columns=["UCP","VARIABLE","FECHA","Clasificador interno","TIPO DIA"]+[f'P{i}' for i in range(1,25)]+["TOTAL"])
         df.to_csv(path, index=False)
-        base_url = "http://localhost:3000"
+        base_url = _pronosticos_base_url()
         url = f"{base_url}/api/v1/admin/configuracion-interna/cargarPeriodosxUCPDesdeFecha/{ucp}/2005-11-06"
         response = requests.get(url)
         print(response.json())
@@ -58,7 +66,7 @@ def regresar_nuevo_csv(ucp):
         fecha_inicio=df['FECHA'].max()
         if not fecha_inicio or pd.isna(fecha_inicio):
             fecha_inicio='2005-11-06'
-        base_url = "http://localhost:3000"
+        base_url = _pronosticos_base_url()
         url = f"{base_url}/api/v1/admin/configuracion-interna/cargarPeriodosxUCPDesdeFecha/{ucp}/{fecha_inicio}"
         response = requests.get(url)
         print(response.json())
@@ -97,7 +105,7 @@ def req_clima_api(ucp):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         df=pd.DataFrame(columns=["fecha","periodo","p_t","p_h","p_v","p_i"])
         df.to_csv(path, index=False)
-        base_url = "http://localhost:3000"
+        base_url = _pronosticos_base_url()
         url = f"{base_url}/api/v1/admin/configuracion-interna/cargarVariablesClimaticasxUCPDesdeFecha/{ucp}/2005-11-06"
         response = requests.get(url)
         response_json = response.json()
@@ -116,7 +124,7 @@ def req_clima_api(ucp):
         fecha_inicio=df['fecha'].max()
         if not fecha_inicio or pd.isna(fecha_inicio):
             fecha_inicio='2005-11-06'
-        base_url = "http://localhost:3000"
+        base_url = _pronosticos_base_url()
         url = f"{base_url}/api/v1/admin/configuracion-interna/cargarVariablesClimaticasxUCPDesdeFecha/{ucp}/{fecha_inicio}"
         response = requests.get(url)
         response_json = response.json()
@@ -191,7 +199,7 @@ def regresar_nuevo_csv_diario(ucp):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         df = pd.DataFrame([], columns=["UCP", "VARIABLE", "FECHA", "Clasificador interno", "TIPO DIA"] + [f'P{i}' for i in range(1, 25)] + ["TOTAL"])
         df.to_csv(path, index=False)
-        base_url = "http://localhost:3000"
+        base_url = _pronosticos_base_url()
         url = f"{base_url}/api/v1/admin/configuracion-interna/cargarDemandaDiariaPorUCPDesdeFecha/{ucp}/2005-11-06"
         response = requests.get(url)
         print(response.json())
@@ -201,7 +209,7 @@ def regresar_nuevo_csv_diario(ucp):
         fecha_inicio = df['FECHA'].max()
         if not fecha_inicio or pd.isna(fecha_inicio):
             fecha_inicio = '2005-11-06'
-        base_url = "http://localhost:3000"
+        base_url = _pronosticos_base_url()
         url = f"{base_url}/api/v1/admin/configuracion-interna/cargarDemandaDiariaPorUCPDesdeFecha/{ucp}/{fecha_inicio}"
         response = requests.get(url)
         print(response.json())

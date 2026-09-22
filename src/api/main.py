@@ -911,18 +911,25 @@ Proporciona un análisis conciso (máximo 3-4 oraciones) con las causas más pro
         return f"Análisis automático no disponible (error: {str(e)})"
 
 
-def check_model_exists(ucp: str) -> Tuple[bool, Optional[Path]]:
+def check_model_exists(ucp: str, variant: str = 'hourly') -> Tuple[bool, Optional[Path]]:
     """
     Verifica si existe un modelo entrenado en el registro para un UCP específico
 
     Args:
         ucp: Nombre del UCP (ej: 'Atlantico', 'Oriente')
+        variant: 'hourly' (default — usado por /predict, /retrain,
+            predict_demand) o 'daily' (usado solo por /predict-daily).
+            Cada variante tiene su propio directorio/registro para que
+            reentrenar el modelo diario NUNCA sobrescriba el modelo del
+            pronóstico normal (y viceversa) — antes ambos compartían
+            exactamente el mismo champion_model.joblib.
 
     Returns:
         Tupla (existe: bool, path: Optional[Path])
     """
-    models_dir = Path(f'models/{ucp}/trained')
-    registry_path = Path(f'models/{ucp}/registry/champion_model.joblib')
+    suffix = '_diario' if variant == 'daily' else ''
+    models_dir = Path(f'models/{ucp}/trained{suffix}')
+    registry_path = Path(f'models/{ucp}/registry/champion_model{suffix}.joblib')
 
     # Prioridad 1: Modelo campeón en registry
     if registry_path.exists():
@@ -942,7 +949,8 @@ def check_model_exists(ucp: str) -> Tuple[bool, Optional[Path]]:
 
 def train_model_if_needed(df_with_features: pd.DataFrame,
                          ucp: str,
-                         force_retrain: bool = False) -> Tuple[Path, Dict[str, Any]]:
+                         force_retrain: bool = False,
+                         variant: str = 'hourly') -> Tuple[Path, Dict[str, Any]]:
     """
     Entrena los 3 modelos (XGBoost, LightGBM, RandomForest) y selecciona automáticamente el mejor
     basándose en rMAPE de validación
@@ -951,11 +959,15 @@ def train_model_if_needed(df_with_features: pd.DataFrame,
         df_with_features: DataFrame con features procesados
         ucp: Nombre del UCP (ej: 'Atlantico', 'Oriente')
         force_retrain: Forzar reentrenamiento
+        variant: 'hourly' (default) o 'daily' — ver check_model_exists.
+            Determina en qué directorio/registro se guarda el modelo
+            entrenado, para que /predict-daily nunca pise el modelo de
+            /predict de ese mismo UCP.
 
     Returns:
         Tupla (model_path: Path, metrics: Dict con métricas del mejor modelo)
     """
-    model_exists, model_path = check_model_exists(ucp)
+    model_exists, model_path = check_model_exists(ucp, variant=variant)
 
     if model_exists and not force_retrain:
         logger.info("✓ Usando modelo existente (no se requiere entrenamiento)")
@@ -1039,8 +1051,10 @@ def train_model_if_needed(df_with_features: pd.DataFrame,
     logger.info(f"  R²: {best_results['val_metrics']['r2']:.4f}")
     logger.info(f"  MAE: {best_results['val_metrics']['mae']:.2f}")
 
-    # Guardar TODOS los modelos en directorio específico del UCP
-    models_dir = Path(f'models/{ucp}/trained')
+    # Guardar TODOS los modelos en directorio específico del UCP (y de la
+    # variante — hourly/daily NUNCA comparten directorio ni archivo campeón)
+    suffix = '_diario' if variant == 'daily' else ''
+    models_dir = Path(f'models/{ucp}/trained{suffix}')
     models_dir.mkdir(parents=True, exist_ok=True)
 
     saved_paths = trainer.save_all_models(overwrite=True, output_dir=str(models_dir))
@@ -1053,7 +1067,7 @@ def train_model_if_needed(df_with_features: pd.DataFrame,
     # Guardar el MEJOR modelo como campeón en registry del UCP
     registry_dir = Path(f'models/{ucp}/registry')
     registry_dir.mkdir(parents=True, exist_ok=True)
-    champion_path = registry_dir / 'champion_model.joblib'
+    champion_path = registry_dir / f'champion_model{suffix}.joblib'
 
     import shutil
     shutil.copy(best_model_path, champion_path)
@@ -1996,14 +2010,17 @@ async def run_predict_daily_flow(request: PredictRequest) -> PredictDailyRespons
     issue "Desarrollar módulo pronostico en la Temporalidad Diaria"): un
     valor por día (TOTAL), sin desagregación horaria.
 
-    Reutiliza el MISMO modelo base que /predict (el que ya entrena/predice a
-    nivel de TOTAL diario por dentro, ver train_model_if_needed) — la única
-    diferencia real con run_predict_flow es que acá ForecastPipeline se
-    instancia con enable_hourly_disaggregation=False, así que nunca se
-    entrena ni se usa el HourlyDisaggregationEngine (más rápido, y evita
-    trabajo que no hace falta para este caso de uso). No incluye el
-    autodiagnóstico de MAPE/reentrenamiento ni el análisis con OpenAI que sí
-    tiene /predict — eso queda para una siguiente iteración si hace falta.
+    Reutiliza el MISMO tipo de modelo base que /predict (arquitectura/features
+    para predecir TOTAL diario, ver train_model_if_needed) pero con su PROPIO
+    registro (variant='daily' → models/{ucp}/registry/champion_model_diario.joblib,
+    separado de champion_model.joblib) — así un reentrenamiento diario nunca
+    pisa el modelo que usa /predict para ese mismo UCP, y viceversa. Además,
+    acá ForecastPipeline se instancia con enable_hourly_disaggregation=False,
+    así que nunca se entrena ni se usa el HourlyDisaggregationEngine (más
+    rápido, y evita trabajo que no hace falta para este caso de uso). No
+    incluye el autodiagnóstico de MAPE/reentrenamiento ni el análisis con
+    OpenAI que sí tiene /predict — eso queda para una siguiente iteración si
+    hace falta.
     """
     try:
         logger.info("="*80)
@@ -2039,13 +2056,17 @@ async def run_predict_daily_flow(request: PredictRequest) -> PredictDailyRespons
                 detail=f"Error en pipeline de datos: {str(e)}"
             )
 
-        # PASO 2: verificar/entrenar modelo base — mismo que /predict
-        logger.info(f"\n🤖 PASO 2: Verificando modelo de predicción para {request.ucp}...")
+        # PASO 2: verificar/entrenar modelo base — variant='daily' para que
+        # esto NUNCA sobrescriba el champion_model.joblib de /predict (el
+        # pronóstico normal por horas) de este mismo UCP; cada temporalidad
+        # tiene su propio registro (ver check_model_exists/train_model_if_needed).
+        logger.info(f"\n🤖 PASO 2: Verificando modelo de predicción diario para {request.ucp}...")
         try:
             model_path, train_metrics = train_model_if_needed(
                 df_with_features=df_with_features,
                 ucp=request.ucp,
-                force_retrain=request.force_retrain
+                force_retrain=request.force_retrain,
+                variant='daily'
             )
             modelo_entrenado = len(train_metrics) > 0
             if modelo_entrenado:

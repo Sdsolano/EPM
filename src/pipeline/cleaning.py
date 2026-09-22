@@ -401,7 +401,9 @@ class WeatherDataCleaner:
         # Convertir variables numéricas del formato EPM
         numeric_cols = ['temp_mean', 'temp_min', 'temp_max', 'temp_std',
                         'humidity_mean', 'humidity_min', 'humidity_max',
-                        'wind_speed_mean', 'wind_speed_max', 'rain_mean', 'rain_sum']
+                        'wind_speed_mean', 'wind_speed_min', 'wind_speed_max',
+                        'rain_mean', 'rain_sum',
+                        'heat_index_mean', 'heat_index_min', 'heat_index_max']
 
         for col in numeric_cols:
             if col in df.columns:

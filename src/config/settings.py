@@ -68,7 +68,8 @@ ROLLING_WINDOWS = [7, 14, 28]  # 1 semana, 2 semanas, 4 semanas
 DEMAND_LAGS = [1, 7, 14]  # día anterior, semana anterior, 2 semanas
 
 # Variables meteorológicas clave para features - API EPM
-KEY_WEATHER_VARS = ['temp', 'humidity', 'wind_speed', 'rain']
+# heat_index = sensación térmica, calculada localmente (ver src/utils/weather.py)
+KEY_WEATHER_VARS = ['temp', 'humidity', 'wind_speed', 'rain', 'heat_index']
 
 # ============== CONFIGURACIÓN DE VALIDACIÓN ==============
 
