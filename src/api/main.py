@@ -31,7 +31,7 @@ from src.models.trainer import ModelTrainer
 from src.prediction.forecaster import ForecastPipeline
 from src.prediction.hourly import HourlyDisaggregationEngine
 from src.prediction.hourly.adjustment_validator import HourlyAdjustmentValidator
-from src.pipeline.update_csv import full_update_csv
+from src.pipeline.update_csv import full_update_csv, full_update_csv_diario
 from src.prediction.xm_ido_client import XMIdoClient, formatear_eventos_dna
 from fastapi.concurrency import run_in_threadpool
 
@@ -415,6 +415,35 @@ class HourlyPrediction(BaseModel):
                 # ... (resto de períodos)
             }
         }
+
+
+class DailyPrediction(BaseModel):
+    """Schema para predicción en temporalidad diaria (SIN desagregación horaria —
+    ver issue "Desarrollar módulo pronostico en la Temporalidad Diaria")."""
+    fecha: str = Field(..., description="Fecha de la predicción (YYYY-MM-DD)")
+    dia_semana: str = Field(..., description="Día de la semana")
+    demanda_total: float = Field(..., description="Demanda total del día (MWh)")
+    is_festivo: bool = Field(..., description="Si es día festivo")
+    is_weekend: bool = Field(..., description="Si es fin de semana")
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "fecha": "2024-12-01",
+                "dia_semana": "Domingo",
+                "demanda_total": 31500.0,
+                "is_festivo": False,
+                "is_weekend": True,
+            }
+        }
+
+
+class PredictDailyResponse(BaseModel):
+    """Schema para respuesta de predicción diaria (Pronóstico Diario)."""
+    status: str = Field(..., description="Estado de la respuesta")
+    message: str = Field(..., description="Mensaje descriptivo")
+    metadata: Dict[str, Any] = Field(..., description="Metadatos de la predicción")
+    predictions: List[DailyPrediction] = Field(..., description="Lista de predicciones diarias")
 
 
 class PredictResponse(BaseModel):
@@ -882,18 +911,25 @@ Proporciona un análisis conciso (máximo 3-4 oraciones) con las causas más pro
         return f"Análisis automático no disponible (error: {str(e)})"
 
 
-def check_model_exists(ucp: str) -> Tuple[bool, Optional[Path]]:
+def check_model_exists(ucp: str, variant: str = 'hourly') -> Tuple[bool, Optional[Path]]:
     """
     Verifica si existe un modelo entrenado en el registro para un UCP específico
 
     Args:
         ucp: Nombre del UCP (ej: 'Atlantico', 'Oriente')
+        variant: 'hourly' (default — usado por /predict, /retrain,
+            predict_demand) o 'daily' (usado solo por /predict-daily).
+            Cada variante tiene su propio directorio/registro para que
+            reentrenar el modelo diario NUNCA sobrescriba el modelo del
+            pronóstico normal (y viceversa) — antes ambos compartían
+            exactamente el mismo champion_model.joblib.
 
     Returns:
         Tupla (existe: bool, path: Optional[Path])
     """
-    models_dir = Path(f'models/{ucp}/trained')
-    registry_path = Path(f'models/{ucp}/registry/champion_model.joblib')
+    suffix = '_diario' if variant == 'daily' else ''
+    models_dir = Path(f'models/{ucp}/trained{suffix}')
+    registry_path = Path(f'models/{ucp}/registry/champion_model{suffix}.joblib')
 
     # Prioridad 1: Modelo campeón en registry
     if registry_path.exists():
@@ -913,7 +949,8 @@ def check_model_exists(ucp: str) -> Tuple[bool, Optional[Path]]:
 
 def train_model_if_needed(df_with_features: pd.DataFrame,
                          ucp: str,
-                         force_retrain: bool = False) -> Tuple[Path, Dict[str, Any]]:
+                         force_retrain: bool = False,
+                         variant: str = 'hourly') -> Tuple[Path, Dict[str, Any]]:
     """
     Entrena los 3 modelos (XGBoost, LightGBM, RandomForest) y selecciona automáticamente el mejor
     basándose en rMAPE de validación
@@ -922,11 +959,15 @@ def train_model_if_needed(df_with_features: pd.DataFrame,
         df_with_features: DataFrame con features procesados
         ucp: Nombre del UCP (ej: 'Atlantico', 'Oriente')
         force_retrain: Forzar reentrenamiento
+        variant: 'hourly' (default) o 'daily' — ver check_model_exists.
+            Determina en qué directorio/registro se guarda el modelo
+            entrenado, para que /predict-daily nunca pise el modelo de
+            /predict de ese mismo UCP.
 
     Returns:
         Tupla (model_path: Path, metrics: Dict con métricas del mejor modelo)
     """
-    model_exists, model_path = check_model_exists(ucp)
+    model_exists, model_path = check_model_exists(ucp, variant=variant)
 
     if model_exists and not force_retrain:
         logger.info("✓ Usando modelo existente (no se requiere entrenamiento)")
@@ -1010,8 +1051,10 @@ def train_model_if_needed(df_with_features: pd.DataFrame,
     logger.info(f"  R²: {best_results['val_metrics']['r2']:.4f}")
     logger.info(f"  MAE: {best_results['val_metrics']['mae']:.2f}")
 
-    # Guardar TODOS los modelos en directorio específico del UCP
-    models_dir = Path(f'models/{ucp}/trained')
+    # Guardar TODOS los modelos en directorio específico del UCP (y de la
+    # variante — hourly/daily NUNCA comparten directorio ni archivo campeón)
+    suffix = '_diario' if variant == 'daily' else ''
+    models_dir = Path(f'models/{ucp}/trained{suffix}')
     models_dir.mkdir(parents=True, exist_ok=True)
 
     saved_paths = trainer.save_all_models(overwrite=True, output_dir=str(models_dir))
@@ -1024,7 +1067,7 @@ def train_model_if_needed(df_with_features: pd.DataFrame,
     # Guardar el MEJOR modelo como campeón en registry del UCP
     registry_dir = Path(f'models/{ucp}/registry')
     registry_dir.mkdir(parents=True, exist_ok=True)
-    champion_path = registry_dir / 'champion_model.joblib'
+    champion_path = registry_dir / f'champion_model{suffix}.joblib'
 
     import shutil
     shutil.copy(best_model_path, champion_path)
@@ -1187,7 +1230,8 @@ async def predict_demand(request: ReasonRequest):
                 weather_data_path=weather_data_path,
                 start_date=training_start_date,
                 end_date=request.end_date,
-                output_dir=output_dir
+                output_dir=output_dir,
+                ucp=request.ucp
             )
 
             logger.info(f"✓ Pipeline completado para {request.ucp}: {len(df_with_features)} registros con {len(df_with_features.columns)} columnas")
@@ -1506,7 +1550,8 @@ async def run_predict_flow(request: PredictRequest) -> PredictResponse:
                 weather_data_path=weather_data_path,
                 start_date=training_start_date,
                 end_date=request.end_date,
-                output_dir=output_dir
+                output_dir=output_dir,
+                ucp=request.ucp
             )
 
             logger.info(f"✓ Pipeline completado para {request.ucp}: {len(df_with_features)} registros con {len(df_with_features.columns)} columnas")
@@ -1957,6 +2002,187 @@ async def run_predict_flow(request: PredictRequest) -> PredictResponse:
 async def predict_demand(request: PredictRequest):
     """Endpoint /predict que delega la lógica principal a run_predict_flow."""
     return await run_predict_flow(request)
+
+
+async def run_predict_daily_flow(request: PredictRequest) -> PredictDailyResponse:
+    """
+    Genera predicción de demanda energética diaria (temporalidad diaria — ver
+    issue "Desarrollar módulo pronostico en la Temporalidad Diaria"): un
+    valor por día (TOTAL), sin desagregación horaria.
+
+    Reutiliza el MISMO tipo de modelo base que /predict (arquitectura/features
+    para predecir TOTAL diario, ver train_model_if_needed) pero con su PROPIO
+    registro (variant='daily' → models/{ucp}/registry/champion_model_diario.joblib,
+    separado de champion_model.joblib) — así un reentrenamiento diario nunca
+    pisa el modelo que usa /predict para ese mismo UCP, y viceversa. Además,
+    acá ForecastPipeline se instancia con enable_hourly_disaggregation=False,
+    así que nunca se entrena ni se usa el HourlyDisaggregationEngine (más
+    rápido, y evita trabajo que no hace falta para este caso de uso). No
+    incluye el autodiagnóstico de MAPE/reentrenamiento ni el análisis con
+    OpenAI que sí tiene /predict — eso queda para una siguiente iteración si
+    hace falta.
+    """
+    try:
+        logger.info("="*80)
+        logger.info("🚀 INICIANDO PREDICCIÓN DIARIA (sin desagregación horaria)")
+        logger.info("="*80)
+
+        # PASO 1: feature engineering — igual que /predict
+        logger.info(f"\n📊 PASO 1: Procesando datos históricos y creando features para {request.ucp}...")
+        await run_in_threadpool(full_update_csv_diario, request.ucp)
+        try:
+            power_data_path = f'data/raw/{request.ucp}/datos_diario.csv'
+            weather_data_path = f'data/raw/{request.ucp}/clima_new.csv'
+            output_dir = Path(f'data/features/{request.ucp}')
+            training_start_date = request.start_date or '2015-01-01'
+
+            df_with_features, _ = run_automated_pipeline(
+                power_data_path=power_data_path,
+                weather_data_path=weather_data_path,
+                start_date=training_start_date,
+                end_date=request.end_date,
+                output_dir=output_dir,
+                ucp=request.ucp
+            )
+            logger.info(f"✓ Pipeline completado para {request.ucp}: {len(df_with_features)} registros")
+        except FileNotFoundError as e:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Archivo no encontrado: {str(e)}"
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error en pipeline de datos: {str(e)}"
+            )
+
+        # PASO 2: verificar/entrenar modelo base — variant='daily' para que
+        # esto NUNCA sobrescriba el champion_model.joblib de /predict (el
+        # pronóstico normal por horas) de este mismo UCP; cada temporalidad
+        # tiene su propio registro (ver check_model_exists/train_model_if_needed).
+        logger.info(f"\n🤖 PASO 2: Verificando modelo de predicción diario para {request.ucp}...")
+        try:
+            model_path, train_metrics = train_model_if_needed(
+                df_with_features=df_with_features,
+                ucp=request.ucp,
+                force_retrain=request.force_retrain,
+                variant='daily'
+            )
+            modelo_entrenado = len(train_metrics) > 0
+            if modelo_entrenado:
+                logger.info(f"✓ Modelo entrenado exitosamente")
+            else:
+                logger.info(f"✓ Usando modelo existente: {model_path.name}")
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error en entrenamiento de modelo: {str(e)}"
+            )
+
+        # PASO 3: generar predicciones SIN desagregación horaria
+        logger.info(f"\n🔮 PASO 3: Generando predicciones diarias para {request.n_days} días...")
+        try:
+            climate_raw_path = f'data/raw/{request.ucp}/clima_new.csv'
+            temp_features_path = f'data/features/{request.ucp}/temp_api_features_daily.csv'
+            df_with_features.to_csv(temp_features_path, index=False)
+
+            pipeline = ForecastPipeline(
+                model_path=str(model_path),
+                historical_data_path=temp_features_path,
+                festivos_path='config/festivos.json',
+                enable_hourly_disaggregation=False,
+                raw_climate_path=climate_raw_path,
+                ucp=request.ucp
+            )
+            predictions_df = pipeline.predict_next_n_days(n_days=request.n_days)
+
+            if os.path.exists(temp_features_path):
+                os.remove(temp_features_path)
+
+            if request.offset_scalar is not None and request.offset_scalar > 0 and request.offset_scalar != 1.0:
+                logger.info(f"\n🔧 Aplicando offset scalar: {request.offset_scalar}")
+                predictions_df['demanda_predicha'] = predictions_df['demanda_predicha'] * request.offset_scalar
+
+            logger.info(f"✓ Predicciones generadas: {len(predictions_df)} días")
+        except ValueError as e:
+            # Entrada inválida (ej. end_date antes del primer dato real del
+            # mercado) — mensaje ya es claro, no hace falta el traceback.
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e)
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error generando predicciones: {str(e)}\n{traceback.format_exc()}"
+            )
+
+        # PASO 4: formatear respuesta (sin P1-P24, sin cluster_id/metodo_desagregacion)
+        logger.info("\n📋 PASO 4: Formateando respuesta...")
+        try:
+            predictions_list = []
+            dias_semana = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo']
+
+            for _, row in predictions_df.iterrows():
+                fecha = pd.to_datetime(row['fecha'])
+                predictions_list.append({
+                    'fecha': fecha.strftime('%Y-%m-%d'),
+                    'dia_semana': dias_semana[row.get('dayofweek', fecha.dayofweek)],
+                    'demanda_total': round(float(row['demanda_predicha']), 2),
+                    'is_festivo': bool(row.get('is_festivo', False)),
+                    'is_weekend': bool(row.get('is_weekend', False)),
+                })
+
+            metadata = {
+                'fecha_generacion': datetime.now().isoformat(),
+                'modelo_usado': model_path.stem,
+                'dias_predichos': len(predictions_df),
+                'fecha_inicio': predictions_df['fecha'].min().strftime('%Y-%m-%d'),
+                'fecha_fin': predictions_df['fecha'].max().strftime('%Y-%m-%d'),
+                'demanda_promedio': round(float(predictions_df['demanda_predicha'].mean()), 2),
+                'demanda_min': round(float(predictions_df['demanda_predicha'].min()), 2),
+                'demanda_max': round(float(predictions_df['demanda_predicha'].max()), 2),
+                'dias_laborables': int((predictions_df['is_weekend'] == False).sum()),
+                'dias_fin_de_semana': int((predictions_df['is_weekend'] == True).sum()),
+                'dias_festivos': int((predictions_df['is_festivo'] == True).sum()),
+                'modelo_entrenado': modelo_entrenado,
+                'metricas_modelo': train_metrics if modelo_entrenado else {}
+            }
+            logger.info("✓ Respuesta formateada correctamente")
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error formateando respuesta: {str(e)}"
+            )
+
+        return PredictDailyResponse(
+            status="success",
+            message=f"Predicción diaria generada exitosamente para {request.n_days} días (sin desagregación horaria)",
+            metadata=metadata,
+            predictions=predictions_list,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error inesperado: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error inesperado en el servidor: {str(e)}"
+        )
+
+
+@app.post("/predict-daily", response_model=PredictDailyResponse, status_code=status.HTTP_200_OK)
+async def predict_daily_demand(request: PredictRequest):
+    """
+    Endpoint /predict-daily — Pronóstico en temporalidad diaria: un total por
+    día (MWh), sin desagregación horaria (P1-P24). Reutiliza el mismo modelo
+    base y el mismo request (PredictRequest) que /predict; ver
+    run_predict_daily_flow para el detalle de qué pasos se comparten y
+    cuáles se omiten.
+    """
+    return await run_predict_daily_flow(request)
 
 
 def _get_historical_day_profile(ucp: str, date_str: str) -> Optional[HistoricalDay]:
@@ -3401,7 +3627,8 @@ async def retrain_model(ucp: str):
             weather_data_path=weather_data_path,
             start_date='2015-01-01',
             end_date=None,  # Hasta el día más reciente disponible
-            output_dir=output_dir
+            output_dir=output_dir,
+            ucp=ucp
         )
 
         logger.info(f"✓ Pipeline completado: {len(df_with_features)} registros")
