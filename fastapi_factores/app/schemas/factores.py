@@ -129,3 +129,22 @@ class CalculoFDPRequest(BaseModel):
         description="Curvas seleccionadas (salida de curvas-tipicas). FDP se calcula solo sobre estas."
     )
     database_url: Optional[str] = Field(None, description="URL de conexión a BD alternativa (ej: postgresql://user:pass@host:5432/db)")
+
+
+class AjusteFPGeneradorRequest(BaseModel):
+    """Request para calcular el ajuste de FP de una barra moviendo la
+    potencia activa de un generador puntual (Modo 2 del algoritmo de
+    ajuste de factor de potencia) — se calcula solo sobre las curvas
+    típicas indicadas, igual que FDA/FDP."""
+    fecha_inicial: str
+    fecha_final: str
+    mc: str
+    tipo_dia: str  # ORDINARIO, SABADO, FESTIVO
+    curvas_tipicas: List[CurvaTipicaRef] = Field(
+        ...,
+        description="Curvas seleccionadas (salida de curvas-tipicas). El ajuste se calcula solo sobre estas."
+    )
+    barra: str = Field(..., description="Barra sobre la que se calcula el FP a ajustar")
+    codigo_rpm_generador: str = Field(..., description="codigo_rpm del generador/circuito puntual (ya configurado en agrupaciones para esta barra, flujo activo) cuya potencia activa se ajustará")
+    fp_objetivo: float = Field(..., gt=0, le=1, description="Factor de potencia objetivo, 0 < fp_objetivo <= 1")
+    database_url: Optional[str] = Field(None, description="URL de conexión a BD alternativa (ej: postgresql://user:pass@host:5432/db)")

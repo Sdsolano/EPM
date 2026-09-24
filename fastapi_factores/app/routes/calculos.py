@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Query
 import logging
 
 from app.schemas.factores import (
+    AjusteFPGeneradorRequest,
     CalculoFDARequest,
     CalculoFDPRequest,
     ClusteringRequest,
@@ -377,6 +378,87 @@ def calcular_fda_y_fdp(payload: CalculoFDARequest):
 
 
 # =============================================================================
+# ENDPOINTS - AJUSTE FP POR GENERADOR
+# =============================================================================
+
+@router.post(
+    "/ajuste-fp-generador",
+    summary="Calcular el ajuste de FP requerido en un generador puntual",
+    description="""
+    Calcula, por período (p1..p24) y por cada fecha típica indicada, el
+    factor multiplicador y la variación absoluta de potencia ACTIVA que
+    habría que aplicarle a un generador puntual (codigo_rpm_generador,
+    ya configurado en agrupaciones para la barra) para que el FP de la
+    barra llegue a fp_objetivo — Modo 2: se ajusta la activa del
+    generador, manteniendo constante la reactiva total de la barra.
+
+    Periodos donde el FP ya es >= fp_objetivo: factor=1.0, variación=0.0.
+
+    **Solo informativo**: no guarda nada (agrupaciones.factor es un valor
+    fijo y no puede representar un ajuste distinto por período).
+
+    **Flujo**: Llamar primero a POST /curvas-tipicas, luego pasar esa
+    lista aquí (mismas curvas ya usadas para el reporte FDA/FDP).
+    """
+)
+def calcular_ajuste_fp_generador(payload: AjusteFPGeneradorRequest):
+    try:
+        logger.info(
+            f"AjusteFPGenerador: mc={payload.mc}, barra={payload.barra}, "
+            f"generador={payload.codigo_rpm_generador}, fp_objetivo={payload.fp_objetivo}, "
+            f"tipo_dia={payload.tipo_dia}, curvas_tipicas={len(payload.curvas_tipicas)}"
+        )
+        from datetime import datetime
+        from app.services import factores_service
+
+        fecha_ini = datetime.strptime(payload.fecha_inicial, "%Y-%m-%d")
+        fecha_fin = datetime.strptime(payload.fecha_final, "%Y-%m-%d")
+        if fecha_fin < fecha_ini:
+            raise ValueError("fecha_final debe ser mayor o igual a fecha_inicial")
+        if not payload.curvas_tipicas:
+            raise ValueError("curvas_tipicas no puede estar vacío")
+        if payload.tipo_dia not in ("ORDINARIO", "SABADO", "FESTIVO"):
+            raise ValueError("tipo_dia debe ser ORDINARIO, SABADO o FESTIVO")
+
+        barra_exists = factores_service.consultar_barra_nombre(payload.barra, dsn=payload.database_url)
+        if not barra_exists:
+            raise ValueError(f"La barra '{payload.barra}' no existe")
+
+        curvas = [{"barra": c.barra, "fecha": c.fecha} for c in payload.curvas_tipicas]
+        resultado = service.calcular_ajuste_fp_generador(
+            payload.fecha_inicial,
+            payload.fecha_final,
+            payload.mc,
+            payload.tipo_dia,
+            curvas,
+            payload.barra,
+            payload.codigo_rpm_generador,
+            payload.fp_objetivo,
+            dsn=payload.database_url,
+        )
+        if resultado.get("n_registros", 0) == 0:
+            logger.warning(
+                f"AjusteFPGenerador sin datos: barra={payload.barra}, "
+                f"generador={payload.codigo_rpm_generador} — revisar que el codigo_rpm "
+                f"esté configurado en agrupaciones para flujo activo de esta barra."
+            )
+        return {
+            "ok": True,
+            "mc": payload.mc,
+            "tipo_dia": payload.tipo_dia,
+            "fecha_inicial": payload.fecha_inicial,
+            "fecha_final": payload.fecha_final,
+            "resultado": resultado,
+        }
+    except ValueError as e:
+        logger.error(f"Error de validación en ajuste-fp-generador: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error interno en ajuste-fp-generador: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error interno en ajuste-fp-generador: {str(e)}")
+
+
+# =============================================================================
 # ENDPOINTS - UTILIDADES
 # =============================================================================
 
@@ -396,6 +478,7 @@ def health_check():
             "curvas_tipicas": "/factores/calculos/curvas-tipicas",
             "fda": "/factores/calculos/fda",
             "fdp": "/factores/calculos/fdp",
-            "fda_fdp": "/factores/calculos/fda-fdp"
+            "fda_fdp": "/factores/calculos/fda-fdp",
+            "ajuste_fp_generador": "/factores/calculos/ajuste-fp-generador"
         }
     }

@@ -306,54 +306,17 @@ def _df_to_response(df: pd.DataFrame, tipo_dia: str, ajuste: float = None) -> Di
 # FUNCIONES PRINCIPALES - CLUSTERING
 # =============================================================================
 
-def aplicar_clustering(
-    fecha_inicial: str,
-    fecha_final: str,
-    mc: str,
-    barra: str,
-    flujo_tipo: str,
-    tipo_dia: str = "",
-    dsn: Optional[str] = None,
+def _procesar_medidas_con_factores(
+    medidas: List[Dict[str, Any]],
+    factores: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
     """
-    Aplica factores multiplicadores a medidas y agrupa por barra+fecha.
-
-    Este es el "clustering" que multiplica cada medida por su factor correspondiente
-    y luego agrupa sumando los periodos.
-
-    Args:
-        fecha_inicial: Formato YYYY-MM-DD
-        fecha_final: Formato YYYY-MM-DD
-        mc: Código de mercado/centro
-        barra: Nombre de la barra
-        flujo_tipo: "A" (Activa) o "R" (Reactiva)
-        tipo_dia: ORDINARIO, SABADO, FESTIVO o vacío para todos
-
-    Returns:
-        Lista de medidas clusterizadas por fecha
+    Aplica la config de cada agrupación (dividir_por_1000 -> factor ->
+    valor_absoluto) sobre medidas crudas y agrupa por barra+fecha sumando
+    los periodos. Lógica compartida entre aplicar_clustering (todos los
+    codigo_rpm configurados en una barra) y aplicar_clustering_generador
+    (un solo codigo_rpm, para aislar el aporte de un generador puntual).
     """
-    # Obtener códigos RPM de la barra
-    codigos = factores_service.consultar_barra_nombre(barra, dsn=dsn)
-    if not codigos:
-        return []
-
-    codigo_rpm = [row['codigo_rpm'] for row in codigos]
-
-    # Obtener factores
-    factores = factores_service.consultar_barra_factor_nombre(barra, flujo_tipo, codigo_rpm, dsn=dsn)
-    if not factores:
-        return []
-
-    # Obtener medidas
-    flujos = [f['flujo'] for f in factores]
-    medidas = factores_service.consultar_medidas_calcular_completo(
-        fecha_inicial, fecha_final, mc, flujos, tipo_dia, codigo_rpm, barra, False, dsn=dsn
-    )
-
-    if not medidas:
-        return []
-
-    # Crear DataFrame y aplicar factores
     df = pd.DataFrame(medidas)
 
     # Crear diccionario de config (factor, dividir_por_1000, valor_absoluto)
@@ -402,6 +365,89 @@ def aplicar_clustering(
         })
 
     return resultado
+
+
+def aplicar_clustering(
+    fecha_inicial: str,
+    fecha_final: str,
+    mc: str,
+    barra: str,
+    flujo_tipo: str,
+    tipo_dia: str = "",
+    dsn: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Aplica factores multiplicadores a medidas y agrupa por barra+fecha.
+
+    Este es el "clustering" que multiplica cada medida por su factor correspondiente
+    y luego agrupa sumando los periodos.
+
+    Args:
+        fecha_inicial: Formato YYYY-MM-DD
+        fecha_final: Formato YYYY-MM-DD
+        mc: Código de mercado/centro
+        barra: Nombre de la barra
+        flujo_tipo: "A" (Activa) o "R" (Reactiva)
+        tipo_dia: ORDINARIO, SABADO, FESTIVO o vacío para todos
+
+    Returns:
+        Lista de medidas clusterizadas por fecha
+    """
+    # Obtener códigos RPM de la barra
+    codigos = factores_service.consultar_barra_nombre(barra, dsn=dsn)
+    if not codigos:
+        return []
+
+    codigo_rpm = [row['codigo_rpm'] for row in codigos]
+
+    # Obtener factores
+    factores = factores_service.consultar_barra_factor_nombre(barra, flujo_tipo, codigo_rpm, dsn=dsn)
+    if not factores:
+        return []
+
+    # Obtener medidas
+    flujos = [f['flujo'] for f in factores]
+    medidas = factores_service.consultar_medidas_calcular_completo(
+        fecha_inicial, fecha_final, mc, flujos, tipo_dia, codigo_rpm, barra, False, dsn=dsn
+    )
+
+    if not medidas:
+        return []
+
+    return _procesar_medidas_con_factores(medidas, factores)
+
+
+def aplicar_clustering_generador(
+    fecha_inicial: str,
+    fecha_final: str,
+    mc: str,
+    barra: str,
+    flujo_tipo: str,
+    codigo_rpm_generador: str,
+    tipo_dia: str = "",
+    dsn: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Igual que aplicar_clustering, pero para UN SOLO codigo_rpm (un
+    generador/circuito puntual de la barra, ya configurado en
+    agrupaciones) en vez de sumar todos los codigo_rpm de la barra —
+    aísla su aporte individual, usado por calcular_ajuste_fp_generador
+    para saber cuánto debe cambiar ese generador específicamente.
+    """
+    factores = factores_service.consultar_barra_factor_nombre(
+        barra, flujo_tipo, [codigo_rpm_generador], dsn=dsn
+    )
+    if not factores:
+        return []
+
+    flujos = [f['flujo'] for f in factores]
+    medidas = factores_service.consultar_medidas_calcular_completo(
+        fecha_inicial, fecha_final, mc, flujos, tipo_dia, [codigo_rpm_generador], barra, False, dsn=dsn
+    )
+    if not medidas:
+        return []
+
+    return _procesar_medidas_con_factores(medidas, factores)
 
 
 def obtener_curvas_tipicas(
@@ -525,6 +571,30 @@ def _obtener_medidas_clusterizadas_para_curvas_tipicas(
         )
         todas.extend(medidas)
     return _filtrar_medidas_por_curvas_tipicas(todas, curvas_tipicas)
+
+
+def _obtener_medidas_generador_para_curvas_tipicas(
+    fecha_inicial: str,
+    fecha_final: str,
+    mc: str,
+    tipo_dia: str,
+    curvas_tipicas: List[Dict[str, Any]],
+    flujo_tipo: str,
+    barra: str,
+    codigo_rpm_generador: str,
+    dsn: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Igual que _obtener_medidas_clusterizadas_para_curvas_tipicas, pero
+    aislando un solo codigo_rpm (generador) en vez de toda la barra —
+    usado por calcular_ajuste_fp_generador.
+    """
+    if not curvas_tipicas:
+        return []
+    medidas = aplicar_clustering_generador(
+        fecha_inicial, fecha_final, mc, barra, flujo_tipo, codigo_rpm_generador, tipo_dia, dsn=dsn
+    )
+    return _filtrar_medidas_por_curvas_tipicas(medidas, curvas_tipicas)
 
 
 def calcular_fda_para_tipo_dia(
@@ -660,3 +730,192 @@ def calcular_fdp_para_tipo_dia(
 
     # Convertir a respuesta
     return _df_to_response(df_fdp, tipo_dia)
+
+
+# =============================================================================
+# FUNCIONES PRINCIPALES - AJUSTE FP POR GENERADOR
+# =============================================================================
+
+def calcular_ajuste_fp_generador(
+    fecha_inicial: str,
+    fecha_final: str,
+    mc: str,
+    tipo_dia: str,
+    curvas_tipicas: List[Dict[str, Any]],
+    barra: str,
+    codigo_rpm_generador: str,
+    fp_objetivo: float,
+    dsn: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Calcula, por período (p1..p24) y por cada fecha típica seleccionada, el
+    factor multiplicador y la variación absoluta de potencia ACTIVA que
+    habría que aplicarle a UN generador puntual (codigo_rpm_generador) para
+    que el FP de la barra alcance fp_objetivo — Modo 2 del algoritmo de
+    ajuste de factor de potencia (se ajusta la activa del generador,
+    manteniendo constante la reactiva total de la barra):
+
+        FP_actual = P_barra / sqrt(P_barra^2 + Q_barra^2)
+        P_objetivo_barra = |Q_barra| * fp_objetivo / sqrt(1 - fp_objetivo^2)
+        delta_P = P_objetivo_barra - P_barra
+        P_generador_nuevo = P_generador_actual + delta_P
+        factor_ajuste = P_generador_nuevo / P_generador_actual
+
+    Periodos donde FP_actual ya es >= fp_objetivo: factor=1.0, variación=0.0
+    (no requieren ajuste).
+
+    Es un cálculo puramente informativo — no persiste nada, ya que
+    agrupaciones.factor es un único valor fijo y no puede representar un
+    ajuste distinto por período. El promedio final entre las fechas
+    típicas (para mostrar una sola curva de 24 periodos) queda a cargo de
+    quien consuma esta respuesta, igual que ya se hace hoy con FDP.
+
+    Un mismo generador puede estar repartido entre varias barras con
+    factores que suman 1 (p.ej. 0.85 en una y 0.15 en la otra) — se
+    devuelve también el factor_actual configurado y, si existe, la
+    barra_complementaria con SU factor actual, para poder calcular del
+    otro lado (1 - factor_nuevo_recomendado) sin tener que consultarlo
+    aparte. El "factor" de cada período es relativo al factor_actual
+    (factor_nuevo_absoluto = factor_actual * factor); quien consuma esta
+    respuesta decide cómo resumir las 24 horas en un solo valor a aplicar
+    (p.ej. el peor caso, el máximo de los 24 factores).
+
+    Returns:
+        {
+          "tipo_dia", "barra", "codigo_rpm_generador", "fp_objetivo",
+          "factor_actual",           # factor hoy configurado en agrupaciones
+          "barra_complementaria",    # {barra, factor_actual} | None
+          "n_registros",
+          "factores": {idx: {barra, fecha, p1..p24}},     # multiplicador relativo al factor_actual
+          "variaciones": {idx: {barra, fecha, p1..p24}},  # delta absoluto (kW/MW, misma unidad que las medidas)
+        }
+    """
+    medidas_p_total = _obtener_medidas_clusterizadas_para_curvas_tipicas(
+        fecha_inicial, fecha_final, mc, tipo_dia, curvas_tipicas, "A", dsn=dsn
+    )
+    medidas_q_total = _obtener_medidas_clusterizadas_para_curvas_tipicas(
+        fecha_inicial, fecha_final, mc, tipo_dia, curvas_tipicas, "R", dsn=dsn
+    )
+    medidas_generador = _obtener_medidas_generador_para_curvas_tipicas(
+        fecha_inicial, fecha_final, mc, tipo_dia, curvas_tipicas, "A",
+        barra, codigo_rpm_generador, dsn=dsn
+    )
+
+    # Factor actualmente configurado en agrupaciones para (barra,
+    # generador) — el "factor_ajuste" que arma cada periodo es relativo a
+    # lo que ya está configurado; hace falta este valor para poder
+    # convertirlo en el nuevo factor absoluto (factor_actual * ajuste).
+    factor_actual_rows = factores_service.consultar_barra_factor_nombre(
+        barra, "A", [codigo_rpm_generador], dsn=dsn
+    )
+    factor_actual = (
+        float(factor_actual_rows[0]["factor"]) if factor_actual_rows else None
+    )
+
+    # Un mismo generador puede repartirse entre varias barras con
+    # factores que suman 1 (p.ej. 0.85 en una y 0.15 en la otra) — se
+    # busca esa contraparte para poder mostrar también su factor
+    # resultante (1 - factor_nuevo_recomendado).
+    barra_complementaria = None
+    if factor_actual is not None:
+        otras_barras = factores_service.consultar_barras_por_codigo_rpm(
+            codigo_rpm_generador, "A", dsn=dsn
+        )
+        for fila in otras_barras:
+            if fila["barra"] != barra:
+                barra_complementaria = {
+                    "barra": fila["barra"],
+                    "factor_actual": float(fila["factor"]),
+                }
+                break
+
+    vacio = {
+        "tipo_dia": tipo_dia,
+        "barra": barra,
+        "codigo_rpm_generador": codigo_rpm_generador,
+        "fp_objetivo": fp_objetivo,
+        "factor_actual": factor_actual,
+        "barra_complementaria": barra_complementaria,
+        "n_registros": 0,
+        "factores": {},
+        "variaciones": {},
+    }
+    if not medidas_p_total or not medidas_q_total or not medidas_generador:
+        return vacio
+
+    def _a_df(medidas: List[Dict[str, Any]]) -> pd.DataFrame:
+        filas = []
+        for m in medidas:
+            fila = {'barra': m['barra'], 'fecha': m['fecha']}
+            fila.update(m['periodos'])
+            filas.append(fila)
+        return pd.DataFrame(filas)
+
+    df_p = _a_df(medidas_p_total)
+    df_q = _a_df(medidas_q_total)
+    df_gen = _a_df(medidas_generador).rename(
+        columns={f'p{i}': f'p{i}_gen' for i in range(1, 25)}
+    )
+
+    df = df_p.merge(df_q, on=['barra', 'fecha'], suffixes=('_p', '_q'))
+    df = df.merge(
+        df_gen[['fecha'] + [f'p{i}_gen' for i in range(1, 25)]],
+        on='fecha', how='left',
+    )
+
+    if df.empty:
+        return vacio
+
+    denom_objetivo = float(np.sqrt(max(1e-12, 1.0 - float(fp_objetivo) ** 2)))
+
+    factor_cols: Dict[str, np.ndarray] = {}
+    variacion_cols: Dict[str, np.ndarray] = {}
+    for i in range(1, 25):
+        P = df[f'p{i}_p'].to_numpy(dtype=float)
+        Q = df[f'p{i}_q'].to_numpy(dtype=float)
+        col_gen = f'p{i}_gen'
+        P_gen = (
+            df[col_gen].to_numpy(dtype=float)
+            if col_gen in df.columns else np.full(len(df), np.nan)
+        )
+
+        Q_mag = np.abs(Q)
+        S = np.sqrt(P ** 2 + Q_mag ** 2)
+        fp_actual = np.where(S == 0, 1.0, np.divide(P, S, out=np.ones_like(P), where=S != 0))
+
+        p_objetivo_barra = Q_mag * float(fp_objetivo) / denom_objetivo
+        delta_p = p_objetivo_barra - P
+
+        ya_cumple = fp_actual >= (float(fp_objetivo) - 1e-9)
+
+        p_gen_nuevo = P_gen + delta_p
+        with np.errstate(divide='ignore', invalid='ignore'):
+            factor = np.where(
+                ya_cumple,
+                1.0,
+                np.where(P_gen == 0, np.nan, p_gen_nuevo / P_gen),
+            )
+        variacion = np.where(ya_cumple, 0.0, delta_p)
+
+        factor_cols[f'p{i}'] = np.round(factor, PRECISION_DECIMALES)
+        variacion_cols[f'p{i}'] = np.round(variacion, PRECISION_DECIMALES)
+
+    df_factor = pd.DataFrame(factor_cols)
+    df_factor['barra'] = df['barra'].values
+    df_factor['fecha'] = df['fecha'].values
+
+    df_variacion = pd.DataFrame(variacion_cols)
+    df_variacion['barra'] = df['barra'].values
+    df_variacion['fecha'] = df['fecha'].values
+
+    return {
+        "tipo_dia": tipo_dia,
+        "barra": barra,
+        "codigo_rpm_generador": codigo_rpm_generador,
+        "fp_objetivo": fp_objetivo,
+        "factor_actual": factor_actual,
+        "barra_complementaria": barra_complementaria,
+        "n_registros": len(df),
+        "factores": df_factor.where(pd.notna(df_factor), None).to_dict('index'),
+        "variaciones": df_variacion.where(pd.notna(df_variacion), None).to_dict('index'),
+    }
