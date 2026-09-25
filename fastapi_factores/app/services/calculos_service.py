@@ -870,6 +870,10 @@ def calcular_ajuste_fp_generador(
 
     factor_cols: Dict[str, np.ndarray] = {}
     variacion_cols: Dict[str, np.ndarray] = {}
+    fp_actual_cols: Dict[str, np.ndarray] = {}
+    p_barra_cols: Dict[str, np.ndarray] = {}
+    p_gen_cols: Dict[str, np.ndarray] = {}
+    q_barra_cols: Dict[str, np.ndarray] = {}
     for i in range(1, 25):
         P = df[f'p{i}_p'].to_numpy(dtype=float)
         Q = df[f'p{i}_q'].to_numpy(dtype=float)
@@ -899,6 +903,10 @@ def calcular_ajuste_fp_generador(
 
         factor_cols[f'p{i}'] = np.round(factor, PRECISION_DECIMALES)
         variacion_cols[f'p{i}'] = np.round(variacion, PRECISION_DECIMALES)
+        fp_actual_cols[f'p{i}'] = np.round(fp_actual, PRECISION_DECIMALES)
+        p_barra_cols[f'p{i}'] = np.round(P, PRECISION_DECIMALES)
+        p_gen_cols[f'p{i}'] = np.round(P_gen, PRECISION_DECIMALES)
+        q_barra_cols[f'p{i}'] = np.round(Q_mag, PRECISION_DECIMALES)
 
     df_factor = pd.DataFrame(factor_cols)
     df_factor['barra'] = df['barra'].values
@@ -907,6 +915,32 @@ def calcular_ajuste_fp_generador(
     df_variacion = pd.DataFrame(variacion_cols)
     df_variacion['barra'] = df['barra'].values
     df_variacion['fecha'] = df['fecha'].values
+
+    # FP actual por periodo de la barra (antes de cualquier ajuste) — el
+    # periodo con el valor mas bajo es la "hora mas exigente" que determina
+    # el factor recomendado (peor caso).
+    df_fp_actual = pd.DataFrame(fp_actual_cols)
+    df_fp_actual['barra'] = df['barra'].values
+    df_fp_actual['fecha'] = df['fecha'].values
+
+    # Potencia activa/reactiva cruda de la barra y del generador, por
+    # periodo — para que quien consuma esto pueda simular el efecto real
+    # de aplicar UN solo factor uniforme (el peor caso, ya que
+    # agrupaciones.factor es fijo para las 24 horas) y mostrar, con las
+    # mismas unidades del reporte, cuánto sube/baja la barra y a qué FP
+    # llega — consistente con fp_actual_barra y factores/variaciones, que
+    # sí varían factor por periodo (un ideal no aplicable en la práctica).
+    df_p_barra = pd.DataFrame(p_barra_cols)
+    df_p_barra['barra'] = df['barra'].values
+    df_p_barra['fecha'] = df['fecha'].values
+
+    df_p_gen = pd.DataFrame(p_gen_cols)
+    df_p_gen['barra'] = df['barra'].values
+    df_p_gen['fecha'] = df['fecha'].values
+
+    df_q_barra = pd.DataFrame(q_barra_cols)
+    df_q_barra['barra'] = df['barra'].values
+    df_q_barra['fecha'] = df['fecha'].values
 
     return {
         "tipo_dia": tipo_dia,
@@ -918,4 +952,8 @@ def calcular_ajuste_fp_generador(
         "n_registros": len(df),
         "factores": df_factor.where(pd.notna(df_factor), None).to_dict('index'),
         "variaciones": df_variacion.where(pd.notna(df_variacion), None).to_dict('index'),
+        "fp_actual_barra": df_fp_actual.where(pd.notna(df_fp_actual), None).to_dict('index'),
+        "p_barra_actual": df_p_barra.where(pd.notna(df_p_barra), None).to_dict('index'),
+        "p_gen_actual": df_p_gen.where(pd.notna(df_p_gen), None).to_dict('index'),
+        "q_barra_actual": df_q_barra.where(pd.notna(df_q_barra), None).to_dict('index'),
     }
