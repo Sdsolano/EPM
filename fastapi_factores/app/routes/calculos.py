@@ -144,6 +144,7 @@ def obtener_curvas_tipicas(payload: CurvasTipicasRequest):
             payload.flujo_tipo,
             payload.n_max,
             payload.barra,
+            payload.ignorar_negativos,
             dsn=payload.database_url,
         )
         return {"ok": True, "data": data, "n": len(data)}
@@ -235,6 +236,7 @@ def calcular_fda(payload: CalculoFDARequest):
             payload.mc,
             payload.tipo_dia,
             curvas,
+            payload.ignorar_negativos,
             dsn=payload.database_url,
         )
         suma = resultado.get("suma_total", 0)
@@ -296,6 +298,7 @@ def calcular_fdp(payload: CalculoFDPRequest):
             payload.mc,
             payload.tipo_dia,
             curvas,
+            payload.ignorar_negativos,
             dsn=payload.database_url,
         )
         return {
@@ -350,6 +353,7 @@ def calcular_fda_y_fdp(payload: CalculoFDARequest):
             payload.mc,
             payload.tipo_dia,
             curvas,
+            payload.ignorar_negativos,
             dsn=payload.database_url,
         )
         fdp_resultado = service.calcular_fdp_para_tipo_dia(
@@ -358,6 +362,7 @@ def calcular_fda_y_fdp(payload: CalculoFDARequest):
             payload.mc,
             payload.tipo_dia,
             curvas,
+            payload.ignorar_negativos,
             dsn=payload.database_url,
         )
         return {

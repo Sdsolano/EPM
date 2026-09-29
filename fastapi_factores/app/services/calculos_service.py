@@ -309,6 +309,7 @@ def _df_to_response(df: pd.DataFrame, tipo_dia: str, ajuste: float = None) -> Di
 def _procesar_medidas_con_factores(
     medidas: List[Dict[str, Any]],
     factores: List[Dict[str, Any]],
+    ignorar_negativos: bool = False,
 ) -> List[Dict[str, Any]]:
     """
     Aplica la config de cada agrupación (dividir_por_1000 -> factor ->
@@ -316,6 +317,12 @@ def _procesar_medidas_con_factores(
     los periodos. Lógica compartida entre aplicar_clustering (todos los
     codigo_rpm configurados en una barra) y aplicar_clustering_generador
     (un solo codigo_rpm, para aislar el aporte de un generador puntual).
+
+    ignorar_negativos excluye, ANTES de agrupar, cualquier medida cuyo
+    valor YA CON el factor de la agrupación aplicado (no el valor crudo)
+    quede negativo en algún periodo — el factor (p.ej. -1 por convención
+    de sentido de flujo) es lo que normalmente introduce el signo, no el
+    dato crudo almacenado.
     """
     df = pd.DataFrame(medidas)
 
@@ -347,6 +354,11 @@ def _procesar_medidas_con_factores(
                 )
             df[col_resultado] = df.apply(_aplicar, axis=1)
 
+    if ignorar_negativos and not df.empty:
+        cols_p = [f'p{i}' for i in range(1, 25) if f'p{i}' in df.columns]
+        if cols_p:
+            df = df[~(df[cols_p] < 0).any(axis=1)]
+
     # Renombrar columnas para uniformidad
     df = df.rename(columns={'babarra': 'barra', 'mefecha': 'fecha'})
 
@@ -374,6 +386,7 @@ def aplicar_clustering(
     barra: str,
     flujo_tipo: str,
     tipo_dia: str = "",
+    ignorar_negativos: bool = False,
     dsn: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
@@ -389,6 +402,7 @@ def aplicar_clustering(
         barra: Nombre de la barra
         flujo_tipo: "A" (Activa) o "R" (Reactiva)
         tipo_dia: ORDINARIO, SABADO, FESTIVO o vacío para todos
+        ignorar_negativos: si True, excluye medidas con algún periodo horario negativo
 
     Returns:
         Lista de medidas clusterizadas por fecha
@@ -414,7 +428,7 @@ def aplicar_clustering(
     if not medidas:
         return []
 
-    return _procesar_medidas_con_factores(medidas, factores)
+    return _procesar_medidas_con_factores(medidas, factores, ignorar_negativos)
 
 
 def aplicar_clustering_generador(
@@ -425,6 +439,7 @@ def aplicar_clustering_generador(
     flujo_tipo: str,
     codigo_rpm_generador: str,
     tipo_dia: str = "",
+    ignorar_negativos: bool = False,
     dsn: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
@@ -447,7 +462,7 @@ def aplicar_clustering_generador(
     if not medidas:
         return []
 
-    return _procesar_medidas_con_factores(medidas, factores)
+    return _procesar_medidas_con_factores(medidas, factores, ignorar_negativos)
 
 
 def obtener_curvas_tipicas(
@@ -458,6 +473,7 @@ def obtener_curvas_tipicas(
     flujo_tipo: str,
     n_max: int,
     barra: Optional[str] = None,
+    ignorar_negativos: bool = False,
     dsn: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
@@ -486,7 +502,7 @@ def obtener_curvas_tipicas(
         if not nombre_barra:
             continue
         medidas = aplicar_clustering(
-            fecha_inicial, fecha_final, mc, nombre_barra, flujo_tipo, tipo_dia, dsn=dsn
+            fecha_inicial, fecha_final, mc, nombre_barra, flujo_tipo, tipo_dia, ignorar_negativos, dsn=dsn
         )
         for m in medidas:
             curvas_todas.append({
@@ -556,6 +572,7 @@ def _obtener_medidas_clusterizadas_para_curvas_tipicas(
     tipo_dia: str,
     curvas_tipicas: List[Dict[str, Any]],
     flujo_tipo: str,
+    ignorar_negativos: bool = False,
     dsn: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
@@ -567,7 +584,7 @@ def _obtener_medidas_clusterizadas_para_curvas_tipicas(
     todas = []
     for barra in barras_unicas:
         medidas = aplicar_clustering(
-            fecha_inicial, fecha_final, mc, barra, flujo_tipo, tipo_dia, dsn=dsn
+            fecha_inicial, fecha_final, mc, barra, flujo_tipo, tipo_dia, ignorar_negativos, dsn=dsn
         )
         todas.extend(medidas)
     return _filtrar_medidas_por_curvas_tipicas(todas, curvas_tipicas)
@@ -582,6 +599,7 @@ def _obtener_medidas_generador_para_curvas_tipicas(
     flujo_tipo: str,
     barra: str,
     codigo_rpm_generador: str,
+    ignorar_negativos: bool = False,
     dsn: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
@@ -592,7 +610,7 @@ def _obtener_medidas_generador_para_curvas_tipicas(
     if not curvas_tipicas:
         return []
     medidas = aplicar_clustering_generador(
-        fecha_inicial, fecha_final, mc, barra, flujo_tipo, codigo_rpm_generador, tipo_dia, dsn=dsn
+        fecha_inicial, fecha_final, mc, barra, flujo_tipo, codigo_rpm_generador, tipo_dia, ignorar_negativos, dsn=dsn
     )
     return _filtrar_medidas_por_curvas_tipicas(medidas, curvas_tipicas)
 
@@ -603,6 +621,7 @@ def calcular_fda_para_tipo_dia(
     mc: str,
     tipo_dia: str,
     curvas_tipicas: List[Dict[str, Any]],
+    ignorar_negativos: bool = False,
     dsn: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
@@ -617,13 +636,14 @@ def calcular_fda_para_tipo_dia(
         mc: Código de mercado/centro
         tipo_dia: ORDINARIO, SABADO o FESTIVO
         curvas_tipicas: Lista de {barra, fecha} (salida de curvas-tipicas). FDA se calcula solo sobre estas.
+        ignorar_negativos: si True, excluye medidas con algún periodo horario negativo
         dsn: URL de conexión a BD alternativa (opcional)
 
     Returns:
         Diccionario con factores FDA normalizados
     """
     medidas_clusterizadas = _obtener_medidas_clusterizadas_para_curvas_tipicas(
-        fecha_inicial, fecha_final, mc, tipo_dia, curvas_tipicas, "A", dsn=dsn
+        fecha_inicial, fecha_final, mc, tipo_dia, curvas_tipicas, "A", ignorar_negativos, dsn=dsn
     )
 
     if not medidas_clusterizadas:
@@ -671,6 +691,7 @@ def calcular_fdp_para_tipo_dia(
     mc: str,
     tipo_dia: str,
     curvas_tipicas: List[Dict[str, Any]],
+    ignorar_negativos: bool = False,
     dsn: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
@@ -686,16 +707,17 @@ def calcular_fdp_para_tipo_dia(
         mc: Código de mercado/centro
         tipo_dia: ORDINARIO, SABADO o FESTIVO
         curvas_tipicas: Lista de {barra, fecha}. FDP se calcula solo sobre estas.
+        ignorar_negativos: si True, excluye medidas con algún periodo horario negativo
         dsn: URL de conexión a BD alternativa (opcional)
 
     Returns:
         Diccionario con factores FDP calculados
     """
     medidas_a = _obtener_medidas_clusterizadas_para_curvas_tipicas(
-        fecha_inicial, fecha_final, mc, tipo_dia, curvas_tipicas, "A", dsn=dsn
+        fecha_inicial, fecha_final, mc, tipo_dia, curvas_tipicas, "A", ignorar_negativos, dsn=dsn
     )
     medidas_r = _obtener_medidas_clusterizadas_para_curvas_tipicas(
-        fecha_inicial, fecha_final, mc, tipo_dia, curvas_tipicas, "R", dsn=dsn
+        fecha_inicial, fecha_final, mc, tipo_dia, curvas_tipicas, "R", ignorar_negativos, dsn=dsn
     )
 
     if not medidas_a or not medidas_r:
