@@ -4,6 +4,7 @@ Módulo para obtener festivos desde la API de pronosticos.jmdatalabs.co
 Reemplaza la librería 'holidays' y los archivos JSON hardcodeados.
 """
 
+import os
 import requests
 from typing import List, Set, Optional
 from datetime import datetime, date
@@ -16,23 +17,26 @@ logger = logging.getLogger(__name__)
 class FestivosAPIClient:
     """
     Cliente para obtener festivos desde la API de pronosticos.jmdatalabs.co
-    
+
     IMPORTANTE: Este cliente NO tiene caché persistente. Cada instancia nueva
     hace llamadas frescas a la API, garantizando que los cambios en la API se
     reflejen en cada ejecución. El caché solo existe a nivel de instancia
     (ForecastPipeline, CalendarClassifier) durante la ejecución actual.
     """
-    
+
     BASE_URL = "https://pronosticos.jmdatalabs.co/api/v1/admin/configuracion-interna/listarFestivos"
-    
+
     def __init__(self, base_url: Optional[str] = None):
         """
         Inicializa el cliente de festivos.
-        
+
         Args:
-            base_url: URL base del endpoint (opcional, usa default si no se proporciona)
+            base_url: URL base del endpoint (opcional; si no se pasa, usa
+                FESTIVOS_API_BASE_URL del entorno (.env, no versionado) para
+                poder apuntar al backend local en desarrollo sin tocar el
+                default de producción; si tampoco está seteada, usa BASE_URL)
         """
-        self.base_url = base_url or self.BASE_URL
+        self.base_url = base_url or os.getenv("FESTIVOS_API_BASE_URL") or self.BASE_URL
     
     def get_festivos(
         self, 
@@ -59,7 +63,7 @@ class FestivosAPIClient:
         
         try:
             logger.debug(f"Solicitando festivos desde API: {url}")
-            print(f"[FESTIVOS] Request → {url}")
+            print(f"[FESTIVOS] Request -> {url}")
             response = requests.get(url, timeout=10)
             response.raise_for_status()
             
