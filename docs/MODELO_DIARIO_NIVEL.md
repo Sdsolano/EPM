@@ -13,6 +13,8 @@ MAPE del backtest 2.88% vs 3.05%.) Features: calendario (día de semana, mes, fe
 día después/antes de festivo, puente, navidad, Semana Santa), clima del día (temperatura
 min/media/max, sensación térmica, viento, lluvia, nubosidad), horizonte `h` y `m7`/`m14`
 (media 7/14 días sobre el ancla). Ensamble simple de LightGBM + ExtraTrees + Ridge.
+LightGBM entrena con pérdida **L1 (MAE)**: el objetivo es el error porcentual, da un sesgo casi nulo
+y ~0.03pp menos de MAPE que L2 (validado en el backtest de 7 y de 23 cortes).
 
 ## Artefactos (`models/{ucp}/`)
 - `trained_diario/daily_level.joblib`: payload `{model, feature_names, model_kind='daily_level_ratio_v1', trained_until, metrics}`.
@@ -69,7 +71,8 @@ Con <120 filas, o si el primer entrenamiento falla, se usa el camino legacy.
 - Los festivos ordinarios no se mezclan con el año anterior.
 
 ## Backtest (Atlantico Norte, 7 cortes de 30 días)
-MAPE 2.88% con clima conocido 10 días después del corte y 2.87% con 30 días (código original: 4.70%).
-Jueves/Viernes Santo 2026: 3.1% y 2.8% de error.
-En un backtest ampliado (23 cortes cada 20 días desde 2025-05, 690 obs) el ancla de 21 días mejora el
-MAPE de 4.24% (28 días) a 4.13%.
+MAPE 2.84% con clima conocido 10 días después del corte y 2.82% con 30 días (código original: 4.70%),
+con sesgo casi nulo. Jueves/Viernes Santo 2026: 3.1% y 2.8% de error.
+En un backtest ampliado (23 cortes cada 20 días desde 2025-05, 690 obs) el ancla de 21 días + pérdida L1
+dan 4.11% (28 días + L2: 4.24%). El diseño de ventana de ancla y de pérdida se validó en AMBOS backtests
+para evitar el sobreajuste que mostraban otras variantes (pesos NNLS, recencia, etc.).
