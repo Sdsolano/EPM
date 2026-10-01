@@ -273,7 +273,10 @@ class DailyLevelModel:
         self.feature_names = list(X.columns)
         self.median_ = X.median()
         self.members = {
+            # regresión L1 (MAE): el objetivo es minimizar el error porcentual; en el backtest da
+            # un sesgo casi nulo y ~0.03pp menos de MAPE que L2 (y generaliza en el backtest ampliado).
             'lightgbm': lgb.LGBMRegressor(
+                objective='regression_l1',
                 n_estimators=300, learning_rate=0.03, num_leaves=8, min_child_samples=20,
                 subsample=0.8, subsample_freq=1, colsample_bytree=0.8, reg_lambda=5, verbose=-1),
             'extratrees': ExtraTreesRegressor(

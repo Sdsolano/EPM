@@ -74,10 +74,14 @@ Datos: API de producción; solo hay demanda diaria de "Atlantico Norte" (608 dí
         * features de día de mes (dom/Fourier), rezagos estacionales lag7/14/28, tendencia 28d, climatología,
           todos los horizontes 1..30, más capacidad LightGBM, ancla mediana, anomalías de clima: todas empeoran => descartadas.
         * **ANCLA: ventana 21 días** (antes 28): MEJORA en AMBOS backtests de forma consistente.
-- [x] **Cambio final aplicado**: `ANCHOR_DAYS = 21` (antes 28) en `daily_level_model.py`; variables/docstrings/docs
-      actualizadas (`a28` -> "ancla"). Backtest 7-corte: **2.880 (WL10) / 2.867 (WL30)** (antes 3.053/3.064; original
-      4.704). Extendido 23 cortes: 4.132 (28d) -> vs 4.241. Tests 46 passed; pyflakes limpio. Se descarta NNLS/recencia
-      por no generalizar (sobreajuste al 7-corte).
+        * **pérdida L1 (MAE) en LightGBM** (antes L2): MEJORA en AMBOS (7-corte 2.880->2.845; extendido 4.129->4.107)
+          y reduce el sesgo a casi 0; se adopta. Festivos ponderados y mediana/trim del ensamble: sin mejora clara.
+        * señales de calendario extra (fest_prev/next, within2, puente_largo): sin mejora => NO se incluyen.
+- [x] **Cambio final aplicado**: `ANCHOR_DAYS = 21` (antes 28) + **LightGBM con pérdida L1 (MAE)** en
+      `daily_level_model.py`; variables/docstrings/docs actualizadas (`a28` -> "ancla"). Backtest 7-corte:
+      **2.835 (WL10) / 2.821 (WL30)** (antes 3.053/3.064; original 4.704) con sesgo ~0. Extendido 23 cortes:
+      4.107 (vs 4.241 con 28d/L2). Tests 46 passed; pyflakes limpio. Se descarta NNLS/recencia/festivos
+      ponderados/señales de calendario extra por no generalizar en el backtest ampliado.
 - [x] Limpieza de artefactos y commit local en `test-mejora`: **172307c** (8 archivos; `git add -f` para
       `src/models/daily_level_model.py` y `docs/MODELO_DIARIO_NIVEL.md`). Sin push, sin amend, sin force.
       Working tree limpio; EPM-base en 705e649; repo principal `EPM` sin tocar.
