@@ -89,6 +89,7 @@ class CurvasTipicasRequest(BaseModel):
     flujo_tipo: str  # 'A' | 'R'
     n_max: int = Field(8, ge=1, le=100, description="Máximo de curvas típicas a devolver")
     barra: Optional[str] = None  # si se da, solo curvas de esa barra; si no, todas las barras del MC
+    ignorar_negativos: bool = Field(False, description="Si es true, excluye del cálculo las medidas con algún periodo horario (p1..p24) negativo")
     database_url: Optional[str] = Field(None, description="URL de conexión a BD alternativa (ej: postgresql://user:pass@host:5432/db)")
 
 
@@ -115,6 +116,7 @@ class CalculoFDARequest(BaseModel):
         ...,
         description="Curvas seleccionadas (salida de curvas-tipicas). FDA se calcula solo sobre estas."
     )
+    ignorar_negativos: bool = Field(False, description="Si es true, excluye del cálculo las medidas con algún periodo horario (p1..p24) negativo")
     database_url: Optional[str] = Field(None, description="URL de conexión a BD alternativa (ej: postgresql://user:pass@host:5432/db)")
 
 
@@ -128,4 +130,24 @@ class CalculoFDPRequest(BaseModel):
         ...,
         description="Curvas seleccionadas (salida de curvas-tipicas). FDP se calcula solo sobre estas."
     )
+    ignorar_negativos: bool = Field(False, description="Si es true, excluye del cálculo las medidas con algún periodo horario (p1..p24) negativo")
+    database_url: Optional[str] = Field(None, description="URL de conexión a BD alternativa (ej: postgresql://user:pass@host:5432/db)")
+
+
+class AjusteFPGeneradorRequest(BaseModel):
+    """Request para calcular el ajuste de FP de una barra moviendo la
+    potencia activa de un generador puntual (Modo 2 del algoritmo de
+    ajuste de factor de potencia) — se calcula solo sobre las curvas
+    típicas indicadas, igual que FDA/FDP."""
+    fecha_inicial: str
+    fecha_final: str
+    mc: str
+    tipo_dia: str  # ORDINARIO, SABADO, FESTIVO
+    curvas_tipicas: List[CurvaTipicaRef] = Field(
+        ...,
+        description="Curvas seleccionadas (salida de curvas-tipicas). El ajuste se calcula solo sobre estas."
+    )
+    barra: str = Field(..., description="Barra sobre la que se calcula el FP a ajustar")
+    codigo_rpm_generador: str = Field(..., description="codigo_rpm del generador/circuito puntual (ya configurado en agrupaciones para esta barra, flujo activo) cuya potencia activa se ajustará")
+    fp_objetivo: float = Field(..., gt=0, le=1, description="Factor de potencia objetivo, 0 < fp_objetivo <= 1")
     database_url: Optional[str] = Field(None, description="URL de conexión a BD alternativa (ej: postgresql://user:pass@host:5432/db)")

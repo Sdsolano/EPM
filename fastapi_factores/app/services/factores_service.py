@@ -144,6 +144,31 @@ def consultar_factor(codigo_rpm: str, flujo: str):
     return fetch_all(sql, {"codigo_rpm": codigo_rpm, "flujo": flujo})
 
 
+def consultar_barras_por_codigo_rpm(
+    codigo_rpm: str, flujo_tipo: str, dsn: Optional[str] = None
+):
+    """
+    Todas las barras (con su factor configurado) que tienen este mismo
+    codigo_rpm registrado en agrupaciones para el flujo indicado (A o R)
+    — un generador/circuito puntual puede repartirse entre varias barras,
+    cada una con su propio factor (p.ej. 0.85 y 0.15, que juntos suman el
+    100% del generador). Usado por calcular_ajuste_fp_generador para
+    mostrar también el factor resultante en la(s) barra(s) que comparten
+    el mismo generador.
+    """
+    sql = (
+        "SELECT BA.barra AS barra, AG.factor AS factor "
+        "FROM agrupaciones AG "
+        "INNER JOIN barras BA ON BA.id = AG.barra_id "
+        "WHERE AG.codigo_rpm = %(codigo_rpm)s "
+        "AND substring(AG.flujo from 1 for 1) = %(flujo_tipo)s "
+        "AND AG.estado = 1 AND BA.estado = 1"
+    )
+    return fetch_all(
+        sql, {"codigo_rpm": codigo_rpm, "flujo_tipo": flujo_tipo}, dsn=dsn
+    )
+
+
 def consultar_agrupaciones_index_x_barra_id_order_rpm(barra_id: str):
     sql = "SELECT id, barra_id, codigo_rpm, flujo, habilitar, revision, estado, factor FROM agrupaciones WHERE barra_id = %(barra_id)s ORDER BY codigo_rpm"
     return fetch_all(sql, {"barra_id": barra_id})
