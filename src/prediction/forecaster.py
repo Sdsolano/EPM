@@ -49,11 +49,34 @@ except ImportError:
 
 # Importar utilidades de Semana Santa
 try:
-    from .easter_utils import get_smart_historical_lag, detect_easter_day_type
+    from .easter_utils import get_smart_historical_lag, detect_easter_day_type, get_historical_easter_date
 except ImportError:
     get_smart_historical_lag = None
     detect_easter_day_type = None
+    get_historical_easter_date = None
     logger.warning("⚠ easter_utils no disponible. Semana Santa usará lag tradicional.")
+
+# Modelo de nivel diario (/predict-daily). Import tolerante: el módulo arrastra src/models/__init__.py
+# (que usa imports absolutos `src.`), así que con solo `src/` en sys.path se agrega la raíz del repo;
+# si aun así falla, el resto del forecaster sigue funcionando y solo el camino diario falla (con
+# un error claro) al intentar usarse.
+_DAILY_LEVEL_IMPORT_ERROR = None
+try:
+    from ..models.daily_level_model import (
+        MODEL_KIND as DAILY_LEVEL_MODEL_KIND, load_daily_weather, predict_daily_level,
+        clean_demand, yoy_growth_factor)
+except ImportError:
+    try:
+        _repo_root = str(Path(__file__).resolve().parent.parent.parent)
+        if _repo_root not in sys.path:
+            sys.path.append(_repo_root)
+        from src.models.daily_level_model import (
+            MODEL_KIND as DAILY_LEVEL_MODEL_KIND, load_daily_weather, predict_daily_level,
+            clean_demand, yoy_growth_factor)
+    except ImportError as _e:
+        _DAILY_LEVEL_IMPORT_ERROR = _e
+        DAILY_LEVEL_MODEL_KIND = 'daily_level_ratio_v1'
+        load_daily_weather = predict_daily_level = clean_demand = yoy_growth_factor = None
 
 # Importar cálculo de sensación térmica (heat index) — usado para completar
 # el pronóstico climático sintético/fallback cuando no hay lecturas horarias
@@ -70,6 +93,15 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+
+# Modelo de nivel diario (/predict-daily): regla de negocio de días muy especiales, temporada
+# navideña y Semana Santa (mezcla ponderada con el valor de hace 1 año, escalado por crecimiento
+# interanual). Son perillas de NEGOCIO (no de modelo): se dejan a nivel de módulo para poder
+# evaluarlas con y sin la regla.
+DAILY_HOLIDAY_BLEND = True
+DAILY_BLEND_ORDINARY_FESTIVOS = False  # también mezclar festivos ordinarios (fuera de navidad/Semana Santa)
+DAILY_VERY_SPECIAL_DAYS = ('12-24', '12-25', '12-08', '01-01', '01-02')
 
 
 class ForecastPipeline:
@@ -118,6 +150,8 @@ class ForecastPipeline:
         model_dict = joblib.load(model_path)
         self.model = model_dict['model'] if isinstance(model_dict, dict) else model_dict
         self.feature_names = model_dict.get('feature_names', None)
+        # 'daily_level_ratio_v1' = modelo de nivel de /predict-daily (ver models/daily_level_model.py)
+        self.model_kind = model_dict.get('model_kind') if isinstance(model_dict, dict) else None
 
         # Cargar datos históricos
         logger.info(f"Cargando datos históricos desde {historical_data_path}")
@@ -1113,6 +1147,10 @@ class ForecastPipeline:
         start_festivos = primer_dia_prediccion - timedelta(days=30)
         end_festivos = ultimo_dia_prediccion + timedelta(days=30)
         self._load_festivos_for_range(start_festivos, end_festivos)
+
+        # Modelo de nivel diario (/predict-daily): camino propio, sin ajustes hardcodeados
+        if self.model_kind == DAILY_LEVEL_MODEL_KIND:
+            return self._predict_next_n_days_daily_level(n_days)
         
         # Pre-cargar festivos en el CalendarClassifier del hourly_engine para evitar llamadas repetidas
         if self.hourly_engine is not None and hasattr(self.hourly_engine, 'calendar_classifier'):
@@ -1347,6 +1385,96 @@ class ForecastPipeline:
         logger.info(f"✓ Predicción completada: {n_days} días procesados")
         logger.info(f"{'='*80}\n")
 
+        return pd.DataFrame(predictions)
+
+    def _predict_next_n_days_daily_level(self, n_days: int) -> pd.DataFrame:
+        """
+        Predicción diaria con el modelo de nivel (ratio sobre ancla de ANCHOR_DAYS días).
+
+        Sin ajuste de régimen ni ajuste hardcodeado por mercado: el nivel se
+        re-ancla solo a la demanda reciente. Se conserva (acotada) la regla de
+        negocio de días muy especiales / temporada navideña / Semana Santa
+        mezclando con el valor de hace 1 año (alineado a Pascua en Semana
+        Santa) escalado por el crecimiento interanual del nivel
+        (ver DAILY_HOLIDAY_BLEND).
+        """
+        if predict_daily_level is None:
+            raise RuntimeError(
+                f"El modelo de nivel diario no está disponible (falló el import de "
+                f"models.daily_level_model: {_DAILY_LEVEL_IMPORT_ERROR})")
+
+        hist = self.df_historico
+        demanda_col = 'demanda_total' if 'demanda_total' in hist.columns else 'TOTAL'
+        # Mismo criterio que el modelo (NaN o <= 0 no cuenta; índice único): el origen es el último día VÁLIDO
+        demanda = clean_demand(pd.Series(hist[demanda_col].values, index=pd.to_datetime(hist['fecha'])))
+        if demanda.empty:
+            raise ValueError("No hay demanda histórica válida (> 0) para predecir.")
+        ultimo_dia = demanda.index.max()
+        fechas = pd.date_range(ultimo_dia + timedelta(days=1), periods=n_days)
+        # Si el último día válido es anterior al último del histórico, asegurar festivos del rango real
+        self._load_festivos_for_range(fechas[0] - timedelta(days=30), fechas[-1] + timedelta(days=30))
+
+        # Festivos: API (rango cargado) + festivos marcados en el histórico
+        festivos = {pd.Timestamp(f).normalize() for f in self.festivos}
+        if 'is_festivo' in hist.columns:
+            festivos |= set(pd.to_datetime(hist.loc[hist['is_festivo'] == 1, 'fecha']).dt.normalize())
+
+        weather = load_daily_weather(self.raw_climate_path)
+        preds = predict_daily_level(self.model, demanda, fechas, festivos, weather)
+
+        crecimiento = None  # se calcula solo si hay algún día a mezclar
+        mezclados = []      # trazabilidad: fechas mezcladas con su peso y factor de crecimiento
+        predictions = []
+        for fecha in fechas:
+            demanda_pred = float(preds.loc[fecha])
+            es_festivo = fecha in festivos
+            es_finde = fecha.dayofweek >= 5
+
+            if DAILY_HOLIDAY_BLEND:
+                month_day = f"{fecha.month:02d}-{fecha.day:02d}"
+                muy_especial = month_day in DAILY_VERY_SPECIAL_DAYS
+                navidad = (fecha.month == 12 and fecha.day >= 23) or (fecha.month == 1 and fecha.day <= 6)
+                tipo_pascua = detect_easter_day_type(fecha) if detect_easter_day_type is not None else None
+                peso = None
+                if muy_especial:
+                    peso = 0.70
+                elif es_festivo and (navidad or tipo_pascua or DAILY_BLEND_ORDINARY_FESTIVOS):
+                    peso = 0.60
+                elif navidad and es_finde:
+                    peso = 0.60
+                if peso is not None:
+                    # Semana Santa: mismo día litúrgico del año anterior; resto: misma fecha hace 1 año
+                    fecha_lag = None
+                    if tipo_pascua and get_historical_easter_date is not None:
+                        fecha_lag = pd.Timestamp(get_historical_easter_date(fecha, 1))
+                    if fecha_lag is None:
+                        fecha_lag = fecha - pd.DateOffset(years=1)
+                    lag_1y = demanda.get(fecha_lag, 0)
+                    if lag_1y > 0:
+                        if crecimiento is None:
+                            crecimiento = yoy_growth_factor(demanda, festivos, ultimo_dia)
+                        lag_esc = lag_1y * crecimiento
+                        logger.info(f"   🔧 {fecha.date()}: mezcla {int(peso*100)}% con {fecha_lag.date()} "
+                                    f"({lag_1y:,.0f} x crecimiento {crecimiento:.3f}); modelo {demanda_pred:,.0f}")
+                        demanda_pred = peso * lag_esc + (1 - peso) * demanda_pred
+                        mezclados.append(f"{fecha.date()} (peso {peso:.2f}, crecimiento {crecimiento:.3f})")
+
+            temp = weather['tmean'].get(fecha, np.nan) if len(weather) else np.nan
+            predictions.append({
+                'fecha': fecha,
+                'demanda_predicha': demanda_pred,
+                'is_festivo': int(es_festivo),
+                'is_weekend': int(es_finde),
+                'dayofweek': int(fecha.dayofweek),
+                'temp_mean': temp,
+                'metodo_desagregacion': 'placeholder',
+                'cluster_id': None,
+                **self._get_placeholder_hourly(demanda_pred),
+            })
+
+        if mezclados:
+            logger.info(f"   Mezcla con el año anterior aplicada en {len(mezclados)} fechas: {'; '.join(mezclados)}")
+        logger.info(f"✓ Predicción diaria (modelo de nivel) completada: {n_days} días")
         return pd.DataFrame(predictions)
 
     def save_predictions(self, predictions_df: pd.DataFrame, output_dir: str = 'predictions'):
