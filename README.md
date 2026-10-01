@@ -130,6 +130,7 @@ EPM/
 │
 ├── models/                       # Modelos entrenados (gitignored)
 │   ├── trained/                  # Modelos de predicción diaria
+│   ├── trained_diario/           # Modelo de nivel de /predict-daily (ver docs/MODELO_DIARIO_NIVEL.md)
 │   ├── registry/                 # Model registry (campeón)
 │   ├── hourly_disaggregator.pkl  # Clustering días normales
 │   └── special_days_disaggregator.pkl # Clustering festivos

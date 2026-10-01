@@ -17,9 +17,14 @@ from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List, Dict, Any, Tuple
 from pathlib import Path
 from datetime import datetime, timedelta
+import json
 import logging
 import re
+import threading
+import time
 import traceback
+import uuid
+import numpy as np
 import pandas as pd
 from fastapi.concurrency import run_in_threadpool
 import os
@@ -28,6 +33,7 @@ from openai import OpenAI
 # Importar componentes del sistema
 from src.pipeline.orchestrator import run_automated_pipeline
 from src.models.trainer import ModelTrainer
+from src.models.daily_level_model import MODEL_KIND as DAILY_LEVEL_MODEL_KIND, MIN_DAYS as DAILY_LEVEL_MIN_DAYS
 from src.prediction.forecaster import ForecastPipeline
 from src.prediction.hourly import HourlyDisaggregationEngine
 from src.prediction.hourly.adjustment_validator import HourlyAdjustmentValidator
@@ -911,6 +917,12 @@ Proporciona un análisis conciso (máximo 3-4 oraciones) con las causas más pro
         return f"Análisis automático no disponible (error: {str(e)})"
 
 
+def _champion_path(ucp: str, variant: str = 'hourly') -> Path:
+    """Ruta canónica del champion de un UCP/variante (única fuente para el nombre del archivo)."""
+    suffix = '_diario' if variant == 'daily' else ''
+    return Path(f'models/{ucp}/registry/champion_model{suffix}.joblib')
+
+
 def check_model_exists(ucp: str, variant: str = 'hourly') -> Tuple[bool, Optional[Path]]:
     """
     Verifica si existe un modelo entrenado en el registro para un UCP específico
@@ -929,7 +941,7 @@ def check_model_exists(ucp: str, variant: str = 'hourly') -> Tuple[bool, Optiona
     """
     suffix = '_diario' if variant == 'daily' else ''
     models_dir = Path(f'models/{ucp}/trained{suffix}')
-    registry_path = Path(f'models/{ucp}/registry/champion_model{suffix}.joblib')
+    registry_path = _champion_path(ucp, variant)
 
     # Prioridad 1: Modelo campeón en registry
     if registry_path.exists():
@@ -947,13 +959,241 @@ def check_model_exists(ucp: str, variant: str = 'hourly') -> Tuple[bool, Optiona
     return False, None
 
 
+_KIND_ILEGIBLE = '__ilegible__'          # champion que no se pudo leer (no migrar, no reentrenar en bucle)
+_DAILY_LOCKS: Dict[str, threading.Lock] = {}
+_DAILY_LOCKS_GUARD = threading.Lock()
+# Backoff de migración/entrenamiento fallido (en memoria, por UCP): instante monotónico del último fallo.
+# No se reintenta antes de _DAILY_RETRY_INTERVAL_S salvo force_retrain.
+_DAILY_RETRY_INTERVAL_S = 600
+_DAILY_FAILURES: Dict[str, float] = {}
+
+
+def _daily_en_backoff(ucp: str) -> bool:
+    fallo = _DAILY_FAILURES.get(ucp)
+    return fallo is not None and (time.monotonic() - fallo) < _DAILY_RETRY_INTERVAL_S
+
+
+def _daily_registrar_fallo(ucp: str) -> None:
+    _DAILY_FAILURES[ucp] = time.monotonic()
+
+
+def _daily_lock(ucp: str) -> threading.Lock:
+    """Un lock por UCP: serializa migración/entrenamiento diario entre requests concurrentes."""
+    with _DAILY_LOCKS_GUARD:
+        return _DAILY_LOCKS.setdefault(ucp, threading.Lock())
+
+
+def _finite_or_none(x):
+    """Sanitiza métricas para JSON: floats no finitos (inf/nan) -> None; recursivo en dicts."""
+    if isinstance(x, dict):
+        return {k: _finite_or_none(v) for k, v in x.items()}
+    if isinstance(x, (float, np.floating)):
+        return float(x) if np.isfinite(x) else None
+    if isinstance(x, (bool, np.bool_)):
+        return bool(x)
+    if isinstance(x, (int, np.integer)):
+        return int(x)
+    return x
+
+
+def _atomic_replace(write_fn, dest: Path) -> None:
+    """Escribe con write_fn(tmp_path) a un temporal junto a dest y hace os.replace (atómico)."""
+    tmp = dest.with_name(f'{dest.name}.{os.getpid()}.{threading.get_ident()}.tmp')
+    try:
+        write_fn(tmp)
+        os.replace(tmp, dest)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
+
+
+def _meta_path(champion_path: Path) -> Path:
+    return champion_path.with_name(champion_path.stem + '.meta.json')
+
+
+def _write_champion_meta(champion_path: Path, payload: Dict[str, Any]) -> None:
+    """Sidecar JSON del champion diario (model_kind, trained_until, MAPE de validación y tamaño
+    del champion para detectar que quedó obsoleto si otro flujo lo sobrescribe). Best-effort."""
+    try:
+        ens = (payload.get('metrics') or {}).get('ensemble', {})
+        meta = {
+            'model_kind': payload.get('model_kind'),
+            'trained_until': payload.get('trained_until'),
+            'mape': ens.get('mape'),
+            'columnas_clima': (payload.get('metrics') or {}).get('clima', {}).get('columnas'),
+            'size': champion_path.stat().st_size,
+        }
+        _atomic_replace(lambda t: t.write_text(json.dumps(_finite_or_none(meta)), encoding='utf-8'),
+                        _meta_path(champion_path))
+    except Exception as e:
+        logger.warning(f"⚠ No se pudo escribir el sidecar del champion diario: {e}")
+
+
+def _champion_model_kind(model_path: Path) -> Optional[str]:
+    """
+    model_kind de un champion diario: el del sidecar .meta.json si está vigente (barato, sin
+    joblib.load); si no, se lee del joblib (y se escribe el sidecar si es el modelo de nivel).
+    Devuelve None si es legacy y _KIND_ILEGIBLE si no se puede leer.
+    """
+    try:
+        meta = json.loads(_meta_path(model_path).read_text(encoding='utf-8'))
+        if meta.get('size') == model_path.stat().st_size and meta.get('model_kind'):
+            return meta['model_kind']
+    except Exception:
+        pass
+    try:
+        import joblib
+        d = joblib.load(model_path)
+    except Exception as e:
+        logger.warning(f"⚠ Champion diario no legible ({model_path}): {e}")
+        return _KIND_ILEGIBLE
+    kind = d.get('model_kind') if isinstance(d, dict) else None
+    if kind == DAILY_LEVEL_MODEL_KIND:
+        _write_champion_meta(model_path, d)
+    return kind
+
+
+def _train_daily_level_model(df_with_features: pd.DataFrame,
+                             ucp: str,
+                             raw_climate_path: Optional[str] = None) -> Tuple[Path, Dict[str, Any]]:
+    """
+    Entrena y guarda el modelo de nivel diario (src/models/daily_level_model.py)
+    para /predict-daily. Devuelve (champion_path, metrics) con las mismas
+    claves que train_model_if_needed. Escrituras atómicas; respalda un champion
+    legacy existente en champion_model_diario.legacy.joblib (solo si no hay respaldo).
+    """
+    import shutil
+    import joblib
+    from src.models.daily_level_model import train_daily_level, load_daily_weather
+
+    logger.info("=" * 80)
+    logger.info(f"🔧 ENTRENANDO MODELO DE NIVEL DIARIO para {ucp}")
+    logger.info("=" * 80)
+
+    fecha_col = 'FECHA' if 'FECHA' in df_with_features.columns else 'fecha'
+    total_col = 'TOTAL' if 'TOTAL' in df_with_features.columns else 'demanda_total'
+    fechas = pd.to_datetime(df_with_features[fecha_col])
+    demanda = pd.Series(df_with_features[total_col].values, index=fechas)
+    if 'is_festivo' in df_with_features.columns:
+        festivos = set(fechas[df_with_features['is_festivo'].values == 1].dt.normalize())
+    else:
+        festivos = set()
+
+    clima_path = raw_climate_path or f'data/raw/{ucp}/clima_new.csv'
+    weather = load_daily_weather(clima_path)
+    logger.info(f"  Clima diario: {len(weather)} días ({clima_path})")
+
+    payload, val_metrics = train_daily_level(demanda, festivos, weather)
+
+    models_dir = Path(f'models/{ucp}/trained_diario')
+    models_dir.mkdir(parents=True, exist_ok=True)
+    model_path = models_dir / 'daily_level.joblib'
+    _atomic_replace(lambda t: joblib.dump(payload, t), model_path)
+
+    champion_path = _champion_path(ucp, variant='daily')
+    champion_path.parent.mkdir(parents=True, exist_ok=True)
+    backup_path = champion_path.with_name(champion_path.stem + '.legacy.joblib')
+    if champion_path.exists() and not backup_path.exists() and _champion_model_kind(champion_path) is None:
+        shutil.copy2(champion_path, backup_path)
+        logger.info(f"  Respaldo del champion legacy: {backup_path}")
+    _atomic_replace(lambda t: shutil.copy(model_path, t), champion_path)
+    _write_champion_meta(champion_path, payload)
+    logger.info(f"✓ Modelo de nivel diario guardado: {champion_path}")
+
+    ens = val_metrics['ensemble']
+    metrics = _finite_or_none({
+        'modelo_seleccionado': 'daily_level_ensemble',
+        'mape': ens['mape'],
+        'rmape': ens['rmape'],
+        'r2': ens['r2'],
+        'mae': ens['mae'],
+        'comparacion_modelos': {
+            name: {'mape': m['mape'], 'rmape': m['rmape'], 'r2': m['r2']}
+            for name, m in val_metrics['members'].items()
+        },
+        'columnas_clima': val_metrics['clima']['columnas'],
+        'cobertura_clima': val_metrics['clima']['cobertura'],
+        'cobertura_clima_por_columna': val_metrics['clima']['cobertura_por_columna'],
+    })
+    if val_metrics['clima']['descartadas']:
+        metrics['columnas_clima_descartadas'] = val_metrics['clima']['descartadas']
+    if val_metrics['clima']['descartado']:
+        metrics['clima_descartado'] = True
+    return champion_path, metrics
+
+
+def _respaldar_champion_corrupto(ruta: Path) -> None:
+    """Copia (sin cargarlo) un champion ilegible a <champion>.corrupt.joblib si no hay respaldo."""
+    import shutil
+    destino = ruta.with_name(ruta.stem + '.corrupt.joblib')
+    try:
+        if not destino.exists():
+            shutil.copy2(ruta, destino)
+            logger.info(f"  Respaldo del champion ilegible: {destino}")
+    except Exception as e:
+        logger.warning(f"⚠ No se pudo respaldar el champion ilegible: {e}")
+
+
+def _daily_level_flow(df_with_features: pd.DataFrame, ucp: str, force_retrain: bool,
+                      raw_climate_path: Optional[str]) -> Optional[Tuple[Path, Dict[str, Any]]]:
+    """
+    Camino diario con modelo de nivel (>=120 filas). Devuelve (path, metrics), o None si hay que
+    caer al entrenamiento legacy (primer entrenamiento que falló o en backoff).
+    - Champion ya de nivel sin force_retrain: se devuelve SIN tomar el lock.
+    - Champion legacy o ilegible: se (re)entrena UNA vez bajo lock (el ilegible se respalda antes como
+      .corrupt); si falla se conserva el champion existente y no se reintenta antes de
+      _DAILY_RETRY_INTERVAL_S (salvo force_retrain). Un ilegible que no se puede reentrenar sigue
+      dando error claro al cargarlo (500, "reintente con force_retrain=true").
+    - Sin champion / force_retrain: entrena; si falla, None (legacy), salvo que ya hubiera un
+      champion de nivel vigente (o ilegible): entonces se conserva (no se degrada a legacy).
+    """
+    if not force_retrain:
+        existe, ruta = check_model_exists(ucp, variant='daily')
+        if existe and _champion_model_kind(ruta) == DAILY_LEVEL_MODEL_KIND:
+            logger.info("✓ Usando modelo existente (no se requiere entrenamiento)")
+            return ruta, {}
+
+    with _daily_lock(ucp):
+        # Re-chequeo DENTRO del lock: otro request pudo haber entrenado mientras esperábamos
+        model_exists, model_path = check_model_exists(ucp, variant='daily')
+        kind = _champion_model_kind(model_path) if model_exists else None
+        if model_exists and not force_retrain:
+            if kind == DAILY_LEVEL_MODEL_KIND:
+                logger.info("✓ Usando modelo existente (no se requiere entrenamiento)")
+                return model_path, {}
+            if _daily_en_backoff(ucp):
+                logger.info("⏳ Reentrenamiento/migración del modelo de nivel diario en backoff; se conserva el champion existente")
+                return model_path, {}
+            if kind == _KIND_ILEGIBLE:
+                logger.warning("⚠ Champion diario ilegible: se respalda y se reentrena")
+                _respaldar_champion_corrupto(model_path)
+            else:
+                logger.info("↻ Champion diario legacy: migrando al modelo de nivel diario")
+        elif not force_retrain and _daily_en_backoff(ucp):
+            logger.info("⏳ Entrenamiento del modelo de nivel diario en backoff; usando entrenamiento legacy")
+            return None
+        elif model_exists and kind == _KIND_ILEGIBLE:
+            _respaldar_champion_corrupto(model_path)
+        try:
+            res = _train_daily_level_model(df_with_features, ucp, raw_climate_path)
+            _DAILY_FAILURES.pop(ucp, None)
+            return res
+        except Exception as e:
+            _daily_registrar_fallo(ucp)
+            if model_exists and (not force_retrain or kind in (DAILY_LEVEL_MODEL_KIND, _KIND_ILEGIBLE)):
+                logger.warning(f"⚠ No se pudo (re)entrenar el modelo de nivel diario ({e}); se conserva el champion existente")
+                return model_path, {}
+            logger.warning(f"⚠ No se pudo entrenar el modelo de nivel diario ({e}); usando entrenamiento legacy")
+            return None
+
+
 def train_model_if_needed(df_with_features: pd.DataFrame,
                          ucp: str,
                          force_retrain: bool = False,
-                         variant: str = 'hourly') -> Tuple[Path, Dict[str, Any]]:
+                         variant: str = 'hourly',
+                         raw_climate_path: Optional[str] = None) -> Tuple[Path, Dict[str, Any]]:
     """
-    Entrena los 3 modelos (XGBoost, LightGBM, RandomForest) y selecciona automáticamente el mejor
-    basándose en rMAPE de validación
+    Entrena los modelos de un UCP si hace falta (ver _train_model_legacy para el camino de árboles).
 
     Args:
         df_with_features: DataFrame con features procesados
@@ -963,6 +1203,35 @@ def train_model_if_needed(df_with_features: pd.DataFrame,
             Determina en qué directorio/registro se guarda el modelo
             entrenado, para que /predict-daily nunca pise el modelo de
             /predict de ese mismo UCP.
+        raw_climate_path: Ruta a clima_new.csv (solo variant='daily', con
+            >=120 filas: lo usa el modelo de nivel diario; por defecto
+            data/raw/{ucp}/clima_new.csv).
+
+    Returns:
+        Tupla (model_path: Path, metrics: Dict con métricas del mejor modelo)
+    """
+    if variant != 'daily':
+        return _train_model_legacy(df_with_features, ucp, force_retrain, variant)
+
+    # Variante diaria: modelo de NIVEL (ratio sobre ancla de ANCHOR_DAYS días, sin lags ni árboles sobre
+    # TOTAL crudo), con migración del champion legacy. El fallback legacy (<MIN_DAYS filas, excepción
+    # o backoff) toma el MISMO lock por UCP para no entrenar concurrentemente sobre los mismos archivos.
+    if len(df_with_features) >= DAILY_LEVEL_MIN_DAYS:
+        res = _daily_level_flow(df_with_features, ucp, force_retrain, raw_climate_path)
+        if res is not None:
+            return res
+    with _daily_lock(ucp):
+        # _train_model_legacy re-chequea check_model_exists dentro del lock
+        return _train_model_legacy(df_with_features, ucp, force_retrain, variant)
+
+
+def _train_model_legacy(df_with_features: pd.DataFrame,
+                        ucp: str,
+                        force_retrain: bool = False,
+                        variant: str = 'hourly') -> Tuple[Path, Dict[str, Any]]:
+    """
+    Entrena los 3 modelos (XGBoost, LightGBM, RandomForest) y selecciona automáticamente el mejor
+    basándose en rMAPE de validación (camino hourly y fallback legacy del diario).
 
     Returns:
         Tupla (model_path: Path, metrics: Dict con métricas del mejor modelo)
@@ -2062,11 +2331,13 @@ async def run_predict_daily_flow(request: PredictRequest) -> PredictDailyRespons
         # tiene su propio registro (ver check_model_exists/train_model_if_needed).
         logger.info(f"\n🤖 PASO 2: Verificando modelo de predicción diario para {request.ucp}...")
         try:
-            model_path, train_metrics = train_model_if_needed(
+            model_path, train_metrics = await run_in_threadpool(
+                train_model_if_needed,
                 df_with_features=df_with_features,
                 ucp=request.ucp,
                 force_retrain=request.force_retrain,
-                variant='daily'
+                variant='daily',
+                raw_climate_path=f'data/raw/{request.ucp}/clima_new.csv'
             )
             modelo_entrenado = len(train_metrics) > 0
             if modelo_entrenado:
@@ -2081,29 +2352,38 @@ async def run_predict_daily_flow(request: PredictRequest) -> PredictDailyRespons
 
         # PASO 3: generar predicciones SIN desagregación horaria
         logger.info(f"\n🔮 PASO 3: Generando predicciones diarias para {request.n_days} días...")
+        # Archivo temporal ÚNICO por request (no se comparte entre requests concurrentes) y se
+        # borra siempre en el finally, incluso si falla el constructor o el predict.
+        temp_features_path = f'data/features/{request.ucp}/temp_api_features_daily_{uuid.uuid4().hex}.csv'
         try:
             climate_raw_path = f'data/raw/{request.ucp}/clima_new.csv'
-            temp_features_path = f'data/features/{request.ucp}/temp_api_features_daily.csv'
             df_with_features.to_csv(temp_features_path, index=False)
 
-            pipeline = ForecastPipeline(
-                model_path=str(model_path),
-                historical_data_path=temp_features_path,
-                festivos_path='config/festivos.json',
-                enable_hourly_disaggregation=False,
-                raw_climate_path=climate_raw_path,
-                ucp=request.ucp
-            )
+            try:
+                pipeline = ForecastPipeline(
+                    model_path=str(model_path),
+                    historical_data_path=temp_features_path,
+                    festivos_path='config/festivos.json',
+                    enable_hourly_disaggregation=False,
+                    raw_climate_path=climate_raw_path,
+                    ucp=request.ucp
+                )
+            except Exception as e:
+                # Falla de carga del modelo/histórico: error del servidor (no entrada inválida -> no 400)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"No se pudo cargar el modelo diario (champion ilegible, reintente con "
+                           f"force_retrain=true): {str(e)}"
+                )
             predictions_df = pipeline.predict_next_n_days(n_days=request.n_days)
-
-            if os.path.exists(temp_features_path):
-                os.remove(temp_features_path)
 
             if request.offset_scalar is not None and request.offset_scalar > 0 and request.offset_scalar != 1.0:
                 logger.info(f"\n🔧 Aplicando offset scalar: {request.offset_scalar}")
                 predictions_df['demanda_predicha'] = predictions_df['demanda_predicha'] * request.offset_scalar
 
             logger.info(f"✓ Predicciones generadas: {len(predictions_df)} días")
+        except HTTPException:
+            raise
         except ValueError as e:
             # Entrada inválida (ej. end_date antes del primer dato real del
             # mercado) — mensaje ya es claro, no hace falta el traceback.
@@ -2116,6 +2396,9 @@ async def run_predict_daily_flow(request: PredictRequest) -> PredictDailyRespons
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Error generando predicciones: {str(e)}\n{traceback.format_exc()}"
             )
+        finally:
+            if os.path.exists(temp_features_path):
+                os.remove(temp_features_path)
 
         # PASO 4: formatear respuesta (sin P1-P24, sin cluster_id/metodo_desagregacion)
         logger.info("\n📋 PASO 4: Formateando respuesta...")
@@ -2146,7 +2429,7 @@ async def run_predict_daily_flow(request: PredictRequest) -> PredictDailyRespons
                 'dias_fin_de_semana': int((predictions_df['is_weekend'] == True).sum()),
                 'dias_festivos': int((predictions_df['is_festivo'] == True).sum()),
                 'modelo_entrenado': modelo_entrenado,
-                'metricas_modelo': train_metrics if modelo_entrenado else {}
+                'metricas_modelo': _finite_or_none(train_metrics) if modelo_entrenado else {}
             }
             logger.info("✓ Respuesta formateada correctamente")
         except Exception as e:
