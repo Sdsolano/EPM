@@ -78,8 +78,14 @@ Datos: API de producción; solo hay demanda diaria de "Atlantico Norte" (608 dí
       actualizadas (`a28` -> "ancla"). Backtest 7-corte: **2.880 (WL10) / 2.867 (WL30)** (antes 3.053/3.064; original
       4.704). Extendido 23 cortes: 4.132 (28d) -> vs 4.241. Tests 46 passed; pyflakes limpio. Se descarta NNLS/recencia
       por no generalizar (sobreajuste al 7-corte).
-- [ ] Limpiar artefactos, `git add -f` (src/models/daily_level_model.py y docs/MODELO_DIARIO_NIVEL.md), commit local
-      en `test-mejora` (sin push), informe final al usuario.
+- [x] Limpieza de artefactos y commit local en `test-mejora`: **172307c** (8 archivos; `git add -f` para
+      `src/models/daily_level_model.py` y `docs/MODELO_DIARIO_NIVEL.md`). Sin push, sin amend, sin force.
+      Working tree limpio; EPM-base en 705e649; repo principal `EPM` sin tocar.
+- [x] Informe final entregado al usuario.
+
+## Resultado final
+- Modelo diario de nivel. MAPE backtest 7-corte: **2.880 (WL10) / 2.867 (WL30)** (original 4.704). Sin el hack +5.3%.
+- Commit: `test-mejora` @ 172307c. Empujar: `git -C EPM-test push origin test-mejora` (o fusionar en `test`).
 
 ## Riesgos abiertos / a informar al usuario
 - Humedad corrupta del feed afecta también flujos horarios de Atlantico y Antioquia (no tocado).
