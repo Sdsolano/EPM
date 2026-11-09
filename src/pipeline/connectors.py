@@ -4,10 +4,17 @@ Soporta: CSV, API, Database (extensible)
 """
 import pandas as pd
 import logging
+import sys
 from pathlib import Path
 from typing import Optional, Dict, Union
 from datetime import datetime, timedelta
 from abc import ABC, abstractmethod
+
+try:
+    from ..utils.weather import calcular_sensacion_termica
+except ImportError:
+    sys.path.append(str(Path(__file__).parent.parent))
+    from utils.weather import calcular_sensacion_termica
 
 # Configurar logging
 logging.basicConfig(
@@ -191,8 +198,10 @@ class WeatherDataConnector(CSVConnector):
         - FECHA: fecha
         - temp_mean, temp_min, temp_max, temp_std
         - humidity_mean, humidity_min, humidity_max
-        - wind_speed_mean, wind_speed_max
+        - wind_speed_mean, wind_speed_min, wind_speed_max
         - rain_mean, rain_sum
+        - heat_index_mean, heat_index_min, heat_index_max (sensación
+          térmica calculada por hora con Rothfusz/NWS antes de agregar)
 
         Args:
             df: DataFrame con datos horarios de API EPM
@@ -217,14 +226,21 @@ class WeatherDataConnector(CSVConnector):
         if end_date:
             df = df[df['fecha'] <= pd.to_datetime(end_date)].copy()
 
+        # Sensación térmica por hora (Rothfusz/NWS), a partir de p_t + p_h,
+        # ANTES de agregar — así min/mean/max reflejan las 24 lecturas
+        # horarias del día, igual que temp/humedad, no un valor derivado
+        # de un único promedio diario.
+        df['heat_index'] = calcular_sensacion_termica(df['p_t'], df['p_h'])
+
         logger.info(f"   Agregando {len(df)} registros horarios a promedios diarios...")
 
         # Agrupar por fecha y calcular agregaciones
         df_daily = df.groupby('fecha').agg({
             'p_t': ['mean', 'min', 'max', 'std'],      # Temperatura
             'p_h': ['mean', 'min', 'max'],              # Humedad
-            'p_v': ['mean', 'max'],                     # Velocidad del viento
-            'p_i': ['mean', 'sum']                      # Precipitación
+            'p_v': ['mean', 'min', 'max'],               # Velocidad del viento
+            'p_i': ['mean', 'sum'],                      # Precipitación
+            'heat_index': ['mean', 'min', 'max'],         # Sensación térmica (calculada)
         }).reset_index()
 
         # Aplanar columnas multi-nivel
@@ -236,7 +252,8 @@ class WeatherDataConnector(CSVConnector):
                 'p_t': 'temp',
                 'p_h': 'humidity',
                 'p_v': 'wind_speed',
-                'p_i': 'rain'
+                'p_i': 'rain',
+                'heat_index': 'heat_index',
             }
             mapped_name = name_map.get(base_name, base_name)
             new_columns.append(f"{mapped_name}_{agg_func}")
@@ -253,7 +270,7 @@ class WeatherDataConnector(CSVConnector):
             df_daily['temp_std'] = 2.5
 
         logger.info(f"   ✓ Conversión completada: {len(df_daily)} días con promedios")
-        logger.info(f"   Variables disponibles: temperatura, humedad, viento, lluvia")
+        logger.info(f"   Variables disponibles: temperatura, humedad, viento, lluvia, sensación térmica")
 
         return df_daily
 

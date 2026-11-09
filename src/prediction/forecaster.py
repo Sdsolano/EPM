@@ -55,6 +55,15 @@ except ImportError:
     detect_easter_day_type = None
     logger.warning("⚠ easter_utils no disponible. Semana Santa usará lag tradicional.")
 
+# Importar cálculo de sensación térmica (heat index) — usado para completar
+# el pronóstico climático sintético/fallback cuando no hay lecturas horarias
+# reales de las que ya viene calculado (ver src/pipeline/connectors.py)
+try:
+    from ..utils.weather import calcular_sensacion_termica
+except ImportError:
+    sys.path.append(str(Path(__file__).parent.parent))
+    from utils.weather import calcular_sensacion_termica
+
 # Configurar logging
 logging.basicConfig(
     level=logging.INFO,
@@ -353,12 +362,13 @@ class ForecastPipeline:
                 # CAMBIO: Buscar columnas de forma más flexible
                 all_cols = df_climate_raw_filtered.columns.tolist()
                 
-                # Filtrar columnas climáticas (API EPM: temp, humidity, wind_speed, rain)
+                # Filtrar columnas climáticas (API EPM: temp, humidity, wind_speed,
+                # rain, heat_index/sensación térmica calculada)
                 # Excluir columnas con _lag, _x_ (son transformaciones)
                 clima_cols = [col for col in all_cols if
                              any(keyword in col.lower() for keyword in
-                                 ['temp', 'humidity', 'wind_speed', 'rain']) and
-                             '_lag' not in col and 
+                                 ['temp', 'humidity', 'wind_speed', 'rain', 'heat_index']) and
+                             '_lag' not in col and
                              '_x_' not in col and
                              col != 'fecha']
 
@@ -383,14 +393,15 @@ class ForecastPipeline:
         climate_cols_base = [col for col in self.df_historico.columns if
                             any(x in col for x in ['temp_mean', 'temp_min', 'temp_max', 'temp_std',
                                                    'humidity_mean', 'humidity_min', 'humidity_max',
-                                                   'wind_speed_mean', 'wind_speed_max',
-                                                   'rain_mean', 'rain_sum'])
+                                                   'wind_speed_mean', 'wind_speed_min', 'wind_speed_max',
+                                                   'rain_mean', 'rain_sum',
+                                                   'heat_index_mean', 'heat_index_min', 'heat_index_max'])
                             and '_lag' not in col and '_x_' not in col]
 
         # Si no hay columnas base, buscar lag
         climate_cols_lag = [col for col in self.df_historico.columns if
                            col.endswith('_lag1d') and
-                           any(x in col for x in ['temp_', 'humidity_', 'wind_speed_', 'rain_'])]
+                           any(x in col for x in ['temp_', 'humidity_', 'wind_speed_', 'rain_', 'heat_index_'])]
 
         if len(climate_cols_base) == 0 and len(climate_cols_lag) == 0:
             logger.warning(f"⚠ No se encontraron datos climáticos en el histórico")
@@ -469,19 +480,33 @@ class ForecastPipeline:
             # Añadir variación estocástica pequeña
             np.random.seed(int(fecha.timestamp()))
 
+            temp_mean = stats['temp_mean'] + np.random.normal(0, 1)
+            temp_min = stats['temp_min'] + np.random.normal(0, 0.5)
+            temp_max = stats['temp_max'] + np.random.normal(0, 0.5)
+            humidity_mean = stats['humidity_mean'] + np.random.normal(0, 2)
+            humidity_min = stats['humidity_min']
+            humidity_max = stats['humidity_max']
+
             forecasts.append({
                 'fecha': fecha,
-                'temp_mean': stats['temp_mean'] + np.random.normal(0, 1),
-                'temp_min': stats['temp_min'] + np.random.normal(0, 0.5),
-                'temp_max': stats['temp_max'] + np.random.normal(0, 0.5),
+                'temp_mean': temp_mean,
+                'temp_min': temp_min,
+                'temp_max': temp_max,
                 'temp_std': stats['temp_std'],
-                'humidity_mean': stats['humidity_mean'] + np.random.normal(0, 2),
-                'humidity_min': stats['humidity_min'],
-                'humidity_max': stats['humidity_max'],
+                'humidity_mean': humidity_mean,
+                'humidity_min': humidity_min,
+                'humidity_max': humidity_max,
                 'wind_speed_mean': stats.get('wind_speed_mean', 2.0),
+                'wind_speed_min': stats.get('wind_speed_min', 0.5),
                 'wind_speed_max': stats.get('wind_speed_max', 5.0),
                 'rain_mean': stats.get('rain_mean', 0.0),
-                'rain_sum': stats.get('rain_sum', 0.0)
+                'rain_sum': stats.get('rain_sum', 0.0),
+                # Sensación térmica: calculada a partir de temp/humedad
+                # sintéticas de arriba (no hay lectura horaria real que
+                # promediar en este fallback).
+                'heat_index_mean': calcular_sensacion_termica(temp_mean, humidity_mean),
+                'heat_index_min': calcular_sensacion_termica(temp_min, humidity_min),
+                'heat_index_max': calcular_sensacion_termica(temp_max, humidity_max),
             })
 
         return pd.DataFrame(forecasts)
@@ -522,20 +547,31 @@ class ForecastPipeline:
                 stats = climate_stats[month]
                 
                 np.random.seed(int(fecha.timestamp()))
-                
+
+                temp_mean = stats['temp_mean'] + np.random.normal(0, 1)
+                temp_min = stats['temp_min'] + np.random.normal(0, 0.5)
+                temp_max = stats['temp_max'] + np.random.normal(0, 0.5)
+                humidity_mean = stats['humidity_mean'] + np.random.normal(0, 2)
+                humidity_min = stats['humidity_min']
+                humidity_max = stats['humidity_max']
+
                 complete_forecasts.append({
                     'fecha': fecha,
-                    'temp_mean': stats['temp_mean'] + np.random.normal(0, 1),
-                    'temp_min': stats['temp_min'] + np.random.normal(0, 0.5),
-                    'temp_max': stats['temp_max'] + np.random.normal(0, 0.5),
+                    'temp_mean': temp_mean,
+                    'temp_min': temp_min,
+                    'temp_max': temp_max,
                     'temp_std': stats['temp_std'],
-                    'humidity_mean': stats['humidity_mean'] + np.random.normal(0, 2),
-                    'humidity_min': stats['humidity_min'],
-                    'humidity_max': stats['humidity_max'],
+                    'humidity_mean': humidity_mean,
+                    'humidity_min': humidity_min,
+                    'humidity_max': humidity_max,
                     'wind_speed_mean': stats.get('wind_speed_mean', 2.0),
+                    'wind_speed_min': stats.get('wind_speed_min', 0.5),
                     'wind_speed_max': stats.get('wind_speed_max', 5.0),
                     'rain_mean': stats.get('rain_mean', 0.0),
-                    'rain_sum': stats.get('rain_sum', 0.0)
+                    'rain_sum': stats.get('rain_sum', 0.0),
+                    'heat_index_mean': calcular_sensacion_termica(temp_mean, humidity_mean),
+                    'heat_index_min': calcular_sensacion_termica(temp_min, humidity_min),
+                    'heat_index_max': calcular_sensacion_termica(temp_max, humidity_max),
                 })
         
         result_df = pd.DataFrame(complete_forecasts)
@@ -551,7 +587,7 @@ class ForecastPipeline:
     def _calculate_historical_climate_stats(self) -> dict:
         """Calcula estadísticas climáticas históricas por mes"""
         # Verificar si tenemos datos climáticos en el histórico
-        climate_cols = [col for col in self.df_historico.columns if 'temp' in col or 'humidity' in col or 'wind_speed' in col or 'rain' in col]
+        climate_cols = [col for col in self.df_historico.columns if 'temp' in col or 'humidity' in col or 'wind_speed' in col or 'rain' in col or 'heat_index' in col]
 
         if not climate_cols:
             logger.warning("No hay datos climáticos en el histórico. Usando valores por defecto.")
@@ -578,18 +614,42 @@ class ForecastPipeline:
                     return df[prefix].mean()
                 return None
 
+            temp_mean_val = get_base_value(month_data, 'temp_mean') or 22.0
+            temp_min_val = get_base_value(month_data, 'temp_min') or 16.0
+            temp_max_val = get_base_value(month_data, 'temp_max') or 28.0
+            humidity_mean_val = get_base_value(month_data, 'humidity_mean') or 70.0
+            humidity_min_val = get_base_value(month_data, 'humidity_min') or 50.0
+            humidity_max_val = get_base_value(month_data, 'humidity_max') or 90.0
+
+            # Sensación térmica: usar el histórico si ya viene calculada
+            # (heat_index_mean/min/max o sus _lag1d), si no derivarla de
+            # temp/humedad de este mismo mes.
+            heat_index_mean_val = get_base_value(month_data, 'heat_index_mean')
+            if heat_index_mean_val is None:
+                heat_index_mean_val = calcular_sensacion_termica(temp_mean_val, humidity_mean_val)
+            heat_index_min_val = get_base_value(month_data, 'heat_index_min')
+            if heat_index_min_val is None:
+                heat_index_min_val = calcular_sensacion_termica(temp_min_val, humidity_min_val)
+            heat_index_max_val = get_base_value(month_data, 'heat_index_max')
+            if heat_index_max_val is None:
+                heat_index_max_val = calcular_sensacion_termica(temp_max_val, humidity_max_val)
+
             stats[month] = {
-                'temp_mean': get_base_value(month_data, 'temp_mean') or 22.0,
-                'temp_min': get_base_value(month_data, 'temp_min') or 16.0,
-                'temp_max': get_base_value(month_data, 'temp_max') or 28.0,
+                'temp_mean': temp_mean_val,
+                'temp_min': temp_min_val,
+                'temp_max': temp_max_val,
                 'temp_std': 2.5,
-                'humidity_mean': get_base_value(month_data, 'humidity_mean') or 70.0,
-                'humidity_min': get_base_value(month_data, 'humidity_min') or 50.0,
-                'humidity_max': get_base_value(month_data, 'humidity_max') or 90.0,
+                'humidity_mean': humidity_mean_val,
+                'humidity_min': humidity_min_val,
+                'humidity_max': humidity_max_val,
                 'wind_speed_mean': get_base_value(month_data, 'wind_speed_mean') or 2.0,
+                'wind_speed_min': get_base_value(month_data, 'wind_speed_min') or 0.5,
                 'wind_speed_max': get_base_value(month_data, 'wind_speed_max') or 5.0,
                 'rain_mean': get_base_value(month_data, 'rain_mean') or 0.0,
-                'rain_sum': get_base_value(month_data, 'rain_sum') or 0.0
+                'rain_sum': get_base_value(month_data, 'rain_sum') or 0.0,
+                'heat_index_mean': heat_index_mean_val,
+                'heat_index_min': heat_index_min_val,
+                'heat_index_max': heat_index_max_val,
             }
 
         return stats
@@ -600,9 +660,12 @@ class ForecastPipeline:
         base_stats = {
             'temp_mean': 22.0, 'temp_min': 16.0, 'temp_max': 28.0, 'temp_std': 2.5,
             'humidity_mean': 70.0, 'humidity_min': 50.0, 'humidity_max': 90.0,
-            'wind_speed_mean': 2.0, 'wind_speed_max': 5.0,
+            'wind_speed_mean': 2.0, 'wind_speed_min': 0.5, 'wind_speed_max': 5.0,
             'rain_mean': 0.5, 'rain_sum': 2.0
         }
+        base_stats['heat_index_mean'] = calcular_sensacion_termica(base_stats['temp_mean'], base_stats['humidity_mean'])
+        base_stats['heat_index_min'] = calcular_sensacion_termica(base_stats['temp_min'], base_stats['humidity_min'])
+        base_stats['heat_index_max'] = calcular_sensacion_termica(base_stats['temp_max'], base_stats['humidity_max'])
 
         # Ajustes leves por mes (temporada de lluvias: Abril-Mayo, Octubre-Noviembre)
         adjustments = {
@@ -613,18 +676,28 @@ class ForecastPipeline:
         stats = {}
         for month in range(1, 13):
             adj = adjustments[month]
+            temp_mean = base_stats['temp_mean'] - adj
+            temp_min = base_stats['temp_min'] - adj
+            temp_max = base_stats['temp_max'] - adj * 0.5
+            humidity_mean = base_stats['humidity_mean'] + adj * 3
+            humidity_min = base_stats['humidity_min']
+            humidity_max = base_stats['humidity_max']
             stats[month] = {
-                'temp_mean': base_stats['temp_mean'] - adj,
-                'temp_min': base_stats['temp_min'] - adj,
-                'temp_max': base_stats['temp_max'] - adj * 0.5,
+                'temp_mean': temp_mean,
+                'temp_min': temp_min,
+                'temp_max': temp_max,
                 'temp_std': base_stats['temp_std'],
-                'humidity_mean': base_stats['humidity_mean'] + adj * 3,
-                'humidity_min': base_stats['humidity_min'],
-                'humidity_max': base_stats['humidity_max'],
+                'humidity_mean': humidity_mean,
+                'humidity_min': humidity_min,
+                'humidity_max': humidity_max,
                 'wind_speed_mean': base_stats['wind_speed_mean'] + adj * 0.5,
+                'wind_speed_min': base_stats['wind_speed_min'],
                 'wind_speed_max': base_stats['wind_speed_max'] + adj,
                 'rain_mean': base_stats['rain_mean'] + adj * 2,
-                'rain_sum': base_stats['rain_sum'] + adj * 5
+                'rain_sum': base_stats['rain_sum'] + adj * 5,
+                'heat_index_mean': calcular_sensacion_termica(temp_mean, humidity_mean),
+                'heat_index_min': calcular_sensacion_termica(temp_min, humidity_min),
+                'heat_index_max': calcular_sensacion_termica(temp_max, humidity_max),
             }
 
         return stats
@@ -703,6 +776,11 @@ class ForecastPipeline:
             # Si no existe columna is_festivo, usar 30
             features['dias_desde_ultimo_festivo'] = 30
 
+        # Feature 3b: flag explícito de "día siguiente a un festivo" — debe
+        # coincidir EXACTAMENTE con feature_engineering.py (mismo nombre,
+        # misma condición sobre dias_desde_ultimo_festivo).
+        features['es_dia_despues_de_festivo'] = int(features['dias_desde_ultimo_festivo'] == 1)
+
         # Feature 4: Flag de temporada alta
         features['es_temporada_alta'] = int(
             not ((fecha.month == 12 and fecha.day >= 23) or
@@ -718,13 +796,37 @@ class ForecastPipeline:
         features['dayofyear_cos'] = np.cos(2 * np.pi * features['dayofyear'] / 365)
 
         # ========================================
-        # B. FEATURES CLIMÁTICAS (SOLO API EPM: temp, humidity, wind_speed, rain)
+        # B. FEATURES CLIMÁTICAS (API EPM: temp, humidity, wind_speed, rain
+        #    + sensación térmica calculada — ver src/utils/weather.py)
         # ========================================
         # IMPORTANTE: Los nombres deben coincidir EXACTAMENTE con feature_engineering.py
         features['temp_lag1d'] = climate_forecast.get('temp_mean', climate_forecast.get('temp', 22.0))
+        features['temp_min_lag1d'] = climate_forecast.get('temp_min', 16.0)
+        features['temp_max_lag1d'] = climate_forecast.get('temp_max', 28.0)
         features['humidity_lag1d'] = climate_forecast.get('humidity_mean', climate_forecast.get('humidity', 70.0))
+        features['humidity_min_lag1d'] = climate_forecast.get('humidity_min', 50.0)
+        features['humidity_max_lag1d'] = climate_forecast.get('humidity_max', 90.0)
         features['wind_speed_lag1d'] = climate_forecast.get('wind_speed_mean', 2.0)
+        features['wind_speed_min_lag1d'] = climate_forecast.get('wind_speed_min', 0.5)
+        features['wind_speed_max_lag1d'] = climate_forecast.get('wind_speed_max', 5.0)
         features['rain_lag1d'] = climate_forecast.get('rain_sum', 0.0)
+
+        # Sensación térmica: usar la del pronóstico climático si viene
+        # calculada (caso normal, ver connectors.py), si no derivarla aquí
+        # mismo de temp/humedad como respaldo (p.ej. datos históricos
+        # cacheados de antes de este cambio).
+        features['heat_index_lag1d'] = climate_forecast.get(
+            'heat_index_mean',
+            calcular_sensacion_termica(features['temp_lag1d'], features['humidity_lag1d']),
+        )
+        features['heat_index_min_lag1d'] = climate_forecast.get(
+            'heat_index_min',
+            calcular_sensacion_termica(features['temp_min_lag1d'], features['humidity_min_lag1d']),
+        )
+        features['heat_index_max_lag1d'] = climate_forecast.get(
+            'heat_index_max',
+            calcular_sensacion_termica(features['temp_max_lag1d'], features['humidity_max_lag1d']),
+        )
 
         # Feature derivada: día lluvioso (> 1mm de lluvia)
         features['is_rainy_day'] = int(features['rain_lag1d'] > 1.0)
@@ -990,6 +1092,17 @@ class ForecastPipeline:
 
         # Fecha inicial (mañana)
         ultimo_dia_historico = self.df_historico['fecha'].max()
+        if pd.isna(ultimo_dia_historico):
+            # df_historico quedó vacío después de filtrar por end_date —
+            # ej. end_date cae antes de la primera fecha con datos reales
+            # del mercado. Sin este guard, ultimo_dia_historico es NaT y
+            # revienta más abajo con un traceback críptico de pandas
+            # ("NaTType does not support strftime").
+            raise ValueError(
+                "No hay datos históricos disponibles hasta la fecha de corte "
+                "calculada (end_date). Elija una fecha de inicio posterior a "
+                "la primera fecha con datos reales de este mercado."
+            )
         primer_dia_prediccion = ultimo_dia_historico + timedelta(days=1)
         
         # Fecha final del período a predecir
