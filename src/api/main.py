@@ -3279,62 +3279,85 @@ def calculate_base_curves(
                         hourly_profile = np.full(24, avg_total / 24)
                         logger.warning(f"  {fecha_str} (temporada navideña): usando perfil plano (sin datos)")
         
-        # MÉTODO 1: Si es festivo (pero no temporada navideña), usar promedio histórico del mismo día
+        # MÉTODO 1: Si es festivo (pero no temporada navideña), usar festivos
+        # homólogos de años anteriores (no el mismo mes-día calendario).
+        # Corrige festivos móviles Ley Emiliani (p.ej. Todos los Santos
+        # 2026-11-02 ↔ 2025-11-03 ↔ 2024-11-04).
         elif is_holiday:
-            # Buscar todos los años anteriores con mismo mes-día
-            historical_same_day = df_historico[
-                (df_historico['fecha'].dt.month == fecha.month) &
-                (df_historico['fecha'].dt.day == fecha.day) &
-                (df_historico['fecha'] < fecha)  # Solo años anteriores
-            ].copy()
-            
-            if len(historical_same_day) > 0:
-                # Ordenar por fecha descendente y usar últimos años (máximo 5 años para festivos)
-                historical_same_day = historical_same_day.sort_values('fecha', ascending=False)
-                if len(historical_same_day) > 5:
-                    historical_same_day = historical_same_day.head(5)
-                    logger.debug(f"  {fecha_str} (festivo): usando últimos 5 años de {len(historical_same_day)} disponibles")
-                
-                # Promediar perfiles horarios
-                hourly_profile = historical_same_day[period_cols].mean().values
-                logger.debug(f"  {fecha_str} (festivo): {len(historical_same_day)} años históricos")
+            from src.prediction.holiday_homology import average_holiday_hourly_profile
+
+            # Precargar festivos de años previos para el matching homólogo
+            calendar_classifier.preload_years(
+                list(range(fecha.year - 5, fecha.year + 1))
+            )
+
+            holiday_profile, holiday_meta = average_holiday_hourly_profile(
+                df_historico,
+                fecha,
+                calendar_classifier.festivos_cache,
+                period_cols=period_cols,
+                date_column='fecha',
+                n_years=5,
+            )
+
+            if holiday_meta.get('n_rows', 0) > 0:
+                hourly_profile = holiday_profile
+                logger.info(
+                    f"  {fecha_str} (festivo={holiday_meta.get('holiday_name')}): "
+                    f"modo={holiday_meta.get('match_mode')}, "
+                    f"n={holiday_meta.get('n_rows')}, "
+                    f"fechas={holiday_meta.get('match_dates')}, "
+                    f"growth={holiday_meta.get('growth_factor', 1):.3f}, "
+                    f"level={holiday_meta.get('level', 0):.1f}"
+                )
             else:
-                # Fallback: usar promedio de todos los festivos del mismo mes
+                # Fallback: promedio de festivos del mismo mes
                 historical_holidays = df_historico[
-                    (df_historico['fecha'].dt.month == fecha.month) &
-                    (df_historico['fecha'].apply(lambda x: calendar_classifier.is_holiday(pd.to_datetime(x))))
+                    (df_historico['fecha'].dt.month == fecha.month)
+                    & (df_historico['fecha'] < fecha)
+                    & (df_historico['fecha'].apply(
+                        lambda x: calendar_classifier.is_holiday(pd.to_datetime(x))
+                    ))
                 ].copy()
-                
+
                 if len(historical_holidays) > 0:
-                    # Normalizar y promediar
                     totals = historical_holidays[period_cols].sum(axis=1)
                     normalized = historical_holidays[period_cols].div(totals, axis=0)
                     avg_normalized = normalized.mean().values
-                    
-                    # Escalar con total promedio
-                    avg_total = historical_holidays['TOTAL'].mean() if 'TOTAL' in historical_holidays.columns else historical_holidays[period_cols].sum(axis=1).mean()
+                    avg_total = (
+                        historical_holidays['TOTAL'].mean()
+                        if 'TOTAL' in historical_holidays.columns
+                        else historical_holidays[period_cols].sum(axis=1).mean()
+                    )
                     hourly_profile = avg_normalized * avg_total
-                    logger.debug(f"  {fecha_str} (festivo): fallback con {len(historical_holidays)} festivos del mes")
-                else:
-                    # Último fallback: usar cluster de días especiales
-                    if hourly_engine and hourly_engine.special_disaggregator.is_fitted:
-                        avg_total = df_historico['TOTAL'].mean() if 'TOTAL' in df_historico.columns else df_historico[period_cols].sum(axis=1).mean()
-                        result = hourly_engine.special_disaggregator.predict_hourly_profile(fecha, avg_total, return_normalized=False)
-                        if result is not None:
-                            if isinstance(result, tuple):
-                                hourly_profile = result[0]
-                            else:
-                                hourly_profile = result
-                            if not isinstance(hourly_profile, np.ndarray):
-                                hourly_profile = np.array(hourly_profile)
-                        else:
-                            hourly_profile = np.zeros(24)
-                        logger.debug(f"  {fecha_str} (festivo): usando cluster especial")
+                    logger.debug(
+                        f"  {fecha_str} (festivo): fallback con "
+                        f"{len(historical_holidays)} festivos del mes"
+                    )
+                elif hourly_engine and hourly_engine.special_disaggregator.is_fitted:
+                    avg_total = (
+                        df_historico['TOTAL'].mean()
+                        if 'TOTAL' in df_historico.columns
+                        else df_historico[period_cols].sum(axis=1).mean()
+                    )
+                    result = hourly_engine.special_disaggregator.predict_hourly_profile(
+                        fecha, avg_total, return_normalized=False
+                    )
+                    if result is not None:
+                        hourly_profile = result[0] if isinstance(result, tuple) else result
+                        if not isinstance(hourly_profile, np.ndarray):
+                            hourly_profile = np.array(hourly_profile)
                     else:
-                        # Fallback final: perfil plano
-                        avg_total = df_historico['TOTAL'].mean() if 'TOTAL' in df_historico.columns else df_historico[period_cols].sum(axis=1).mean()
-                        hourly_profile = np.full(24, avg_total / 24)
-                        logger.warning(f"  {fecha_str} (festivo): usando perfil plano (sin datos)")
+                        hourly_profile = np.zeros(24)
+                    logger.debug(f"  {fecha_str} (festivo): usando cluster especial")
+                else:
+                    avg_total = (
+                        df_historico['TOTAL'].mean()
+                        if 'TOTAL' in df_historico.columns
+                        else df_historico[period_cols].sum(axis=1).mean()
+                    )
+                    hourly_profile = np.full(24, avg_total / 24)
+                    logger.warning(f"  {fecha_str} (festivo): usando perfil plano (sin datos)")
         
         # MÉTODO 2: Si es día normal, usar cluster + total promedio histórico
         # ESTRATEGIA: Priorizar datos del mismo mes (captura cambios de nivel recientes),
