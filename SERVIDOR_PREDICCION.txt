@@ -74,6 +74,17 @@ Curvas base
     -H "Content-Type: application/json" \
     -d '{"ucp":"Atlantico","fecha_inicio":"2023-07-01","fecha_fin":"2023-07-03","data":[{"fecha":"2023-07-01","tipopronostico":"Modelo IA"},{"fecha":"2023-07-02","tipopronostico":"Modelo Base"}]}'
 
+Forecast covariate (aditivo estilo TimesFM-3; no reemplaza /predict ni Modelo Base)
+- Modo UCP (arma context + past/past-future covariates solo):
+  curl -X POST "http://localhost:8000/forecast-covariate" \
+    -H "Content-Type: application/json" \
+    -d '{"ucp":"Atlantico","fecha_inicio":"2023-07-01","fecha_fin":"2023-07-14","return_quantiles":true,"force_retrain":false}'
+
+- Modo matrices (contrato TimesFM-like):
+  curl -X POST "http://localhost:8000/forecast-covariate" \
+    -H "Content-Type: application/json" \
+    -d '{"context":[[100,101,102]],"horizon":3,"past_future_covariates":[[0,0,0,1,0,0]],"return_quantiles":true,"target_names":["TOTAL"],"force_retrain":true}'
+
 Ajustes manuales
 - Validar ajustes horarios:
   curl -X POST "http://localhost:8000/validate-hourly-adjustments" \
@@ -117,6 +128,12 @@ Curvas base
   Descripcion: calcula curvas base (P1..P24).
 - POST /predict-with-base-curve
   Descripcion: combinado de prediccion y curva base.
+
+Forecast covariate
+- POST /forecast-covariate
+  Descripcion: endpoint ADITIVO estilo TimesFM-3 (multivariado, past covariates,
+    past-future covariates, horizonte directo, cuantiles p10..p90).
+    No modifica /predict ni champion_model.
 
 Ajustes manuales
 - POST /validate-hourly-adjustments
