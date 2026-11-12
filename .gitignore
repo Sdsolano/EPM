@@ -121,3 +121,7 @@ after_fixes.csv
 /reports
 /models/Atlantico
 /models
+
+# Env files (cualquier variante; .env.example se versiona)
+.env*
+!.env.example

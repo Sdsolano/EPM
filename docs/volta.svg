@@ -1,0 +1,228 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 520" width="920" height="520" font-family="Arial, sans-serif">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#f0f6fc"/>
+      <stop offset="100%" style="stop-color:#e4f0f8"/>
+    </linearGradient>
+    <radialGradient id="centerGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" style="stop-color:#1B4F8A"/>
+      <stop offset="100%" style="stop-color:#0d3a6e"/>
+    </radialGradient>
+    <marker id="arrowTeal" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#2196A6"/>
+    </marker>
+    <marker id="arrowBlue" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#1B4F8A"/>
+    </marker>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#1B4F8A" flood-opacity="0.12"/>
+    </filter>
+    <filter id="centerShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="4" stdDeviation="10" flood-color="#1B4F8A" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="920" height="520" fill="url(#bgGrad)" rx="18"/>
+
+  <!-- Subtle grid -->
+  <g opacity="0.05" stroke="#1B4F8A" stroke-width="1">
+    <line x1="0" y1="52" x2="920" y2="52"/>
+    <line x1="0" y1="104" x2="920" y2="104"/>
+    <line x1="0" y1="156" x2="920" y2="156"/>
+    <line x1="0" y1="208" x2="920" y2="208"/>
+    <line x1="0" y1="260" x2="920" y2="260"/>
+    <line x1="0" y1="312" x2="920" y2="312"/>
+    <line x1="0" y1="364" x2="920" y2="364"/>
+    <line x1="0" y1="416" x2="920" y2="416"/>
+    <line x1="0" y1="468" x2="920" y2="468"/>
+    <line x1="92" y1="0" x2="92" y2="520"/>
+    <line x1="184" y1="0" x2="184" y2="520"/>
+    <line x1="276" y1="0" x2="276" y2="520"/>
+    <line x1="368" y1="0" x2="368" y2="520"/>
+    <line x1="460" y1="0" x2="460" y2="520"/>
+    <line x1="552" y1="0" x2="552" y2="520"/>
+    <line x1="644" y1="0" x2="644" y2="520"/>
+    <line x1="736" y1="0" x2="736" y2="520"/>
+    <line x1="828" y1="0" x2="828" y2="520"/>
+  </g>
+
+  <!-- SECTION LABELS -->
+  <text x="38" y="62" font-size="11" fill="#5D6D7E" font-weight="700" letter-spacing="2">ENTRADAS</text>
+  <line x1="38" y1="68" x2="220" y2="68" stroke="#2196A6" stroke-width="2" opacity="0.4"/>
+  <text x="700" y="62" font-size="11" fill="#5D6D7E" font-weight="700" letter-spacing="2">SALIDAS</text>
+  <line x1="700" y1="68" x2="882" y2="68" stroke="#1B4F8A" stroke-width="2" opacity="0.4"/>
+
+  <!-- ARROWS inputs to center -->
+  <line x1="220" y1="128" x2="362" y2="210" stroke="#2196A6" stroke-width="2.5" stroke-dasharray="7,4" marker-end="url(#arrowTeal)" opacity="0.8"/>
+  <line x1="220" y1="262" x2="358" y2="262" stroke="#2196A6" stroke-width="2.5" stroke-dasharray="7,4" marker-end="url(#arrowTeal)" opacity="0.8"/>
+  <line x1="220" y1="396" x2="362" y2="314" stroke="#2196A6" stroke-width="2.5" stroke-dasharray="7,4" marker-end="url(#arrowTeal)" opacity="0.8"/>
+
+  <!-- ARROWS center to outputs -->
+  <line x1="558" y1="212" x2="698" y2="138" stroke="#1B4F8A" stroke-width="2.5" marker-end="url(#arrowBlue)" opacity="0.85"/>
+  <line x1="562" y1="262" x2="698" y2="262" stroke="#1B4F8A" stroke-width="2.5" marker-end="url(#arrowBlue)" opacity="0.85"/>
+  <line x1="558" y1="312" x2="698" y2="388" stroke="#1B4F8A" stroke-width="2.5" marker-end="url(#arrowBlue)" opacity="0.85"/>
+
+  <!-- ====================================================
+       LEFT NODES
+       Box width=182, height=86
+       Tinted icon zone: x_box to x_box+72
+       Icon centered at (x_box+36, y_box+43)
+       Vertical separator line at x=x_box+72
+       Text starts at x=x_box+82
+       ==================================================== -->
+
+  <!-- L1: Demanda Histórica  y=85 -->
+  <g filter="url(#shadow)">
+    <rect x="38" y="85" width="182" height="86" rx="13" fill="white" stroke="#2196A6" stroke-width="2"/>
+    <!-- Icon bg -->
+    <clipPath id="clipL1"><rect x="38" y="85" width="72" height="86" rx="13"/></clipPath>
+    <rect x="38" y="85" width="72" height="86" fill="#ddf0f2" clip-path="url(#clipL1)"/>
+    <!-- Separator -->
+    <line x1="110" y1="89" x2="110" y2="167" stroke="#2196A6" stroke-width="1" opacity="0.25"/>
+    <!-- Bar chart: 3 bars centered at (74, 128) -->
+    <rect x="58" y="118" width="10" height="22" rx="2" fill="#2196A6" opacity="0.55"/>
+    <rect x="72" y="110" width="10" height="30" rx="2" fill="#2196A6" opacity="0.8"/>
+    <rect x="86" y="114" width="10" height="26" rx="2" fill="#2196A6"/>
+    <!-- Text -->
+    <text x="120" y="116" font-size="12" fill="#1B4F8A" font-weight="700">Demanda</text>
+    <text x="120" y="132" font-size="12" fill="#1B4F8A" font-weight="700">Histórica</text>
+    <text x="120" y="153" font-size="10" fill="#7f8c8d">Series temporales</text>
+  </g>
+
+  <!-- L2: Variables Climáticas  y=219 -->
+  <g filter="url(#shadow)">
+    <rect x="38" y="219" width="182" height="86" rx="13" fill="white" stroke="#2196A6" stroke-width="2"/>
+    <clipPath id="clipL2"><rect x="38" y="219" width="72" height="86" rx="13"/></clipPath>
+    <rect x="38" y="219" width="72" height="86" fill="#fff4d9" clip-path="url(#clipL2)"/>
+    <line x1="110" y1="223" x2="110" y2="301" stroke="#2196A6" stroke-width="1" opacity="0.25"/>
+    <!-- Sun centered at (74, 262) -->
+    <circle cx="74" cy="262" r="12" fill="none" stroke="#e6a817" stroke-width="2.5"/>
+    <circle cx="74" cy="262" r="6" fill="#e6a817"/>
+    <line x1="74" y1="246" x2="74" y2="242" stroke="#e6a817" stroke-width="2"/>
+    <line x1="74" y1="278" x2="74" y2="282" stroke="#e6a817" stroke-width="2"/>
+    <line x1="58" y1="262" x2="54" y2="262" stroke="#e6a817" stroke-width="2"/>
+    <line x1="90" y1="262" x2="94" y2="262" stroke="#e6a817" stroke-width="2"/>
+    <line x1="63" y1="251" x2="60" y2="248" stroke="#e6a817" stroke-width="1.5"/>
+    <line x1="85" y1="273" x2="88" y2="276" stroke="#e6a817" stroke-width="1.5"/>
+    <line x1="85" y1="251" x2="88" y2="248" stroke="#e6a817" stroke-width="1.5"/>
+    <line x1="63" y1="273" x2="60" y2="276" stroke="#e6a817" stroke-width="1.5"/>
+    <!-- Text -->
+    <text x="120" y="250" font-size="12" fill="#1B4F8A" font-weight="700">Variables</text>
+    <text x="120" y="266" font-size="12" fill="#1B4F8A" font-weight="700">Climáticas</text>
+    <text x="120" y="287" font-size="10" fill="#7f8c8d">Temp · Humedad · Viento</text>
+  </g>
+
+  <!-- L3: Calendario y Festivos  y=353 -->
+  <g filter="url(#shadow)">
+    <rect x="38" y="353" width="182" height="86" rx="13" fill="white" stroke="#2196A6" stroke-width="2"/>
+    <clipPath id="clipL3"><rect x="38" y="353" width="72" height="86" rx="13"/></clipPath>
+    <rect x="38" y="353" width="72" height="86" fill="#eeeefc" clip-path="url(#clipL3)"/>
+    <line x1="110" y1="357" x2="110" y2="435" stroke="#2196A6" stroke-width="1" opacity="0.25"/>
+    <!-- Calendar centered at (74, 396) -->
+    <rect x="56" y="374" width="36" height="30" rx="4" fill="none" stroke="#5c6bc0" stroke-width="2"/>
+    <line x1="56" y1="383" x2="92" y2="383" stroke="#5c6bc0" stroke-width="1.8"/>
+    <line x1="65" y1="370" x2="65" y2="378" stroke="#5c6bc0" stroke-width="2.2"/>
+    <line x1="83" y1="370" x2="83" y2="378" stroke="#5c6bc0" stroke-width="2.2"/>
+    <circle cx="65" cy="392" r="2.5" fill="#5c6bc0"/>
+    <circle cx="74" cy="392" r="2.5" fill="#5c6bc0"/>
+    <circle cx="83" cy="392" r="2.5" fill="#e05c40"/>
+    <circle cx="65" cy="400" r="2.5" fill="#5c6bc0"/>
+    <circle cx="74" cy="400" r="2.5" fill="#5c6bc0"/>
+    <!-- Text -->
+    <text x="120" y="384" font-size="12" fill="#1B4F8A" font-weight="700">Calendario</text>
+    <text x="120" y="400" font-size="12" fill="#1B4F8A" font-weight="700">y Festivos</text>
+    <text x="120" y="421" font-size="10" fill="#7f8c8d">Tipología de días</text>
+  </g>
+
+  <!-- ====================================================
+       CENTER VOLTA
+       ==================================================== -->
+  <g filter="url(#centerShadow)">
+    <circle cx="460" cy="262" r="112" fill="none" stroke="#2196A6" stroke-width="1.5" opacity="0.18"/>
+    <circle cx="460" cy="262" r="97"  fill="none" stroke="#1B4F8A" stroke-width="1.5" opacity="0.28"/>
+    <circle cx="460" cy="262" r="84" fill="url(#centerGlow)"/>
+    <!-- V -->
+    <polyline points="432,228 460,282 488,228" fill="none" stroke="white" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- Forecast wave -->
+    <polyline points="436,272 446,258 456,280 466,246 476,262" fill="none" stroke="#64d8e8" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.9"/>
+    <text x="460" y="310" text-anchor="middle" font-size="19" fill="white" font-weight="700" letter-spacing="5">VOLTA</text>
+  </g>
+
+  <!-- ====================================================
+       RIGHT NODES
+       Box x=700, width=182, height=86
+       Icon zone: x=700 to x=772, centered at (736, y+43)
+       Text starts at x=782
+       ==================================================== -->
+
+  <!-- R1: Pronóstico Mensual  y=95 -->
+  <g filter="url(#shadow)">
+    <rect x="700" y="95" width="182" height="86" rx="13" fill="white" stroke="#1B4F8A" stroke-width="2.5"/>
+    <clipPath id="clipR1"><rect x="700" y="95" width="72" height="86" rx="13"/></clipPath>
+    <rect x="700" y="95" width="72" height="86" fill="#dde8f8" clip-path="url(#clipR1)"/>
+    <line x1="772" y1="99" x2="772" y2="177" stroke="#1B4F8A" stroke-width="1" opacity="0.2"/>
+    <!-- Line chart centered at (736, 138) -->
+    <polyline points="710,156 718,144 726,150 734,134 742,139 750,126 758,130 766,120" fill="none" stroke="#1B4F8A" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+    <polyline points="710,162 766,126" stroke="#2196A6" stroke-width="1" stroke-dasharray="3,2" opacity="0.45"/>
+    <polyline points="710,152 766,116" stroke="#2196A6" stroke-width="1" stroke-dasharray="3,2" opacity="0.45"/>
+    <!-- Text -->
+    <text x="782" y="124" font-size="12" fill="#1B4F8A" font-weight="700">Pronóstico</text>
+    <text x="782" y="140" font-size="12" fill="#1B4F8A" font-weight="700">Mensual</text>
+    <text x="782" y="161" font-size="10" fill="#7f8c8d">Semanal · Intradiario</text>
+  </g>
+
+  <!-- R2: Granularidad Horaria  y=219 -->
+  <g filter="url(#shadow)">
+    <rect x="700" y="219" width="182" height="86" rx="13" fill="white" stroke="#1B4F8A" stroke-width="2.5"/>
+    <clipPath id="clipR2"><rect x="700" y="219" width="72" height="86" rx="13"/></clipPath>
+    <rect x="700" y="219" width="72" height="86" fill="#dde8f8" clip-path="url(#clipR2)"/>
+    <line x1="772" y1="223" x2="772" y2="301" stroke="#1B4F8A" stroke-width="1" opacity="0.2"/>
+    <!-- Hourly bars centered at (736, 262) -->
+    <rect x="710" y="256" width="7" height="18" rx="1" fill="#1B4F8A" opacity="0.4"/>
+    <rect x="720" y="248" width="7" height="26" rx="1" fill="#1B4F8A" opacity="0.6"/>
+    <rect x="730" y="252" width="7" height="22" rx="1" fill="#1B4F8A" opacity="0.8"/>
+    <rect x="740" y="242" width="7" height="32" rx="1" fill="#1B4F8A"/>
+    <rect x="750" y="246" width="7" height="28" rx="1" fill="#2196A6" opacity="0.9"/>
+    <rect x="760" y="254" width="7" height="20" rx="1" fill="#2196A6" opacity="0.65"/>
+    <!-- Text -->
+    <text x="782" y="248" font-size="12" fill="#1B4F8A" font-weight="700">Granularidad</text>
+    <text x="782" y="264" font-size="12" fill="#1B4F8A" font-weight="700">Horaria</text>
+    <text x="782" y="285" font-size="10" fill="#7f8c8d">24 períodos / día</text>
+  </g>
+
+  <!-- R3: Multi-Barra  y=343 -->
+  <g filter="url(#shadow)">
+    <rect x="700" y="343" width="182" height="86" rx="13" fill="white" stroke="#1B4F8A" stroke-width="2.5"/>
+    <clipPath id="clipR3"><rect x="700" y="343" width="72" height="86" rx="13"/></clipPath>
+    <rect x="700" y="343" width="72" height="86" fill="#dde8f8" clip-path="url(#clipR3)"/>
+    <line x1="772" y1="347" x2="772" y2="425" stroke="#1B4F8A" stroke-width="1" opacity="0.2"/>
+    <!-- Network icon centered at (736, 386) -->
+    <circle cx="716" cy="386" r="7" fill="#1B4F8A" opacity="0.85"/>
+    <circle cx="736" cy="374" r="4.5" fill="#2196A6"/>
+    <circle cx="736" cy="386" r="4.5" fill="#2196A6"/>
+    <circle cx="736" cy="398" r="4.5" fill="#2196A6"/>
+    <circle cx="754" cy="368" r="3.5" fill="#1B4F8A" opacity="0.5"/>
+    <circle cx="754" cy="379" r="3.5" fill="#1B4F8A" opacity="0.5"/>
+    <circle cx="754" cy="391" r="3.5" fill="#1B4F8A" opacity="0.5"/>
+    <circle cx="754" cy="402" r="3.5" fill="#1B4F8A" opacity="0.5"/>
+    <line x1="723" y1="386" x2="731" y2="376" stroke="#1B4F8A" stroke-width="1.5" opacity="0.5"/>
+    <line x1="723" y1="386" x2="731" y2="386" stroke="#1B4F8A" stroke-width="1.5" opacity="0.5"/>
+    <line x1="723" y1="386" x2="731" y2="396" stroke="#1B4F8A" stroke-width="1.5" opacity="0.5"/>
+    <line x1="741" y1="373" x2="750" y2="368" stroke="#2196A6" stroke-width="1.2" opacity="0.5"/>
+    <line x1="741" y1="373" x2="750" y2="380" stroke="#2196A6" stroke-width="1.2" opacity="0.5"/>
+    <line x1="741" y1="386" x2="750" y2="379" stroke="#2196A6" stroke-width="1.2" opacity="0.5"/>
+    <line x1="741" y1="386" x2="750" y2="391" stroke="#2196A6" stroke-width="1.2" opacity="0.5"/>
+    <line x1="741" y1="398" x2="750" y2="391" stroke="#2196A6" stroke-width="1.2" opacity="0.5"/>
+    <line x1="741" y1="398" x2="750" y2="403" stroke="#2196A6" stroke-width="1.2" opacity="0.5"/>
+    <!-- Text -->
+    <text x="782" y="372" font-size="12" fill="#1B4F8A" font-weight="700">Multi-Barra</text>
+    <text x="782" y="409" font-size="10" fill="#7f8c8d">+60 nodos + global</text>
+  </g>
+
+  <!-- BOTTOM NOTE -->
+  <text x="460" y="472" text-anchor="middle" font-size="11" fill="#7f8c8d" letter-spacing="0.5">Sistema autónomo de pronóstico energético · Cumplimiento CNO 1303 · CREG 143</text>
+
+  <!-- Outer border -->
+  <rect x="2" y="2" width="916" height="516" rx="18" fill="none" stroke="#1B4F8A" stroke-width="1.5" opacity="0.12"/>
+</svg>
