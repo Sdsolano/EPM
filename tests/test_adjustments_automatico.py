@@ -170,8 +170,8 @@ def test_pasos_automaticos_tipo_invalido():
 @pytest.mark.parametrize(
     "ucp, esperado",
     [
-        ("Antioquia", {"nivel": "sugerido", "forma": "automatico"}),
-        ("Atlantico", {"nivel": "automatico", "forma": "automatico"}),
+        ("Antioquia", {"nivel": "sugerido", "forma": "sugerido"}),
+        ("Atlantico", {"nivel": "sugerido", "forma": "sugerido"}),
         ("Desconocida", {"nivel": "sugerido", "forma": "sugerido"}),
         ("atlantico", {"nivel": "sugerido", "forma": "sugerido"}),
         (None, {"nivel": "sugerido", "forma": "sugerido"}),
@@ -181,12 +181,24 @@ def test_modos_paso(ucp, esperado):
     assert automatico.modos_paso(ucp) == esperado
 
 
+def test_modos_paso_exige_los_cuatro_tipos(monkeypatch):
+    # Atlántico/nivel solo tiene regla en sábado y Antioquia/forma solo en laboral:
+    # el resto de tipos cuenta como sugerido, así que el paso no es automático.
+    monkeypatch.setitem(automatico.CONFIG_R2, "Completa", {
+        "laboral": {"nivel": "automatico", "forma": "automatico"},
+        "sabado": {"nivel": "automatico", "forma": "automatico"},
+        "domingo": {"nivel": "automatico", "forma": "automatico"},
+        "festivo": {"nivel": "automatico", "forma": "automatico"},
+    })
+    assert automatico.modos_paso("Completa") == {"nivel": "automatico", "forma": "automatico"}
+
+
 def test_modos_paso_solo_pasos_r2_y_estructura_nueva():
     modos = automatico.modos_paso("Atlantico")
     assert list(modos) == list(automatico.PASOS)
     assert set(modos.values()) <= set(automatico.ESTADOS)
     modos["forma"] = "tocado"
-    assert automatico.modos_paso("Atlantico")["forma"] == "automatico"
+    assert automatico.modos_paso("Atlantico")["forma"] == "sugerido"
 
 
 # ---------------------------------------------------------------- import aislado

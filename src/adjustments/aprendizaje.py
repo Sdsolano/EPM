@@ -30,7 +30,7 @@ FestivosPorRun = Union[Mapping[str, Sequence[str]], Callable[[Dict[str, Any]], S
 
 
 # ---------------------------------------------------------------------------
-# helpers
+# Utilidades internas
 # ---------------------------------------------------------------------------
 
 def _field(obj: Any, name: str, default: Any = None) -> Any:
@@ -50,7 +50,13 @@ def _estado(rec: Any) -> str:
 
 
 def _energia(valores: Any) -> Optional[float]:
-    """Suma de los 24 periodos, o None si la curva no es numérica/finita."""
+    """
+    Suma de los periodos almacenados, o None si la curva no es numérica/finita.
+
+    Difiere a propósito de `data.energia_curva`: las curvas guardadas en records
+    viejos no siempre tienen 24 periodos ni son no negativas, y este diagnóstico
+    debe agregarlas igual mientras sean finitas; `energia_curva` las rechazaría.
+    """
     if not valores:
         return None
     try:

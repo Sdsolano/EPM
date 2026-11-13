@@ -94,8 +94,9 @@ Suite completa:
   `aplicar=false`), para que el analista sepa que la sugerencia no tiene respaldo.
 
 ## Riesgos / pendientes
-- La migración de 5 pasos se aplica en `rerun_from`; un PATCH de un paso que no existe en la
-  corrida vieja (p. ej. `especiales`) devuelve 422 hasta que la corrida se migre por otro PATCH.
+- La migración de 5 pasos ya no depende de `rerun_from`: `pipeline.migrar_records` es pública e
+  idempotente y el router la aplica en `_run_out` (GET) y en `patch_step` (`by_paso`). Una corrida
+  vieja devuelve 6 pasos y un PATCH de `especiales` funciona sin otro PATCH previo.
 - El ajuste por Semana Santa depende de que el histórico tenga Semanas Santas observadas fuera de
   los años excluidos; con histórico corto cae en `ESPECIALES_SIN_EVIDENCIA`.
 - El candidato `alpha=0.5` + `ancla="analogos"` **no se sostiene** con el re-backtest `modelo_k1`
@@ -103,3 +104,6 @@ Suite completa:
   `{"aplicar": False, "alpha": 0.25, "ancla": "actual"}`, sin efecto por defecto.
 - La detección de elecciones depende de `ctx.extras["eventos"]` (IA, no verificada) y solo
   alimenta diagnóstico/alerta; no hay calendario electoral offline en el repo.
+- Al activar `aplicar=true` se emite el warning `ESPECIALES_SIN_BACKTEST` (una vez, no bloquea);
+  `analogos`/`filtros_analogos` con `ancla != "analogos"` se ignoran y emiten info
+  `PARAMS_ANALOGOS_IGNORADOS` (no rompe clientes).

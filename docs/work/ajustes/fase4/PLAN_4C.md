@@ -16,8 +16,9 @@ Por defecto **off**: ninguna curva cambia si no se pide.
   (UCP desconocida → todo `sugerido`), incluyendo `fuente` = reporte y `criterio`.
 - `estado(ucp, tipo_dia, paso)` → `"automatico" | "sugerido"`; `pasos_automaticos(ucp, tipo_dia)`.
 - `modos_paso(ucp)` → `{paso: "automatico" | "sugerido"}`: un paso es `"automatico"` solo si
-  **todos** los tipos de día con regla en `CONFIG_R2` lo marcan automático; mixto o sin reglas →
-  `"sugerido"`. Es el resumen que consume el front.
+  **los 4 tipos de día** lo marcan automático; cualquier tipo sin regla cuenta como `"sugerido"`
+  (una UCP cuyo backtest solo respalda un segmento queda en `"sugerido"`). Es el resumen que
+  consume el front.
 - `activar(ucp, tipo_dia, paso)` NO muta el global: el request lleva `aplicar_automatico: bool`
   (default false) en `RunRequest`; se guarda en `meta.extras["aplicar_automatico"]`.
 

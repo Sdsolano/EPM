@@ -88,3 +88,11 @@ Verificación ejecutada:
 - Riesgo de integración: el nombre de las claves del resumen (`grupos`, `resumen_global`,
   `por_dia_semana`, `omitidos_sin_calculada`, `min_casos`) no estaba fijado por el plan; el agente
   del endpoint debe devolver el dict tal cual.
+
+## Limitaciones aceptadas (ronda 2)
+- `aprendizaje` agrega corridas en **cualquier estado** (`borrador`, `aprobada`,
+  `reemplazada`) y ediciones de todos los pasos sin filtrar ni ponderar; es un
+  diagnóstico exploratorio, no una fuente de verdad.
+- `_energia` usa una suma genérica de los periodos almacenados en vez de
+  `data.energia_curva`: las curvas de records viejos no siempre tienen 24 periodos ni son
+  no negativas, y el diagnóstico debe agregarlas mientras sean finitas.

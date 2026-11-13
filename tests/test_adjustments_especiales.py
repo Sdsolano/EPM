@@ -12,6 +12,7 @@ from src.adjustments.pipeline import (
     approval_blockers,
     build_context,
     final_curves,
+    migrar_records,
     rerun_from,
     run_pipeline,
 )
@@ -209,6 +210,44 @@ def test_aplicar_con_analogos_del_analista():
     assert dia["aplicado"] is True
 
 
+def test_aplicar_emite_warning_sin_backtest_una_vez():
+    ctx = _ctx(SEMANA_SANTA, _hist_semana_santa())
+    result = especiales.step(ctx, _prev_semana(ctx), {"aplicar": True, "alpha": 0.25})
+    avisos = [a for a in result.alerts if a.codigo == "ESPECIALES_SIN_BACKTEST"]
+    assert len(avisos) == 1
+    assert avisos[0].nivel == "warning"
+    assert approval_blockers(
+        run_pipeline(ctx, ProveedorPlano(), params={"especiales": {"aplicar": True}})) == []
+
+
+def test_no_aplicar_no_emite_warning_sin_backtest():
+    ctx = _ctx(SEMANA_SANTA)
+    result = especiales.step(ctx, _prev_semana(ctx), {})
+    assert not any(a.codigo == "ESPECIALES_SIN_BACKTEST" for a in result.alerts)
+
+
+def test_params_analogos_con_ancla_actual_se_ignoran_con_info():
+    ctx = _ctx(SEMANA_SANTA, _hist_semana_santa())
+    result = especiales.step(
+        ctx, _prev_semana(ctx),
+        {"aplicar": True, "ancla": "actual",
+         "analogos": {"2025-04-13": ["2024-03-24"]},
+         "filtros_analogos": {"meses": [3, 4]}},
+    )
+    alerta = next(a for a in result.alerts if a.codigo == "PARAMS_ANALOGOS_IGNORADOS")
+    assert alerta.nivel == "info"
+    assert "analogos" in alerta.detalle and "filtros_analogos" in alerta.detalle
+
+
+def test_params_analogos_con_ancla_analogos_no_emite_ignorados():
+    ctx = _ctx(SEMANA_SANTA, _hist_semana_santa())
+    result = especiales.step(
+        ctx, _prev_semana(ctx),
+        {"ancla": "analogos", "analogos": {"2025-04-13": ["2024-03-24"]}},
+    )
+    assert not any(a.codigo == "PARAMS_ANALOGOS_IGNORADOS" for a in result.alerts)
+
+
 def test_aplicar_no_genera_reconciliacion_rota():
     records = run_pipeline(
         _ctx(SEMANA_SANTA, _hist_semana_santa()), ProveedorPlano(),
@@ -356,3 +395,11 @@ def test_migracion_5_pasos_desde_nivel_devuelve_seis():
     assert nuevos[4].paso == "especiales"
     assert nuevos[4].estado is StepState.OMITIDO
     assert nuevos[5].paso == "control" and nuevos[5].orden == 5
+
+
+def test_migrar_records_publico_es_idempotente():
+    viejos = _records_5_pasos(SEMANA_SANTA)
+    nuevos = migrar_records(viejos)
+    assert [r.paso for r in nuevos] == STEP_ORDER
+    assert [r.orden for r in nuevos] == [0, 1, 2, 3, 4, 5]
+    assert migrar_records(nuevos) is nuevos

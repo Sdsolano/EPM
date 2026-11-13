@@ -15,8 +15,9 @@ En este módulo solo se exponen los `automático` (R2 = "automatico"); todo lo
 demás queda como `sugerido`. R2 es una **clasificación de revisión para el
 front**: el backend aplica siempre los pasos del pipeline y este módulo no
 cambia ninguna curva ni ningún default. `modos_paso(ucp)` resume, por paso, si
-todos los tipos de día con regla son automáticos (`"automatico"`) o no
-(`"sugerido"`); el router lo publica siempre en `meta.extras["modos_paso"]`.
+**los 4 tipos de día** son automáticos (`"automatico"`) o no (`"sugerido"`; un
+tipo sin regla cuenta como sugerido); el router lo publica siempre en
+`meta.extras["modos_paso"]`.
 `configuracion()` y `estado()` son el detalle por tipo de día que consume el
 endpoint `GET /adjustments/automatico` (ver PLAN_4C).
 
@@ -104,31 +105,28 @@ def pasos_automaticos(ucp: Any, tipo_dia: Any) -> List[str]:
     return [paso for paso in PASOS if _regla(ucp, tipo_dia, paso) == AUTOMATICO]
 
 
-def _estados_con_regla(ucp: Any, paso: str) -> List[str]:
-    """Estados de los tipos de día con una regla explícita para el paso en CONFIG_R2."""
-    por_tipo = CONFIG_R2.get(_clave_ucp(ucp), {})
-    return [
-        _regla(ucp, tipo, paso)
-        for tipo in TIPOS
-        if paso in por_tipo.get(tipo, {})
-    ]
+def _estados_por_tipo(ucp: Any, paso: str) -> List[str]:
+    """Estado de los 4 tipos de día (sin regla → sugerido)."""
+    return [_regla(ucp, tipo, paso) for tipo in TIPOS]
 
 
 def modos_paso(ucp: Any) -> Dict[str, str]:
     """
     Modo de revisión por paso para el front: `{paso: "automatico" | "sugerido"}`.
 
-    Un paso es `"automatico"` solo si **todos** los tipos de día con regla en
-    `CONFIG_R2` lo marcan automático (y hay al menos uno); si es mixto o no
-    tiene reglas → `"sugerido"`. UCP desconocida (o `None`) → todo `"sugerido"`.
+    Un paso es `"automatico"` solo si **los 4 tipos de día** lo marcan automático;
+    cualquier tipo sin regla en `CONFIG_R2` cuenta como `"sugerido"`. Así una UCP
+    cuyo backtest solo respalda un segmento (p. ej. Atlántico/nivel o
+    Antioquia/forma) queda como `"sugerido"`. UCP desconocida (o `None`) → todo
+    `"sugerido"`.
 
     Es barato (no lee datos ni base) y no altera curvas: el backend siempre
     aplica los pasos; esto solo dice qué revisiones puede automatizar el front.
     """
     modos: Dict[str, str] = {}
     for paso in PASOS:
-        estados = _estados_con_regla(ucp, paso)
-        modos[paso] = AUTOMATICO if estados and all(e == AUTOMATICO for e in estados) else SUGERIDO
+        estados = _estados_por_tipo(ucp, paso)
+        modos[paso] = AUTOMATICO if all(e == AUTOMATICO for e in estados) else SUGERIDO
     return modos
 
 

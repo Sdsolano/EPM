@@ -256,7 +256,7 @@ class RunRequest(BaseModel):
         None, max_length=200, description="Referencia al pronóstico emitido en Sphere (se guarda en meta.extras)"
     )
     aplicar_automatico: bool = Field(
-        False, description="Añade a nivel/forma/especiales el estado R2 por día en diagnostics.automatico; "
+        False, description="Añade a nivel/forma el estado R2 por día en diagnostics.automatico; "
                            "no cambia las curvas"
     )
 
@@ -547,6 +547,7 @@ def _final_out(records: List[StepRecord]) -> CurvasOut:
 
 def _run_out(records: List[StepRecord], meta: Dict[str, Any], run_id: Optional[str],
              eventos: Optional[List[Dict[str, Any]]] = None) -> RunOut:
+    records = pl.migrar_records(records)  # corridas viejas de 5 pasos → 6 (idempotente)
     meta_out = {k: v for k, v in meta.items() if k != "extras"}
     extras = meta.get("extras") or {}
     extras_out = {k: v for k, v in extras.items()
@@ -832,7 +833,7 @@ async def get_version(run_id: str, version: int, store: Optional[Store] = Depend
     ver = await run_in_threadpool(store.get_version, run_id, version)
     if ver is None:
         raise HTTPException(HTTP_404, detail=f"Corrida {run_id} sin versión {version}")
-    records = ver["records"]
+    records = pl.migrar_records(ver["records"])
     return VersionOut(version=ver["version"], creado_por=ver.get("creado_por"), motivo=ver.get("motivo"),
                       created_at=ver.get("created_at"), steps=_steps_out(records),
                       final_curves=_final_out(records))
@@ -849,7 +850,7 @@ async def patch_step(run_id: str, paso: str, body: StepPatchRequest,
     saved = await run_in_threadpool(_get_run_or_404, store, run_id)
     meta = saved["meta"]
     _check_editable(meta, body.version_esperada)
-    records: List[StepRecord] = saved["records"]
+    records: List[StepRecord] = pl.migrar_records(saved["records"])
     by_paso = {r.paso: r for r in records}
     if paso not in by_paso:
         raise HTTPException(HTTP_422, detail=f"La corrida no tiene el paso {paso!r}")

@@ -11,8 +11,9 @@
 
 ## Decisiones tomadas sin el usuario
 - 4B: el paso `especiales` se implementa con `aplicar=false` por defecto (sugerencias visibles,
-  curvas idénticas); `alpha=0.5` y `ancla="analogos"` son los valores sugeridos por el backtest
-  `modelo_k1`, no un cambio de default del producto.
+  curvas idénticas). El candidato `alpha=0.5` + `ancla="analogos"` queda **refutado** por el
+  re-backtest `modelo_k1`; el default sigue `aplicar=false, alpha=0.25, ancla="actual"` y, si se
+  activa `aplicar=true`, se emite el warning `ESPECIALES_SIN_BACKTEST` (no bloquea).
 - 4C: `aplicar_automatico` es un flag de request apagado por defecto; la configuración R2 se expone
   por endpoint y solo añade diagnósticos cuando se activa (no cambia curvas).
 - 4D: cache de eventos en `.cache/eventos_ajustes` (gitignored), TTL 7 días; sin key/fallo degrada
@@ -71,3 +72,21 @@
 - **Store `_limite`.** Se acota a 1..500 también en la validación del store (no acepta `1e9`).
 - **Docstrings de 5 pasos.** Otro agente ya actualizó `__init__.py`/`types.py`; solo queda la mención
   legítima a la migración de corridas viejas de 5 pasos en `pipeline._migrar_records_5_pasos`.
+
+## Correcciones de la ronda 2 (ALTITUDE/MEDIO/BAJO)
+
+- R2 (`modos_paso`): un paso es `automatico` solo si **los 4 tipos** lo son; cualquier tipo sin
+  regla cuenta como `sugerido`. Atlántico/nivel y Antioquia/forma pasan a `sugerido`.
+- Eventos: `consultar_openai` lanza `EventosNoDisponibles` ante falta de `API_KEY`/fallo; un fallo
+  no sobrescribe la cache buena (se devuelve la vieja) y un `{}` exitoso sí se cachea corto.
+- Clima: cache LRU de hasta 4 entradas por `(ruta, mtime_ns, tamaño)` sin `clear()` global.
+- OpenAI: cliente con `timeout=5, max_retries=0`.
+- Migración 5→6: `pipeline.migrar_records` es público e idempotente y lo usan `_run_out` (GET) y
+  `patch_step` (`by_paso`), así el GET de una corrida vieja devuelve 6 pasos y el PATCH de
+  `especiales` funciona sin otro PATCH.
+- R2 no incluye `especiales`: sale de `_AUTOMATICO_PASOS` y del docstring de
+  `RunRequest.aplicar_automatico`.
+- `especiales` con `aplicar=true` emite `ESPECIALES_SIN_BACKTEST` (una vez, warning) y con
+  `analogos`/`filtros_analogos` + `ancla != "analogos"` emite `PARAMS_ANALOGOS_IGNORADOS` (info).
+- Docs: EVENTOS_TIMEOUT=5; α0.5+análogos refutado; docstring "Paso 5 (orden 4)"; comentario
+  `# Utilidades internas` en `aprendizaje.py`.

@@ -272,3 +272,16 @@ soportar provider async (await) o el pipeline recibir curvas base ya calculadas 
 - `control.DEFAULTS["banda_referencia_pp"] = 2.0` (antes None). Records guardados con `null` explícito siguen sin la
   alerta al recalcular (respetan su param).
 - `approval_blockers` cubre solo la semana objetivo; `BRECHA_INVALIDA` (warning) para la brecha.
+
+## Fase 4 — limitaciones aceptadas (ronda 2)
+- **Clima no persistido:** la alerta `CLIMA_OBSERVADO` relee `clima_new.csv` (cache LRU en
+  memoria, hasta 4 entradas); el clima no se guarda en `meta.extras` porque solo es informativo.
+- **Aprendizaje agrega todos los estados:** `GET /adjustments/aprendizaje` suma corridas
+  `borrador`/`aprobada`/`reemplazada` y ediciones de cualquier paso, sin filtrar ni ponderar.
+- **R2 es solo clasificación de revisión:** `modos_paso` exige que los 4 tipos de día sean
+  `automatico`; con el backtest actual no hay UCP que cumpla en `nivel`/`forma`, así que el front
+  recibe `sugerido`. R2 nunca activa/desactiva pasos.
+- **Eventos IA no verificados:** sin `API_KEY` o ante fallo se usa la cache vieja (o `{}`) y no se
+  sobrescribe la buena; la corrida sigue sin alertas de eventos.
+- **Especiales sin backtest:** `aplicar=true` emite `ESPECIALES_SIN_BACKTEST` (warning, no bloquea);
+  el default es `aplicar=false, alpha=0.25, ancla="actual"`.
