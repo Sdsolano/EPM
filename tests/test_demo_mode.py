@@ -90,7 +90,7 @@ def test_auth_basic_y_cabecera(entorno):
     c = TestClient(app)
     assert c.get("/health").status_code == 200  # exento
     r = c.get("/adjustments/ping")
-    assert r.status_code == 401 and "Basic" in r.headers["www-authenticate"]
+    assert r.status_code == 401 and "www-authenticate" not in r.headers
     assert c.get("/adjustments/ping", headers=_basic("mala")).status_code == 401
     assert c.get("/adjustments/ping", headers={"Authorization": "Basic !!!"}).status_code == 401
     assert c.get("/adjustments/ping", headers=_basic("clave-demo", "cualquiera")).status_code == 200
@@ -248,3 +248,42 @@ def test_snapshot_manifiesto_y_verificacion(tmp_path):
     (dest / "data/raw/Atlantico/datos.csv").write_text("alterado")
     assert snap.verificar(dest) == ["hash distinto data/raw/Atlantico/datos.csv"]
     assert json.loads((dest / "MANIFEST.json").read_text())["total_bytes"] > 0
+
+
+def test_api_demo_y_estaticos_publicos(entorno, tmp_path):
+    (tmp_path / "index.html").write_text("<html>app</html>")
+    (tmp_path / "assets").mkdir()
+    (tmp_path / "assets" / "a.js").write_text("x")
+    entorno.setenv("DEMO_PASSWORD", "k")
+    entorno.setenv("DEMO_STATIC_DIR", str(tmp_path))
+    app = _app_base()
+    demo.install_demo(app)
+    c = TestClient(app)
+    assert c.get("/").status_code == 200  # público
+    assert c.get("/assets/a.js").status_code == 200
+    r = c.get("/api/demo/ucps")
+    assert r.status_code == 401 and "www-authenticate" not in r.headers
+    u = c.get("/api/demo/ucps", headers=_basic("k", "demo"))
+    assert u.status_code == 200 and isinstance(u.json(), list)
+    assert all({"ucp", "nombre"} <= set(x) for x in u.json())
+    if u.json():
+        ucp = u.json()[0]["ucp"]
+        rr = c.get(f"/api/demo/reales?ucp={ucp}&desde=2026-06-01&hasta=2026-06-03", headers=_basic("k"))
+        assert rr.status_code == 200 and all(len(v) == 24 for v in rr.json().values())
+    assert c.get("/api/demo/reales?ucp=Nada&desde=2026-06-01&hasta=2026-06-03", headers=_basic("k")).status_code == 404
+    assert c.get("/api/demo/reales?ucp=Antioquia&desde=mal&hasta=x", headers=_basic("k")).status_code == 422
+
+
+def test_demo_desactiva_actualizacion_de_datos_del_modelo(entorno):
+    import sys
+    import types
+
+    fake = types.ModuleType("src.api.main")
+    llamadas = []
+    fake.full_update_csv = lambda ucp: llamadas.append(ucp)
+    fake.full_update_csv_diario = lambda ucp: llamadas.append(ucp)
+    entorno.setitem(sys.modules, "src.api.main", fake)
+    demo._desactivar_actualizacion_modelo()
+    fake.full_update_csv("Antioquia")
+    fake.full_update_csv_diario("Atlantico")
+    assert llamadas == []  # no-op: no hay red ni escritura

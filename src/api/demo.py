@@ -74,14 +74,66 @@ def password_valida(request: Request, esperado: str) -> bool:
     return any(hmac.compare_digest(c.encode("utf-8"), e) for c in candidatos)
 
 
-def _instalar_auth(app: FastAPI) -> None:
+def _es_estatico_publico(path: str, method: str, static_dir: Optional[Path]) -> bool:
+    """`GET /` y archivos reales del build del front son públicos (la pantalla de acceso debe poder cargar)."""
+    if method not in ("GET", "HEAD") or static_dir is None:
+        return False
+    if path == "/":
+        return True
+    raiz = static_dir.resolve()
+    candidato = (raiz / path.lstrip("/")).resolve()
+    return candidato.is_file() and raiz in candidato.parents
+
+
+def _instalar_auth(app: FastAPI, static_dir: Optional[Path] = None) -> None:
     @app.middleware("http")
     async def _auth_demo(request: Request, call_next):
         esperado = os.getenv(ENV_PASSWORD)  # se lee por petición: nunca queda en código ni en estado
-        if not esperado or request.url.path in RUTAS_EXENTAS or password_valida(request, esperado):
+        if (not esperado or request.url.path in RUTAS_EXENTAS
+                or _es_estatico_publico(request.url.path, request.method, static_dir)
+                or password_valida(request, esperado)):
             return await call_next(request)
-        return JSONResponse({"detail": "Autenticación requerida"}, status_code=401,
-                            headers={"WWW-Authenticate": 'Basic realm="EPM", charset="UTF-8"'})
+        # Sin WWW-Authenticate a propósito: así el navegador no abre su diálogo nativo (el front tiene su acceso).
+        return JSONResponse({"detail": "Autenticación requerida"}, status_code=401)
+
+
+def _nombre_ucp(ucp: str) -> str:
+    return {"Atlantico": "Atlántico"}.get(ucp, ucp)
+
+
+def _instalar_api_demo(app: FastAPI) -> None:
+    """Rutas propias del front demo (JSON plano). Registrar ANTES del catch-all de estáticos."""
+    from datetime import date
+
+    from fastapi import HTTPException
+
+    from src.adjustments import data as ajdata
+
+    @app.get("/api/demo/ucps", include_in_schema=False)
+    async def _ucps():
+        raiz = Path(ajdata.RAW_DATA_DIR)
+        modelos = Path(__file__).resolve().parents[2] / "models"
+        salida = []
+        if raiz.is_dir():
+            for d in sorted(raiz.iterdir()):
+                if d.is_dir() and (d / "datos.csv").is_file() and (modelos / d.name).is_dir():
+                    salida.append({"ucp": d.name, "nombre": _nombre_ucp(d.name)})
+        return salida
+
+    @app.get("/api/demo/reales", include_in_schema=False)
+    async def _reales(ucp: str, desde: str, hasta: str):
+        if not ucp.isalnum():
+            raise HTTPException(422, "ucp inválida")
+        try:
+            d, h = date.fromisoformat(desde), date.fromisoformat(hasta)
+        except ValueError:
+            raise HTTPException(422, "fechas inválidas (YYYY-MM-DD)")
+        try:
+            hist = await asyncio.get_running_loop().run_in_executor(None, ajdata.cargar_historico, ucp)
+        except FileNotFoundError:
+            raise HTTPException(404, "UCP sin histórico")
+        curvas = ajdata.curvas_reales(hist)
+        return {f: [float(x) for x in v] for f, v in curvas.items() if d.isoformat() <= f <= h.isoformat()}
 
 
 def _instalar_estaticos(app: FastAPI, static_dir: Path) -> None:
@@ -100,9 +152,20 @@ def _instalar_estaticos(app: FastAPI, static_dir: Path) -> None:
                 return FileResponse(candidato)
         ultimo = ruta.rsplit("/", 1)[-1]
         quiere_html = "text/html" in request.headers.get("accept", "")
-        if "." not in ultimo and quiere_html and index.is_file():
+        if (not ruta or ("." not in ultimo and quiere_html)) and index.is_file():
             return FileResponse(index, headers={"Cache-Control": "no-cache"})
         return JSONResponse({"detail": "Not Found"}, status_code=404)
+
+
+def _desactivar_actualizacion_modelo() -> None:
+    """`run_predict_flow` (pronóstico del modelo) llama a `full_update_csv` (API externa + escribe data/raw);
+    en la demo es de solo lectura y offline respecto a datos: se reemplaza por un no-op en el módulo main."""
+    import sys
+
+    main_mod = sys.modules.get("src.api.main")
+    for nombre in ("full_update_csv", "full_update_csv_diario"):
+        if main_mod is not None and hasattr(main_mod, nombre):
+            setattr(main_mod, nombre, lambda ucp, *a, **k: logger.info("[demo] actualización de datos omitida (%s)", ucp))
 
 
 def install_demo(app: FastAPI) -> None:
@@ -112,14 +175,16 @@ def install_demo(app: FastAPI) -> None:
     dsn = resolver_dsn()
     if not dsn:
         logger.warning("[demo] sin DATABASE_URL/AJUSTES_DATABASE_URL: /adjustments responderá 503")
+    static_dir = Path(os.getenv(ENV_STATIC) or DEFAULT_STATIC)
     if not os.getenv(ENV_PASSWORD):
         logger.warning("[demo] DEMO_PASSWORD no definido: el entorno queda SIN autenticación")
     else:
-        _instalar_auth(app)
+        _instalar_auth(app, static_dir)
     if not _activo(ENV_REFRESH):
         set_data_refresher(None)  # solo lectura: sin red ni escritura sobre data/raw
+        _desactivar_actualizacion_modelo()
+    _instalar_api_demo(app)
 
-    static_dir = Path(os.getenv(ENV_STATIC) or DEFAULT_STATIC)
     if (static_dir / "index.html").is_file():
         _instalar_estaticos(app, static_dir)
     else:

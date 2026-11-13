@@ -12,3 +12,8 @@
 - Implementado: src/adjustments/migrations.py, src/api/demo.py, hook en main.py (DEMO_MODE, PORT), scripts/demo_snapshot.py, .gitignore, tests.
 - Smoke con uvicorn + Postgres local temporal: migraciones, 401/200, SPA, /docs OK (base borrada).
 - Decisiones sin el usuario: auth = HTTP Basic (la mas simple, sin login en el front); OpenAI var = API_KEY (nombre existente); migraciones viven en src/adjustments/sql; demo sin refresco de red por defecto; curvas k1 no existen en esta maquina (snapshot sin ellas).
+
+## D3 + D4 (2026-11-13)
+- Hecho: reconciliacion contrato (401 sin WWW-Authenticate, /api/demo/ucps y /reales, publicos GET / y estaticos), no-op de full_update_csv en demo,
+  Dockerfile/.dockerignore/railway.json/docker-compose/scripts/demo_build.sh/README_DESPLEGUE, E2E local OK (ver REPORTE_D3D4.md).
+- Falta (usuario): probar Docker, `railway up`, eventos con key real, revision visual.
