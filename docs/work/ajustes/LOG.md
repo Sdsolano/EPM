@@ -533,3 +533,25 @@ La ronda 3 dejÃ³ un ALTO de diseÃ±o en 4C (R2 no distinguÃ­a "no aplicar")
   `ESPECIALES_SIN_BACKTEST` solo se emite si `especiales` ajustÃ³ dÃ­as de verdad.
 - Docs: `REPORTE_INTEGRACION` (el PATCH viejo no consulta OpenAI), `PLAN_4D`/`REPORTE_4D` (saneo
   exacto `[inicio, fin]`, sin Â±7), `REPORTE_4C` (limitaciÃ³n de diseÃ±o + contrato expuesto).
+
+### ESTADO ACTUAL v4 (2026-11-13, cierre) — Fase 4 integrada en main
+- `main` = `ce4b6fb` (incluye `6ad685d` re-backtest y los 3 commits de Fase 4). `origin/main`
+  actualizado por fast-forward. La rama remota vieja `feat/ajustes-fase4` quedó en `c9c9a2a`
+  (historia previa al rebase); la historia final está en `main` y en `feat/ajustes-fase4-final`.
+  No se hizo force-push.
+- Fase 4 (4A verificado; 4B `especiales` 6 pasos con `aplicar=false`; 4C R2 como clasificación para
+  el front con `recomendacion`/`segmentos_paso`; 4D eventos/clima con cache y degradación; 4E
+  aprendizaje F09 de solo lectura) integrada. Detalle y pendientes en `RESUMEN_NOCHE.md`.
+- Verificación: worktree/rama final 678 passed, 5 skipped, 1 failed (christmas preexistente);
+  `main` 486 passed, 5 skipped, 4 failed preexistentes (christmas + 3 async por entorno); import API
+  OK; `/automatico` 200 y `/aprendizaje` 503 sin store. Postgres local no autenticó: tests de
+  Postgres pendientes en un entorno con DSN.
+- Revisión: 3 rondas multi-ángulo + regresión. R1/R2 corrigieron altos/medios; R3 solo dejó un ALTO
+  de diseño en 4C, cerrado exponiendo `no_aplicar` en `recomendacion`/`segmentos` y documentando que
+  el backend siempre aplica (la omisión por segmento es decisión de producto/front).
+- Pendientes: front Sphere 6 pasos + endpoints/alertas; backend intermedio (`usuario`, módulo en BD,
+  token/base_curvas/base_ref); decisión de producto sobre `no_aplicar`; aplicar SQL y variables en
+  despliegue; demo Railway. Datos fuera de git: `.env`, `data/`, `models/`, `data/features/`,
+  `reports/ajustes/curvas_modelo_k1_*.csv`.
+- Para retomar: leer `RESUMEN_NOCHE.md` y `README.md`, luego `fase4/LOG.md`. Comandos de verificación
+  en `RESUMEN_NOCHE.md` §5.
