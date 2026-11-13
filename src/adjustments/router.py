@@ -3,6 +3,9 @@
 - `POST  /adjustments/preview`                corre el pipeline sin persistir (funciona sin base).
 - `POST  /adjustments/run`                    corre y persiste una corrida (borrador, version 1).
 - `GET   /adjustments/aprobada?ucp=&semana_inicio=`  corrida aprobada vigente (404 si no hay).
+- `GET   /adjustments/automatico?ucp=`        configuración R2 por UCP × tipo de día (solo lectura, sin base).
+- `GET   /adjustments/aprendizaje?ucp=&desde=&hasta=&limite=&min_casos=`
+                                              diagnóstico de ediciones recurrentes (solo lectura, requiere base).
 - `GET   /adjustments/{id}`                   corrida con curvas, diagnósticos y alertas por paso + eventos.
 - `GET   /adjustments/{id}/versiones`         historial de versiones (sin curvas).
 - `GET   /adjustments/{id}/versiones/{v}`     snapshot completo de una versión.
@@ -15,6 +18,11 @@
 
 `meta.params_iniciales` = `params` del request original (/run); los params vigentes de cada paso están en
 `steps[i].params`. `meta.extras.base_ref` = `base_ref` del request (enlace al pronóstico emitido en Sphere).
+`meta.extras.aplicar_automatico` viaja al pipeline (diagnósticos R2 por día) y `meta.extras.eventos` se reusa
+al recalcular (PATCH) sin volver a consultar OpenAI; las corridas viejas sin ese campo simplemente no emiten
+alertas de eventos. `meta.extras.modos_paso` (`{paso: "automatico"|"sugerido"}`) viaja SIEMPRE: R2 es una
+clasificación de revisión para el front, no una instrucción de ejecución (el backend aplica siempre los
+pasos). Ni `festivos` ni `eventos` se exponen en las respuestas.
 
 Origen del pronóstico base:
 - Sin `base_curvas`: se refrescan los datos (hook `set_data_refresher`), se calcula el último dato real
@@ -61,7 +69,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field, field_validator
 
-from src.adjustments import analogos, data
+from src.adjustments import analogos, aprendizaje, automatico, data, eventos
 from src.adjustments import pipeline as pl
 from src.adjustments.steps import base as base_step
 from src.adjustments.steps._params import FECHA_MAX, FECHA_MIN
@@ -96,6 +104,7 @@ HTTP_401 = 401
 HTTP_404 = 404
 HTTP_409 = 409
 HTTP_422 = 422
+HTTP_501 = 501
 HTTP_502 = 502
 HTTP_503 = 503
 
@@ -104,6 +113,7 @@ UCP_PATTERN = r"^[A-Za-z0-9_-]{1,64}$"
 _UCP_RE = re.compile(UCP_PATTERN)
 ERRORES_ENTRADA = (ValueError, OverflowError)  # errores del pipeline/fechas que se responden como 422
 MAX_N_DAYS = 90  # límite de PredictRequest.n_days
+EVENTOS_TIMEOUT = 5  # segundos; si OpenAI tarda más, la corrida sigue sin alertas de eventos
 FUENTE_BASE_MODELO = "modelo"
 FUENTE_BASE_EXTERNA = "externa"
 FUENTE_FESTIVOS_API = "api"
@@ -244,6 +254,10 @@ class RunRequest(BaseModel):
     usuario: Optional[str] = Field(None, description="Usuario que crea la corrida (solo /run)")
     base_ref: Optional[str] = Field(
         None, max_length=200, description="Referencia al pronóstico emitido en Sphere (se guarda en meta.extras)"
+    )
+    aplicar_automatico: bool = Field(
+        False, description="Añade a nivel/forma/especiales el estado R2 por día en diagnostics.automatico; "
+                           "no cambia las curvas"
     )
 
     @field_validator("semana_inicio")
@@ -535,7 +549,12 @@ def _run_out(records: List[StepRecord], meta: Dict[str, Any], run_id: Optional[s
              eventos: Optional[List[Dict[str, Any]]] = None) -> RunOut:
     meta_out = {k: v for k, v in meta.items() if k != "extras"}
     extras = meta.get("extras") or {}
-    meta_out["extras"] = {k: v for k, v in extras.items() if k != "festivos"}  # lista larga: no se expone
+    extras_out = {k: v for k, v in extras.items()
+                  if k not in ("festivos", "eventos")}  # listas/dicts largos: no se exponen
+    # Contrato con el front: `modos_paso` siempre presente (también en corridas viejas).
+    if not isinstance(extras_out.get("modos_paso"), dict):
+        extras_out["modos_paso"] = automatico.modos_paso(meta.get("ucp"))
+    meta_out["extras"] = extras_out
     return RunOut(
         id=run_id,
         persistido=run_id is not None,
@@ -591,6 +610,16 @@ async def _compute(req: RunRequest) -> Tuple[List[StepRecord], Dict[str, Any]]:
 
     ctx.extras["modelo_version"] = modelo_version
     ctx.extras["fuente_festivos"] = fuente_festivos
+    ctx.extras["aplicar_automatico"] = req.aplicar_automatico
+    ctx.extras["modos_paso"] = automatico.modos_paso(ctx.ucp)
+    try:
+        ctx.extras["eventos"] = await asyncio.wait_for(
+            eventos.eventos_de_semana(ctx.ucp, ctx.semana_inicio), timeout=EVENTOS_TIMEOUT
+        ) or {}
+    except Exception as e:  # noqa: BLE001 — red/OpenAI: degradación silenciosa, sin alertas de eventos
+        logger.warning("[ajustes] eventos de %s no disponibles (%s); la corrida sigue sin ellos",
+                       req.ucp, _corto(e))
+        ctx.extras["eventos"] = {}
     try:
         records = await run_in_threadpool(_run_pipeline, ctx, base_curves, req.params)
     except ERRORES_ENTRADA as e:
@@ -608,6 +637,10 @@ async def _compute(req: RunRequest) -> Tuple[List[StepRecord], Dict[str, Any]]:
             "fuente_festivos": fuente_festivos,
             "ultimo_dato_real": ultimo.isoformat(),
             "festivos": festivos,  # se reusan al recalcular (PATCH) para que la corrida sea reproducible
+            "eventos": ctx.extras["eventos"],  # dict fecha→evento; se reusa en PATCH y no se expone en meta
+            "aplicar_automatico": req.aplicar_automatico,
+            # R2 para el front: qué revisiones puede automatizar (no altera curvas)
+            "modos_paso": automatico.modos_paso(ctx.ucp),
         },
         "creado_por": req.usuario,
     }
@@ -652,6 +685,14 @@ async def _context_from_meta(meta: Dict[str, Any], hist: Optional[pd.DataFrame] 
         ctx = replace(ctx, fecha_corte=corte, historico=h)
     ctx.extras["modelo_version"] = meta.get("modelo_version")
     ctx.extras["fuente_festivos"] = fuente
+    ctx.extras["aplicar_automatico"] = bool(extras.get("aplicar_automatico"))
+    # Corridas viejas sin `modos_paso`: se recalcula (barato, sin store ni datos).
+    modos = extras.get("modos_paso")
+    ctx.extras["modos_paso"] = dict(modos) if isinstance(modos, dict) else automatico.modos_paso(ucp)
+    eventos_extras = extras.get("eventos")
+    # Solo las corridas nuevas traen meta.extras.eventos. En las viejas no se
+    # vuelve a consultar OpenAI (un PATCH no debe cambiar las alertas de eventos).
+    ctx.extras["eventos"] = eventos_extras if isinstance(eventos_extras, dict) else {}
     return ctx
 
 
@@ -738,6 +779,35 @@ async def get_aprobada(ucp: str = Query(..., pattern=UCP_PATTERN), semana_inicio
     if saved is None:
         raise HTTPException(HTTP_404, detail=f"No hay corrida aprobada para {ucp} semana {semana_inicio.isoformat()}")
     return _run_out(saved["records"], saved["meta"], saved["meta"]["id"], saved.get("eventos"))
+
+
+@router.get("/automatico")
+async def get_automatico(ucp: str = Query(..., pattern=UCP_PATTERN)) -> Dict[str, Any]:
+    """Configuración R2 (pasos automáticos por tipo de día) de una UCP; solo lectura, sin base ni modelo."""
+    _validar_ucp(ucp)
+    return automatico.configuracion(ucp)
+
+
+@router.get("/aprendizaje")
+async def get_aprendizaje(
+    ucp: Optional[str] = Query(None, pattern=UCP_PATTERN),
+    desde: Optional[date] = Query(None, description="Lunes mínimo de semana_inicio (YYYY-MM-DD)"),
+    hasta: Optional[date] = Query(None, description="Lunes máximo de semana_inicio (YYYY-MM-DD)"),
+    limite: int = Query(200, ge=1, le=500, description="Máximo de corridas a analizar"),
+    min_casos: int = Query(3, ge=1, le=50, description="Días editados distintos para marcar `recurrente`"),
+    store: Optional[Store] = Depends(get_store_dep),
+) -> Dict[str, Any]:
+    """Diagnóstico de solo lectura de las ediciones recurrentes (calculada vs editada)."""
+    store = _require_store(store)
+    if not hasattr(store, "list_runs"):
+        raise HTTPException(HTTP_501, detail="El store no soporta list_runs; no se puede calcular el aprendizaje")
+    if desde is not None and hasta is not None and desde > hasta:
+        raise HTTPException(HTTP_422, detail="desde no puede ser posterior a hasta")
+    if ucp is not None:
+        _validar_ucp(ucp)
+    runs = await run_in_threadpool(store.list_runs, ucp, desde, hasta, limite)
+    resumen = await run_in_threadpool(aprendizaje.resumir, runs, min_casos=min_casos)
+    return await run_in_threadpool(aprendizaje.a_dict, resumen)
 
 
 @router.get("/{run_id}", response_model=RunOut)

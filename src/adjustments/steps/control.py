@@ -1,5 +1,5 @@
 """
-Paso 5 (orden 4) — control: no modifica curvas. Emite DOS controles de
+Paso 6 (orden 5) — control: no modifica curvas. Emite DOS controles de
 tendencia distintos (no confundirlos) y los bloqueos de aprobación.
 
 1) Enclavamiento — `TENDENCIA_FUERA_BANDA` (warning). Control de EDICIÓN:
@@ -11,8 +11,10 @@ tendencia distintos (no confundirlos) y los bloqueos de aprobación.
      `banda_pp` (default 1.0) → warning con los `top_dias` días que más
      contribuyen (en la dirección del desvío).
    - Sin ediciones posteriores a nivel y con forma reconciliada, desvio_pp = 0.
-   - NO ve: alpha=0, nivel omitido ni base editada (en los tres casos la
-     energía de referencia del enclavamiento ya incorpora esa decisión).
+   - NO ve: alpha=0, nivel omitido, base editada ni los días que ajustó
+     `especiales` (en todos los casos la energía de referencia del
+     enclavamiento ya incorpora esa decisión; el pipeline sustituye esos días
+     por su `E_final` de especiales).
 
 2) Coherencia con la referencia — `TENDENCIA_REFERENCIA_FUERA_BANDA` (info).
    Control de PROCESO: ¿la tendencia semanal resultante se parece a la que
@@ -49,7 +51,8 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
-from src.adjustments.data import dias_semana, energia_diaria, iso
+from src.adjustments import analogos
+from src.adjustments.data import dias_semana, energia_curva, energia_diaria, iso
 from src.adjustments.steps import _params
 from src.adjustments.steps import nivel as paso_nivel
 from src.adjustments.types import MOTIVOS_CURVA, Alert, Curves, RunContext, StepResult, validar_curva
@@ -82,13 +85,6 @@ def validar_curvas(curves: Curves, fechas: List[str]) -> List[Alert]:
         for motivo in MOTIVOS_CURVA
         if motivo in por_motivo
     ]
-
-
-def _energia(valores: Any) -> Optional[float]:
-    """Energía de una curva válida; None si es inválida."""
-    if validar_curva(valores) is not None:
-        return None
-    return float(np.sum(np.asarray(valores, dtype=float)))
 
 
 def _finito(v: Any) -> Optional[float]:
@@ -174,7 +170,7 @@ def _tendencia_referencia(
     e_prev = {}
     for d, f in zip(semana, fechas):
         fp = iso(d - timedelta(days=7))
-        e_prev[f] = reales[fp] if fp in reales else _energia(prev.get(fp))
+        e_prev[f] = reales[fp] if fp in reales else energia_curva(prev.get(fp))
     if any(v is None for v in e_fin.values()) or any(v is None for v in e_prev.values()):
         diag["tendencia_motivo"] = "faltan días de la semana final o de la previa"
         return
@@ -256,6 +252,113 @@ def _brecha(ctx: RunContext, prev: Curves, diag: Dict[str, Any], alerts: List[Al
         ))
 
 
+def _alertas_festivos(ctx: RunContext, fechas: List[str], alerts: List[Alert]) -> None:
+    """Info con los festivos (de `ctx.festivos`) que caen en la semana objetivo."""
+    festivos = sorted({str(f)[:10] for f in (ctx.festivos or [])} & set(fechas))
+    if festivos:
+        alerts.append(Alert(
+            "info", "FESTIVO_EN_SEMANA",
+            f"La semana objetivo contiene {len(festivos)} festivo(s)",
+            festivos,
+            detalle={"festivos": festivos},
+        ))
+
+
+def _alertas_eventos(ctx: RunContext, fechas: List[str], alerts: List[Alert]) -> None:
+    """Info con los eventos sugeridos por IA (`ctx.extras["eventos"]`) de la semana objetivo."""
+    eventos = (ctx.extras or {}).get("eventos")
+    if not isinstance(eventos, dict) or not eventos:
+        return
+    semana = set(fechas)
+    en_semana = {
+        str(f)[:10]: texto
+        for f, texto in eventos.items()
+        if str(f)[:10] in semana
+    }
+    if not en_semana:
+        return
+    alerts.append(Alert(
+        "info", "EVENTOS_SEMANA",
+        "Eventos sugeridos por IA, no verificados",
+        sorted(en_semana),
+        detalle={"eventos": en_semana, "fuente": "openai", "verificado": False},
+    ))
+
+
+def _alertas_clima(ctx: RunContext, fechas: List[str], alerts: List[Alert]) -> None:
+    """
+    Info/warning con el clima observado de la semana (solo si `cargar_clima`
+    cubre días de la semana; en semanas futuras no hay clima y no se emite).
+
+    La lectura es desde el disco (cacheada en módulo por `analogos.cargar_clima`),
+    no desde `ctx`: el clima observado no se persiste en la corrida (limitación
+    aceptada; `ctx.extras` solo lleva eventos/festivos).
+
+    Warning si la lluvia diaria máxima de la semana supera el p90 histórico o
+    si la temperatura media de la semana se aleja más de 2σ de la histórica.
+    """
+    try:
+        clima = analogos.cargar_clima(ctx.ucp)
+    except Exception:
+        return
+    if not isinstance(clima, dict) or not clima:
+        return
+
+    semana = set(fechas)
+    dias = {f: clima[f] for f in fechas if isinstance(clima.get(f), dict)}
+    if not dias:
+        return
+    temps = [t for c in dias.values() if (t := _finito(c.get("temp_media"))) is not None]
+    lluvias = [v for c in dias.values() if (v := _finito(c.get("lluvia_mm"))) is not None]
+    if not temps and not lluvias:
+        return
+
+    hist_temps: List[float] = []
+    hist_lluvias: List[float] = []
+    for f, c in clima.items():
+        if f in semana or not isinstance(c, dict):
+            continue
+        t = _finito(c.get("temp_media"))
+        v = _finito(c.get("lluvia_mm"))
+        if t is not None:
+            hist_temps.append(t)
+        if v is not None:
+            hist_lluvias.append(v)
+
+    temp_media = sum(temps) / len(temps) if temps else None
+    lluvia_total = sum(lluvias) if lluvias else None
+    lluvia_max = max(lluvias) if lluvias else None
+    p90_lluvia = float(np.percentile(hist_lluvias, 90)) if hist_lluvias else None
+    temp_hist = float(np.mean(hist_temps)) if hist_temps else None
+    sigma_temp = float(np.std(hist_temps)) if len(hist_temps) > 1 else 0.0
+
+    lluvia_extrema = p90_lluvia is not None and lluvia_max is not None and lluvia_max > p90_lluvia
+    temp_extrema = (
+        temp_hist is not None and temp_media is not None and sigma_temp > 0
+        and abs(temp_media - temp_hist) > 2 * sigma_temp
+    )
+    nivel = "warning" if (lluvia_extrema or temp_extrema) else "info"
+    partes = []
+    if temp_media is not None:
+        partes.append(f"temperatura media {temp_media:.1f} °C")
+    if lluvia_total is not None:
+        partes.append(f"lluvia {lluvia_total:.1f} mm")
+    alerts.append(Alert(
+        nivel, "CLIMA_OBSERVADO",
+        "Clima observado de la semana: " + ", ".join(partes),
+        list(dias),
+        detalle={
+            "temp_media": temp_media,
+            "lluvia_mm": lluvia_total,
+            "lluvia_max_diaria_mm": lluvia_max,
+            "p90_lluvia_mm": p90_lluvia,
+            "temp_media_historica": temp_hist,
+            "sigma_temp": sigma_temp,
+            "dias": {f: dict(c) for f, c in dias.items()},
+        },
+    ))
+
+
 def step(
     ctx: RunContext,
     prev: Curves,
@@ -283,7 +386,7 @@ def step(
     rotos = {}
     for f in fechas:
         if energia_esperada and f in energia_esperada and f in prev:
-            suma = _energia(prev[f])
+            suma = energia_curva(prev[f])
             esperada = _finito(energia_esperada[f])
             if suma is None or esperada is None:
                 continue  # curva inválida: ya está bloqueada por validar_curvas
@@ -295,11 +398,14 @@ def step(
                             "La suma diaria no coincide con la energía del paso nivel",
                             sorted(rotos), detalle=rotos))
 
-    e_fin = {f: _energia(prev.get(f)) for f in fechas}
+    e_fin = {f: energia_curva(prev.get(f)) for f in fechas}
     total_fin = sum(e_fin.values()) if all(v is not None for v in e_fin.values()) else None
     diag["energia_semana_ajustada"] = total_fin
 
     _brecha(ctx, prev, diag, alerts)
+    _alertas_festivos(ctx, fechas, alerts)
+    _alertas_eventos(ctx, fechas, alerts)
+    _alertas_clima(ctx, fechas, alerts)
     _enclavamiento(fechas, e_fin, energia_nivel, p["banda_pp"], p["top_dias"], diag, alerts)
     _tendencia_referencia(ctx, prev, semana, fechas, e_fin, nivel_dias,
                           p["banda_referencia_pp"], p["top_dias"], diag, alerts)

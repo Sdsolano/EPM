@@ -423,13 +423,38 @@ def clima_diario(df_clima: pd.DataFrame) -> Dict[str, Dict[str, float]]:
     }
 
 
+# Cache de módulo del clima: `(ruta, mtime_ns, tamaño) -> clima diario`. Evita
+# releer y reparar el CSV completo en cada `control.step` mientras no cambie el
+# archivo. Ver `cargar_clima`.
+_CLIMA_CACHE: Dict[Tuple[str, int, int], Dict[str, Dict[str, float]]] = {}
+_CLIMA_CACHE_LOCK = threading.Lock()
+
+
 def cargar_clima(ucp: str, data_dir: Optional[Path] = None) -> Dict[str, Dict[str, float]]:
-    """Clima diario de `data/raw/{ucp}/clima_new.csv` si existe; si no, {}. Solo lectura."""
+    """Clima diario de `data/raw/{ucp}/clima_new.csv` si existe; si no, {}. Solo lectura.
+
+    Cachea en memoria por `(ruta, mtime, tamaño)`: dos llamadas sin cambios en el
+    archivo devuelven el mismo objeto sin releer ni reparar el CSV. La firma y el
+    retorno no cambian.
+    """
     raiz = Path(data_dir or data.RAW_DATA_DIR).resolve()
     ruta = (raiz / str(ucp) / "clima_new.csv").resolve()
     if not ruta.is_relative_to(raiz) or not ruta.is_file():
         return {}
-    return clima_diario(pd.read_csv(ruta))
+    try:
+        st = ruta.stat()
+    except OSError:
+        return {}
+    clave = (str(ruta), st.st_mtime_ns, st.st_size)
+    with _CLIMA_CACHE_LOCK:
+        cacheado = _CLIMA_CACHE.get(clave)
+    if cacheado is not None:
+        return cacheado
+    datos = clima_diario(pd.read_csv(ruta))
+    with _CLIMA_CACHE_LOCK:
+        _CLIMA_CACHE.clear()
+        _CLIMA_CACHE[clave] = datos
+    return datos
 
 
 # ---------------------------------------------------------------------------

@@ -343,7 +343,7 @@ def test_pipeline_completo_con_analogos_y_rerun_equivalente_al_patch():
     for f in [iso(d) for d in dias_semana(SEMANA)]:
         assert abs(sum(records[3].result.curves[f]) - e_nivel[f]) <= 1e-6
     assert approval_blockers(records) == []
-    control = records[4].result.diagnostics
+    control = records[5].result.diagnostics
     assert control  # el control corre con E_objetivo de nivel por análogos
 
     # rerun_from cambiando solo forma (equivalente al PATCH) == corrida directa

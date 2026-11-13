@@ -39,7 +39,7 @@ from contextlib import contextmanager
 from datetime import date, datetime, timezone
 from typing import Any, Callable, Dict, Iterator, List, Optional, Protocol, runtime_checkable
 
-from src.adjustments.types import Alert, StepRecord, to_jsonable
+from src.adjustments.types import Alert, StepRecord, parse_date, to_jsonable
 
 ENV_DSN = "AJUSTES_DATABASE_URL"
 ESTADO_BORRADOR = "borrador"
@@ -99,6 +99,8 @@ class Store(Protocol):
     def get_approved(self, ucp: str, semana_inicio: Any) -> Optional[Dict[str, Any]]: ...
     def list_versions(self, run_id: str) -> Optional[List[Dict[str, Any]]]: ...
     def get_version(self, run_id: str, version: int) -> Optional[Dict[str, Any]]: ...
+    def list_runs(self, ucp: Optional[str] = None, desde: Optional[date] = None,
+                  hasta: Optional[date] = None, limite: int = 200) -> List[Dict[str, Any]]: ...
 
 
 # ---------------------------------------------------------------------------
@@ -154,6 +156,26 @@ def _validate_run_id(run_id: str) -> Optional[str]:
         return None
 
 
+def _fecha_o_none(value: Any) -> Optional[date]:
+    if value is None:
+        return None
+    try:
+        return parse_date(value)
+    except (TypeError, ValueError):
+        return None
+
+
+MAX_LIMITE_RUNS = 500  # tope del endpoint /aprendizaje; el store no acepta límites mayores
+
+
+def _limite(limite: Any) -> int:
+    try:
+        n = int(limite)
+    except (TypeError, ValueError):
+        return 200
+    return min(MAX_LIMITE_RUNS, max(1, n))
+
+
 def _records_json(records: List[StepRecord]) -> List[Dict[str, Any]]:
     """Records como JSON estricto (NaN/inf → None; Postgres no acepta NaN en jsonb)."""
     return [to_jsonable(r.to_dict()) for r in records]
@@ -193,6 +215,16 @@ def columns_to_record(row: Dict[str, Any]) -> StepRecord:
 def _clone_records(records: List[StepRecord]) -> List[StepRecord]:
     # ida y vuelta por JSON estricto: emula la persistencia y desacopla de objetos del llamador
     return [StepRecord.from_dict(json.loads(json.dumps(d, allow_nan=False))) for d in _records_json(records)]
+
+
+def _records_solo_lectura(records: List[StepRecord]) -> List[StepRecord]:
+    """Copia superficial para `list_runs`: el consumidor (aprendizaje) no muta los records.
+
+    Evita el clon por JSON (caro para cientos de corridas). Los objetos anidados
+    (`result.curves`, `params`, ...) se comparten con el store: quien llame a
+    `list_runs` debe tratarlos como inmutables.
+    """
+    return [copy.copy(r) for r in records]
 
 
 # ---------------------------------------------------------------------------
@@ -333,6 +365,36 @@ class InMemoryStore:
                     return out
         return None
 
+    def list_runs(self, ucp: Optional[str] = None, desde: Optional[date] = None,
+                  hasta: Optional[date] = None, limite: int = 200) -> List[Dict[str, Any]]:
+        """Corridas filtradas por ucp/semana, más reciente primero (solo lectura).
+
+        `limite` se acota a 1..500. Los records van como copia superficial
+        (`_records_solo_lectura`): tratarlos como inmutables.
+        """
+        d_ini, d_fin = _fecha_o_none(desde), _fecha_o_none(hasta)
+        with self._lock:
+            seleccionados = []
+            for run in self._runs.values():
+                m = run["meta"]
+                if ucp is not None and m.get("ucp") != ucp:
+                    continue
+                semana = _fecha_o_none(m.get("semana_inicio"))
+                if d_ini is not None and (semana is None or semana < d_ini):
+                    continue
+                if d_fin is not None and (semana is None or semana > d_fin):
+                    continue
+                seleccionados.append(run)
+            seleccionados.sort(
+                key=lambda r: (str(r["meta"].get("semana_inicio") or ""),
+                               str(r["meta"].get("created_at") or ""),
+                               str(r["meta"].get("id") or "")),
+                reverse=True,
+            )
+            return [{"meta": copy.deepcopy(r["meta"]),
+                     "records": _records_solo_lectura(r["records"])}
+                    for r in seleccionados[:_limite(limite)]]
+
 
 # ---------------------------------------------------------------------------
 # PostgresStore
@@ -426,17 +488,49 @@ class PostgresStore:
         if int(version_esperada) != locked["version"]:
             raise VersionConflictError(run_id, int(version_esperada), locked["version"])
 
+    _STEP_COLUMNS = (
+        "orden, paso, estado, params, curvas, curvas_calculadas, diagnostico, alertas"
+    )
+
     @staticmethod
     def _read_steps(cur: Any, rid: str) -> List[StepRecord]:
         cur.execute(
-            """
-            SELECT orden, paso, estado, params, curvas, curvas_calculadas, diagnostico, alertas
+            f"""
+            SELECT {PostgresStore._STEP_COLUMNS}
             FROM ajustes.corrida_paso WHERE corrida_id = %s ORDER BY orden
             """,
             (rid,),
         )
         cols = [c[0] for c in cur.description]
         return [columns_to_record(dict(zip(cols, r))) for r in cur.fetchall()]
+
+    @classmethod
+    def _read_steps_by_ids(cls, cur: Any, run_ids: List[str]) -> Dict[str, List[StepRecord]]:
+        """Pasos de varias corridas en UNA query (`ANY`), agrupados en Python."""
+        if not run_ids:
+            return {}
+        cur.execute(
+            f"""
+            SELECT corrida_id, {cls._STEP_COLUMNS}
+            FROM ajustes.corrida_paso WHERE corrida_id = ANY(%s::uuid[]) ORDER BY corrida_id, orden
+            """,
+            (list(run_ids),),
+        )
+        cols = [c[0] for c in cur.description]
+        por_run: Dict[str, List[StepRecord]] = {rid: [] for rid in run_ids}
+        for row in cur.fetchall():
+            d = dict(zip(cols, row))
+            por_run.setdefault(str(d["corrida_id"]), []).append(columns_to_record(d))
+        return por_run
+
+    @staticmethod
+    def _row_to_meta(raw: Dict[str, Any]) -> Dict[str, Any]:
+        meta = {k: _iso(v) for k, v in raw.items()}
+        meta["id"] = str(raw["id"])
+        meta["reemplazada_por"] = str(raw["reemplazada_por"]) if raw["reemplazada_por"] else None
+        meta["params_iniciales"] = raw["params_iniciales"] or {}
+        meta["extras"] = raw["extras"] or {}
+        return meta
 
     def create_run(self, meta: Dict[str, Any], records: List[StepRecord],
                    evento: Optional[Dict[str, Any]] = None) -> str:
@@ -469,12 +563,8 @@ class PostgresStore:
             return None
         cols = [c[0] for c in cur.description]
         raw = dict(zip(cols, row))
-        meta = {k: _iso(v) for k, v in raw.items()}
-        rid = str(raw["id"])
-        meta["id"] = rid
-        meta["reemplazada_por"] = str(raw["reemplazada_por"]) if raw["reemplazada_por"] else None
-        meta["params_iniciales"] = raw["params_iniciales"] or {}
-        meta["extras"] = raw["extras"] or {}
+        meta = self._row_to_meta(raw)
+        rid = meta["id"]
         records = self._read_steps(cur, rid)
         cur.execute(
             """
@@ -604,6 +694,37 @@ class PostgresStore:
                 "version": row[0], "records": [StepRecord.from_dict(d) for d in row[1] or []],
                 "creado_por": row[2], "motivo": row[3], "created_at": _iso(row[4]),
             }
+
+    def list_runs(self, ucp: Optional[str] = None, desde: Optional[date] = None,
+                  hasta: Optional[date] = None, limite: int = 200) -> List[Dict[str, Any]]:
+        """Corridas filtradas por ucp/semana, más reciente primero (solo lectura).
+
+        Dos queries: (1) corridas con filtros/orden/límite y (2) todos sus pasos
+        con `corrida_id = ANY(...)` agrupados en Python. No lee `corrida_evento`.
+        """
+        d_ini, d_fin = _fecha_o_none(desde), _fecha_o_none(hasta)
+        clauses: List[str] = []
+        args: List[Any] = []
+        if ucp is not None:
+            clauses.append("ucp = %s")
+            args.append(ucp)
+        if d_ini is not None:
+            clauses.append("semana_inicio >= %s")
+            args.append(d_ini)
+        if d_fin is not None:
+            clauses.append("semana_inicio <= %s")
+            args.append(d_fin)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._tx() as conn, conn.cursor() as cur:
+            cur.execute(
+                f"SELECT {_RUN_COLUMNS} FROM ajustes.corrida{where} "
+                "ORDER BY semana_inicio DESC, created_at DESC, id DESC LIMIT %s",
+                (*args, _limite(limite)),
+            )
+            cols = [c[0] for c in cur.description]
+            metas = [self._row_to_meta(dict(zip(cols, row))) for row in cur.fetchall()]
+            pasos = self._read_steps_by_ids(cur, [m["id"] for m in metas])
+            return [{"meta": meta, "records": pasos.get(meta["id"], [])} for meta in metas]
 
 
 def get_store() -> Optional[Store]:
