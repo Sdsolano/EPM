@@ -28,7 +28,7 @@ recomienda: no cambia defaults.
 
 Uso (desde la raíz del repo):
     .venv/Scripts/python.exe scripts/backtest_analogos.py                     # ingenuo + archivo, 104 semanas
-    .venv/Scripts/python.exe scripts/backtest_analogos.py --base modelo        # cuando llegue la Fase 2a
+    .venv/Scripts/python.exe scripts/backtest_analogos.py --semanas 52 --base modelo_k1 --base-regla modelo_k1
     .venv/Scripts/python.exe scripts/backtest_analogos.py --ucp Antioquia --semanas 4 --ns 5 --temporadas 0
     .venv/Scripts/python.exe scripts/backtest_analogos.py --desde-csv reports/ajustes/backtest_analogos_20261113.csv --fecha 20261113  # solo regenera el .md
 
@@ -62,6 +62,7 @@ from backtest_adjustments import (  # noqa: E402
     UCPS_DEFAULT,
     _agg_dias,
     cargar_archivo,
+    cargar_curvas_modelo_k1,
     con_cache,
     construir_contexto,
     metricas_dia,
@@ -69,6 +70,7 @@ from backtest_adjustments import (  # noqa: E402
     proveedor_ingenuo,
     proveedor_modelo,
     resumen_semanal,
+    semanas_modelo_k1,
     semanas_objetivo,
     tabla_md,
 )
@@ -81,6 +83,8 @@ NS_DEFAULT = (3, 5, 8)
 TEMPORADAS_DEFAULT = (0, 45)  # 0 = sin ventana de temporada
 ALPHAS_DEFAULT = (0.25, 0.5)
 UMBRAL_DEFAULT = 2.0
+MODELO_DIR_DEFAULT = ROOT / "reports" / "ajustes"
+BASES_REGLA = ("ingenuo", "modelo_k1", "archivo")
 PARTICIONES = ("calibracion", "holdout")
 SEGMENTOS_DIFICILES = (
     "rel:festivo", "rel:despues", "despues_dist1", "rel:antes", "rel:puente", "semana_santa", "diciembre",
@@ -312,13 +316,17 @@ def tabla_comparacion(df: pd.DataFrame, segmentos: Optional[Sequence[str]] = Non
     return out
 
 
-def evaluar_regla(comp: pd.DataFrame, ucps: Sequence[str], umbral: float, configs: Sequence[Config]) -> pd.DataFrame:
+def evaluar_regla(
+    comp: pd.DataFrame, ucps: Sequence[str], umbral: float, configs: Sequence[Config],
+    base_regla: str = "ingenuo",
+) -> pd.DataFrame:
     """
-    Regla del PLAN §5 por segmento × variante (base ingenuo): gana en calibración y
-    holdout, en todas las `ucps`, por >= umbral % relativo de WAPE en cada paso
-    afectado y sin empeorar el error de pico (delta_pico_pp <= 0) en esos pasos.
+    Regla del PLAN §5 por segmento × variante: gana en calibración y holdout, en todas
+    las `ucps`, por >= umbral % relativo de WAPE en cada paso afectado y sin empeorar el
+    error de pico (delta_pico_pp <= 0) en esos pasos. `base_regla` elige con qué base se
+    evalúa la regla (default `ingenuo`, sin cambiar los defaults del producto).
     """
-    c = comp[comp["base"] == "ingenuo"]
+    c = comp[comp["base"] == base_regla]
     grupos = {cfg.nombre: cfg for cfg in configs}
     filas = []
     for (seg, nombre), g in c.groupby(["segmento", "config"], sort=False):
@@ -356,14 +364,16 @@ def evaluar_regla(comp: pd.DataFrame, ucps: Sequence[str], umbral: float, config
     return pd.DataFrame(filas)
 
 
-def elegir_en_calibracion(comp: pd.DataFrame, grupo: str, configs: Sequence[Config]) -> Optional[Config]:
+def elegir_en_calibracion(
+    comp: pd.DataFrame, grupo: str, configs: Sequence[Config], base: str = "ingenuo"
+) -> Optional[Config]:
     """
-    Mejor variante del `grupo` en calibración (segmento "todos", base ingenuo):
+    Mejor variante del `grupo` en calibración (segmento "todos", base `base`):
     mayor mejora relativa media del WAPE del paso final (forma) sobre las UCP.
     None si ninguna mejora en promedio.
     """
     nombres = {c.nombre: c for c in configs if c.grupo == grupo}
-    c = comp[(comp["base"] == "ingenuo") & (comp["particion"] == "calibracion") & (comp["segmento"] == "todos")
+    c = comp[(comp["base"] == base) & (comp["particion"] == "calibracion") & (comp["segmento"] == "todos")
              & (comp["paso"] == "forma") & (comp["config"].isin(list(nombres)))]
     if c.empty:
         return None
@@ -457,12 +467,14 @@ def _uso_fuentes(df: pd.DataFrame) -> pd.DataFrame:
 def escribir_reporte(df: pd.DataFrame, comp: pd.DataFrame, regla: pd.DataFrame, configs: Sequence[Config],
                      path: Path, meta: Dict[str, Any]) -> None:
     nombres = [c.nombre for c in configs]
+    base_regla = meta.get("base_regla", "ingenuo")
     s: List[str] = [
         f"# Backtest de días análogos (R3) — {meta['fecha']}\n",
         "Generado por `scripts/backtest_analogos.py` (importa `scripts/backtest_adjustments.py`). Detalle en "
         f"`{meta['csv_nombre']}` (fuera de git; una fila por UCP × semana × día × paso × config).\n",
         "## Configuración\n",
-        f"- Bases: {', '.join(meta['bases'])}. `modelo` no se corrió (depende de la Fase 2a).\n"
+        f"- Bases: {', '.join(meta['bases'])}. `modelo_k1` = pronóstico del modelo real de la Fase 2a, sin fuga "
+        "(curvas generadas con corte previo y verificadas; ver `docs/work/ajustes/fase2a/`).\n"
         f"- Semanas: últimas {meta['semanas']} completas por UCP; corte = sábado anterior (fecha_emision = "
         "domingo). Calibración = mitad más antigua, holdout = mitad más reciente. Base `archivo`: partición "
         "`archivo` aparte (no se elige configuración ahí).\n"
@@ -475,8 +487,9 @@ def escribir_reporte(df: pd.DataFrame, comp: pd.DataFrame, regla: pd.DataFrame, 
         "  - `nivel_*` cambian solo el nivel (forma default): ancla `actual`/`analogos`, α en centésimas.\n"
         "  - `combo[...]` = mejor forma + mejor nivel elegidas en calibración (si ambas mejoran).\n"
         f"- Regla para proponer default por segmento: gana en calibración y holdout, en ambas UCP con base "
-        f"ingenuo, por >= {meta['umbral']} % relativo del WAPE de cada paso afectado (forma; nivel y forma para "
-        "configs de nivel/combo) y sin empeorar el error de pico (|error %| del máximo) en esos pasos.\n"
+        f"`{base_regla}`, por >= {meta['umbral']} % relativo del WAPE de cada paso afectado (forma; nivel y "
+        "forma para configs de nivel/combo) y sin empeorar el error de pico (|error %| del máximo) en esos pasos. "
+        f"La base de la regla es `{base_regla}` (no cambia defaults del producto).\n"
         f"- Tiempo de corrida: {meta['tiempo_s']:.0f} s.\n",
     ]
     rangos = (df[df["config"] == DEFAULT.nombre].groupby(["base", "ucp", "particion"])["semana_inicio"]
@@ -518,7 +531,7 @@ def escribir_reporte(df: pd.DataFrame, comp: pd.DataFrame, regla: pd.DataFrame, 
               tabla_md(_pivot_mejora(comp, seg, configs), 1)]
 
     s += ["## 4. Días difíciles\n", meta["dificiles"]]
-    s += ["## 5. Regla de cambio de default (base ingenuo, ambas UCP, calibración y holdout)\n",
+    s += [f"## 5. Regla de cambio de default (base `{base_regla}`, ambas UCP, calibración y holdout)\n",
           "Una fila por segmento × variante. `celdas_que_ganan` = UCP × partición × paso afectado que mejoran "
           f">= {meta['umbral']} % sin empeorar el pico. Solo se listan las variantes con al menos la mitad de "
           "las celdas ganadas; `cumple_regla` = todas.\n"]
@@ -530,35 +543,39 @@ def escribir_reporte(df: pd.DataFrame, comp: pd.DataFrame, regla: pd.DataFrame, 
     else:
         s.append("_(sin datos)_\n")
     s += ["## 6. Conclusión\n", meta["conclusion"]]
-    s += ["## 7. Cómo correr con la base modelo (Fase 2a)\n",
-          "```\n.venv/Scripts/python.exe scripts/backtest_analogos.py --base modelo ingenuo --fecha <AAAAMMDD>\n```\n"
-          "Requiere que `run_predict_flow` funcione offline (Fase 2a). La regla de la §5 se evalúa solo con "
-          "`ingenuo`; con `modelo` se debe repetir el análisis cambiando la base en `evaluar_regla`.\n"]
+    s += ["## 7. Cómo correr con la base modelo_k1 (Fase 2a)\n",
+          "```\n.venv/Scripts/python.exe scripts/backtest_analogos.py --semanas 52 --base modelo_k1 "
+          "--base-regla modelo_k1 --fecha <AAAAMMDD>\n```\n"
+          "`modelo_k1` usa las curvas `reports/ajustes/curvas_modelo_k1_<ucp>.csv` de la Fase 2a (sin fuga, "
+          "corte previo verificado). `--base-regla` elige la base con la que se evalúa la regla de la §5; "
+          "`--modelo-dir` cambia el directorio de las curvas.\n"]
     s += ["## 8. Limitaciones\n", LIMITACIONES]
     path.write_text("\n".join(s), encoding="utf-8")
 
 
-def texto_eleccion(comp: pd.DataFrame, elegidas: Dict[str, Optional[Config]], ucps: Sequence[str]) -> str:
+def texto_eleccion(
+    comp: pd.DataFrame, elegidas: Dict[str, Optional[Config]], ucps: Sequence[str], base: str = "ingenuo"
+) -> str:
     lineas = []
     c = comp[(comp["segmento"] == "todos") & (comp["paso"] == "forma")]
     for ucp in ucps:
-        cal = c[(c["base"] == "ingenuo") & (c["ucp"] == ucp) & (c["particion"] == "calibracion")]
+        cal = c[(c["base"] == base) & (c["ucp"] == ucp) & (c["particion"] == "calibracion")]
         if cal.empty:
             continue
         best = cal.loc[cal["wape_pct"].idxmin()]
-        hold = c[(c["base"] == "ingenuo") & (c["ucp"] == ucp) & (c["particion"] == "holdout")]
+        hold = c[(c["base"] == base) & (c["ucp"] == ucp) & (c["particion"] == "holdout")]
         hb = hold[hold["config"] == best["config"]]
         hd = hold[hold["config"] == DEFAULT.nombre]
         txt_h = (f"holdout {hb['wape_pct'].iloc[0]:.3f} % vs default {hd['wape_pct'].iloc[0]:.3f} % "
                  f"(mejora {hb['mejora_rel_pct'].iloc[0]:+.2f} %)" if not hb.empty and not hd.empty else "sin holdout")
-        lineas.append(f"- **ingenuo / {ucp}**: mejor config en calibración = `{best['config']}` "
+        lineas.append(f"- **{base} / {ucp}**: mejor config en calibración = `{best['config']}` "
                       f"(WAPE forma {best['wape_pct']:.3f} %, mejora {best['mejora_rel_pct']:+.2f} % vs default) → "
                       f"{txt_h}.")
     for grupo, cfg in elegidas.items():
         if grupo == "combo":
             continue
         lineas.append(f"- Mejor variante de **{grupo}** en calibración (media de mejora relativa sobre las UCP, "
-                      f"ingenuo): {'`' + cfg.nombre + '`' if cfg else 'ninguna mejora al default'}.")
+                      f"{base}): {'`' + cfg.nombre + '`' if cfg else 'ninguna mejora al default'}.")
     combo = elegidas.get("combo")
     if combo is not None:
         cc = c[(c["config"] == combo.nombre)]
@@ -593,7 +610,7 @@ def texto_dificiles(comp: pd.DataFrame, configs: Sequence[Config], ucps: Sequenc
     return "\n".join(lineas) + "\n"
 
 
-def texto_conclusion(regla: pd.DataFrame, umbral: float) -> str:
+def texto_conclusion(regla: pd.DataFrame, umbral: float, base: str = "ingenuo") -> str:
     if regla.empty:
         return "Sin datos para evaluar la regla.\n"
     ok = regla[regla["cumple_regla"]]
@@ -601,7 +618,7 @@ def texto_conclusion(regla: pd.DataFrame, umbral: float) -> str:
     if ok.empty:
         lineas.append(
             f"**No hay evidencia para cambiar ningún default.** Ninguna variante gana por >= {umbral} % relativo "
-            "en calibración y holdout, en ambas UCP con base ingenuo, sin empeorar el pico, en ningún segmento. "
+            f"en calibración y holdout, en ambas UCP con base `{base}`, sin empeorar el pico, en ningún segmento. "
             "Los defaults actuales (forma `promedio_n` n=4, nivel ancla actual α=0.25) se mantienen; las fuentes "
             "de análogos quedan como herramienta opcional del analista (selección explícita o automática)."
         )
@@ -613,8 +630,8 @@ def texto_conclusion(regla: pd.DataFrame, umbral: float) -> str:
                           f"{x['mejora_media_pct']:.1f} %, Δ pico máx {x['delta_pico_max_pp']:+.2f} pp).")
         lineas.append(
             "\nSi se aplica, debe ser por segmento y retrocompatible (p. ej. un default condicionado al tipo de "
-            "día), y conviene revalidar con la base `modelo` antes de fijarlo. Segmentos con n chico (< 15 días por "
-            "celda) deben tomarse como indicio, no como evidencia."
+            "día), y conviene revalidar con la base `modelo_k1` antes de fijarlo. Segmentos con n chico (< 15 días "
+            "por celda) deben tomarse como indicio, no como evidencia."
         )
         lineas += _lectura_cumplidas(ok)
     return "\n".join(lineas) + "\n"
@@ -648,27 +665,30 @@ def _lectura_cumplidas(ok: pd.DataFrame) -> List[str]:
             "error artificial (mismo hallazgo de `backtest_20261112_v3.md`). La base `archivo` (Antioquia, n chico) "
             "apunta en la misma dirección, pero es una sola emisión con ajustes post-hoc. Recomendación: NO cambiar "
             "defaults todavía; dejar α = 0.5 con ancla por análogos en festivos / Semana Santa como candidato a "
-            "revalidar con `--base modelo` (y coordinarlo con el α por tipo de día de la Fase 2a)."
+            "revalidar con `--base modelo_k1` (y coordinarlo con el α por tipo de día de la Fase 2a)."
         )
     return out
 
 
 LIMITACIONES = """\
 - **Base ingenua ≠ modelo real**: la base `ingenuo` (mismo día de la semana anterior) es débil y en festivos
-  parte de un día no festivo; las mejoras medidas sobre ella pueden no trasladarse al pronóstico del modelo
-  (probablemente serán menores). La regla se evalúa con `ingenuo` porque es la única base con dos UCP y 104
-  semanas; repetir con `--base modelo` cuando la Fase 2a lo habilite.
+  parte de un día no festivo; las mejoras medidas sobre ella pueden no trasladarse al pronóstico del modelo.
+  La base `modelo_k1` (Fase 2a) sí es el pronóstico del modelo real sin fuga, pero solo cubre las 52 semanas
+  generadas y su corrida es más cara; la regla se evalúa con `--base-regla` (default `ingenuo`).
+- **Base `modelo_k1`**: curvas pronosticadas con corte previo (sábado) por la Fase 2a; no se regeneran aquí.
+  Si faltan los CSV, la base se omite para esa UCP.
 - **Base `archivo`**: una sola emisión con corte 2025-12-31 y ajustes post-hoc; solo Antioquia, ~21 semanas
   (ene–may 2026). Se reporta como contraste, sin elegir nada ahí.
 - **Clima no usado** en la búsqueda automática (`seleccionar` no puntúa clima; además el clima real solo
   cubre 2025-12..2026-07). El filtro de clima del endpoint queda sin evaluar.
 - **Muestras chicas** en festivos, puentes, Semana Santa y diciembre (ver n por segmento): diferencias de
-  pocos puntos en esos segmentos no son concluyentes.
+  pocos puntos en esos segmentos no son concluyentes (n < 15 días por celda).
 - **Corte siempre en sábado** (1 día de brecha); otras emisiones no se evalúan.
-- **Calibración y holdout contiguos** (52 + 52 semanas): un cambio de régimen en el holdout afecta a todas
-  las configs por igual, pero la comparación es de una sola partición temporal (sin validación cruzada).
-- La elección de la mejor variante y la combinación se hacen solo en calibración (ingenuo); el holdout no se
-  usa para elegir.
+- **Calibración y holdout contiguos** (la mitad de las semanas cada una): un cambio de régimen en el holdout
+  afecta a todas las configs por igual, pero la comparación es de una sola partición temporal (sin validación
+  cruzada).
+- La elección de la mejor variante y la combinación se hacen solo en calibración con la base de la regla
+  (`--base-regla`, default `ingenuo`); el holdout no se usa para elegir.
 """
 
 
@@ -676,24 +696,41 @@ LIMITACIONES = """\
 # CLI
 # ---------------------------------------------------------------------------
 
-def _factory(base_nombre: str, archivo: Path):
+def _factory(base_nombre: str, archivo: Path, modelo_dir: Path = MODELO_DIR_DEFAULT):
     if base_nombre == "ingenuo":
         return (lambda ucp, hist: proveedor_ingenuo(hist)), None
     if base_nombre == "archivo":
         curvas = cargar_archivo(archivo)
         prov = proveedor_desde_curvas(curvas)
         return (lambda ucp, hist, _p=prov: _p if ucp == ARCHIVO_UCP else None), curvas
+    if base_nombre == "modelo_k1":
+        cargadas: Dict[str, Tuple[Any, Dict[str, date]]] = {}
+        for ucp in UCPS_DEFAULT:
+            try:
+                cargadas[ucp] = cargar_curvas_modelo_k1(ucp, modelo_dir)
+            except FileNotFoundError:
+                logger.warning("modelo_k1: sin curvas para %s en %s", ucp, modelo_dir)
+        return (lambda ucp, hist, _c=cargadas:
+                proveedor_desde_curvas(_c[ucp][0]) if ucp in _c else None), cargadas
     prov_modelo = proveedor_modelo()
     return (lambda ucp, hist, _p=prov_modelo: _p), None
 
 
-def semanas_de(base_nombre: str, historico: pd.DataFrame, n: int, curvas_archivo) -> Tuple[List[date], Dict[date, str]]:
+def semanas_de(
+    base_nombre: str, historico: pd.DataFrame, n: int, extra, ucp: str
+) -> Tuple[List[date], Dict[date, str]]:
     if base_nombre == "archivo":
         semanas = semanas_objetivo(historico, 10_000)
         semanas = [l for l in semanas
-                   if all((l - timedelta(days=1) + timedelta(days=i)).isoformat() in curvas_archivo
+                   if all((l - timedelta(days=1) + timedelta(days=i)).isoformat() in extra
                           for i in range(8))][-n:]
         return semanas, {l: "archivo" for l in semanas}
+    if base_nombre == "modelo_k1":
+        if ucp not in extra:
+            return [], {}
+        curvas, semanas_corte = extra[ucp]
+        semanas = semanas_modelo_k1(historico, n, semanas_corte, curvas)
+        return semanas, particionar(semanas)
     semanas = semanas_objetivo(historico, n)
     return semanas, particionar(semanas)
 
@@ -702,14 +739,15 @@ def _reportar(df: pd.DataFrame, configs: Sequence[Config], elegidas: Dict[str, O
               args: argparse.Namespace, md_path: Path, csv_nombre: str, tiempo_s: float) -> None:
     segmentos = list(mascaras_segmentos(df.head(1)).keys())
     comp = tabla_comparacion(df)
-    ucps = [u for u in args.ucp if u in set(df[df["base"] == "ingenuo"]["ucp"])]
-    regla = evaluar_regla(comp, ucps, args.umbral, configs)
+    ucps = [u for u in args.ucp if u in set(df[df["base"] == args.base_regla]["ucp"])]
+    regla = evaluar_regla(comp, ucps, args.umbral, configs, args.base_regla)
     escribir_reporte(df, comp, regla, configs, md_path, {
         "fecha": args.fecha, "csv_nombre": csv_nombre, "bases": sorted(df["base"].unique(), reverse=True),
         "semanas": args.semanas, "umbral": args.umbral, "tiempo_s": tiempo_s, "segmentos": segmentos,
-        "eleccion": texto_eleccion(comp, elegidas, ucps),
+        "base_regla": args.base_regla,
+        "eleccion": texto_eleccion(comp, elegidas, ucps, args.base_regla),
         "dificiles": texto_dificiles(comp, configs, ucps),
-        "conclusion": texto_conclusion(regla, args.umbral),
+        "conclusion": texto_conclusion(regla, args.umbral, args.base_regla),
     })
 
 
@@ -721,8 +759,8 @@ def regenerar_reporte(args: argparse.Namespace) -> int:
     configs.sort(key=lambda c: c.grupo != "default")
     comp = tabla_comparacion(df, ["todos"])
     combo = next((c for c in configs if c.grupo == "combo"), None)
-    elegidas = {"forma": elegir_en_calibracion(comp, "forma", configs),
-                "nivel": elegir_en_calibracion(comp, "nivel", configs), "combo": combo}
+    elegidas = {"forma": elegir_en_calibracion(comp, "forma", configs, args.base_regla),
+                "nivel": elegir_en_calibracion(comp, "nivel", configs, args.base_regla), "combo": combo}
     md_path = args.out_dir / f"backtest_analogos_{args.fecha}.md"
     tiempo = args.tiempo_s if args.tiempo_s is not None else float("nan")
     _reportar(df, configs, elegidas, args, md_path, args.desde_csv.name, tiempo)
@@ -734,7 +772,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--ucp", nargs="+", default=list(UCPS_DEFAULT))
     ap.add_argument("--semanas", type=int, default=104, help="semanas completas por UCP (mitad calibración)")
-    ap.add_argument("--base", nargs="+", default=["ingenuo", "archivo"], choices=["ingenuo", "archivo", "modelo"])
+    ap.add_argument("--base", nargs="+", default=["ingenuo", "archivo"],
+                    choices=["ingenuo", "archivo", "modelo", "modelo_k1"])
+    ap.add_argument("--modelo-dir", type=Path, default=MODELO_DIR_DEFAULT,
+                    help="directorio de curvas_modelo_k1_<ucp>.csv")
+    ap.add_argument("--base-regla", default="ingenuo", choices=list(BASES_REGLA),
+                    help="base con la que se evalúa la regla de cambio de default")
     ap.add_argument("--archivo", type=Path, default=ARCHIVO_DEFAULT)
     ap.add_argument("--ns", type=int, nargs="+", default=list(NS_DEFAULT), help="k análogos (forma.n)")
     ap.add_argument("--temporadas", type=int, nargs="+", default=list(TEMPORADAS_DEFAULT),
@@ -757,12 +800,12 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     entradas = []  # (base, ucp, historico, semanas, particiones, factory)
     for base_nombre in args.base:
-        factory, curvas_archivo = _factory(base_nombre, args.archivo)
+        factory, extra = _factory(base_nombre, args.archivo, args.modelo_dir)
         for ucp in args.ucp:
             if base_nombre == "archivo" and ucp != ARCHIVO_UCP:
                 continue
             historico = data.cargar_historico(ucp)
-            semanas, parts = semanas_de(base_nombre, historico, args.semanas, curvas_archivo)
+            semanas, parts = semanas_de(base_nombre, historico, args.semanas, extra, ucp)
             logger.info("%s %s: %d semanas (%s .. %s)", base_nombre, ucp, len(semanas),
                         semanas[0] if semanas else "-", semanas[-1] if semanas else "-")
             entradas.append((base_nombre, ucp, historico, semanas, parts, factory))
@@ -778,8 +821,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 1
     comp = tabla_comparacion(df, ["todos"])
     elegidas: Dict[str, Optional[Config]] = {
-        "forma": elegir_en_calibracion(comp, "forma", configs),
-        "nivel": elegir_en_calibracion(comp, "nivel", configs),
+        "forma": elegir_en_calibracion(comp, "forma", configs, args.base_regla),
+        "nivel": elegir_en_calibracion(comp, "nivel", configs, args.base_regla),
     }
     elegidas["combo"] = None
     if not args.sin_combo and elegidas["forma"] and elegidas["nivel"]:

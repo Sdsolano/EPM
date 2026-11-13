@@ -8,7 +8,7 @@ Dos modos (desde la raíz del repo):
         --base-csv base.csv [--analista-csv final.csv] [--fecha-emision 2026-11-14] \
         [--seleccion 2026-11-16=2026-11-09,2025-11-17,2025-11-10 ...] [--out semana.md]
    - `--base-csv`/`--analista-csv`: CSV largo (fecha, periodo P1..P24 o 1..24, valor) o ancho
-     (fecha, P1..P24). Sin `--base-csv` se usa `--base ingenuo|archivo|modelo`.
+     (fecha, P1..P24). Sin `--base-csv` se usa `--base ingenuo|archivo|modelo|modelo_k1`.
    - `--seleccion`: por día objetivo, las fechas de los históricos que marcó el analista EN ORDEN DE
      CLIC (el ASR usa h1 = el más reciente y congela desvi2 con el orden de clic). Sin `--seleccion`
      se usan los escenarios (`--escenarios`, default todos).
@@ -16,6 +16,7 @@ Dos modos (desde la raíz del repo):
 
 2) Histórico (~52 semanas por UCP):
     python scripts/comparar_asr.py --historico --base ingenuo archivo --fecha 20261112
+    python scripts/comparar_asr.py --historico --semanas 52 --base modelo_k1 --fecha 20261113_modelo
    Escribe reports/ajustes/asr_comparacion_<fecha>.csv (no se versiona) y .md (secciones 1..5
    automáticas; las secciones "## 6." en adelante del .md previo se conservan).
 
@@ -46,6 +47,8 @@ from src.adjustments import comparar_asr as cmp  # noqa: E402
 from src.adjustments.types import Curves  # noqa: E402
 
 logger = logging.getLogger("comparar_asr")
+
+MODELO_DIR_DEFAULT = ROOT / "reports" / "ajustes"
 
 
 def _cargar_backtest():
@@ -108,7 +111,15 @@ def _festivos(historico: pd.DataFrame) -> List[str]:
     return data.festivos_colombia(anios)
 
 
-def _factory(base: str, archivo: Path):
+def _modelo_k1(ucp: str, modelo_dir: Path):
+    try:
+        return bt.cargar_curvas_modelo_k1(ucp, modelo_dir)
+    except FileNotFoundError:
+        logger.warning("modelo_k1: sin curvas para %s en %s", ucp, modelo_dir)
+        return None
+
+
+def _factory(base: str, archivo: Path, modelo_dir: Path = MODELO_DIR_DEFAULT, cache: Optional[Dict] = None):
     if base == "ingenuo":
         return lambda ucp, hist: bt.proveedor_ingenuo(hist)
     if base == "archivo":
@@ -117,6 +128,16 @@ def _factory(base: str, archivo: Path):
     if base == "modelo":  # enchufable: depende de la Fase 2a (run_predict_flow offline)
         prov = bt.proveedor_modelo()
         return lambda ucp, hist, _p=prov: _p
+    if base == "modelo_k1":
+        cache = {} if cache is None else cache
+
+        def factory(ucp, hist):
+            if ucp not in cache:
+                cache[ucp] = _modelo_k1(ucp, modelo_dir)
+            cargadas = cache[ucp]
+            return None if cargadas is None else bt.proveedor_desde_curvas(cargadas[0])
+
+        return factory
     raise ValueError(f"base desconocida {base!r}")
 
 
@@ -169,7 +190,7 @@ def modo_semana(args) -> int:
         _validar_csv({f: base[f] for f in necesarias}, "--base-csv")
         provider = bt.proveedor_desde_curvas(base)
     else:
-        provider = _factory(args.base[0], args.archivo)(args.ucp, ctx.historico)
+        provider = _factory(args.base[0], args.archivo, args.modelo_dir)(args.ucp, ctx.historico)
         if provider is None:
             raise SystemExit(f"La base {args.base[0]} no aplica a {args.ucp}")
     seleccion = None
@@ -393,7 +414,10 @@ def escribir_reporte(df: pd.DataFrame, path: Path, meta: Dict) -> None:
         "Generado por `scripts/comparar_asr.py --historico`. Detalle en "
         f"`{meta['csv_nombre']}` (no versionado; una fila por UCP × base × semana × día × serie).\n",
         "## 1. Configuración\n",
-        f"- Bases: {', '.join(meta['bases'])}. Semanas: últimas {meta['semanas']} completas por UCP; corte = "
+        f"- Bases: {', '.join(meta['bases'])}."
+        + (" `modelo_k1` = pronóstico del modelo real de la Fase 2a, sin fuga (corte previo verificado)."
+           if "modelo_k1" in meta["bases"] else "")
+        + f" Semanas: últimas {meta['semanas']} completas por UCP; corte = "
         "sábado anterior (el domingo es brecha). Contexto sin fuga (histórico ≤ corte; los históricos del "
         "ASR salen de ese mismo histórico).\n"
         "- `mesa` = `run_pipeline` con los defaults vigentes sobre la misma base.\n"
@@ -480,17 +504,25 @@ def escribir_reporte(df: pd.DataFrame, path: Path, meta: Dict) -> None:
 def modo_historico(args) -> int:
     frames = []
     for base_nombre in args.base:
-        factory = _factory(base_nombre, args.archivo)
+        cache: Dict = {}
+        factory = _factory(base_nombre, args.archivo, args.modelo_dir, cache)
         for ucp in args.ucp:
             if base_nombre == "archivo" and ucp != bt.ARCHIVO_UCP:
                 continue
             historico = data.cargar_historico(ucp)
-            semanas = bt.semanas_objetivo(historico, args.semanas if base_nombre != "archivo" else 10_000)
-            if base_nombre == "archivo":
-                cubiertas = bt.cargar_archivo(args.archivo)
-                semanas = [l for l in semanas
-                           if all((l - timedelta(days=1) + timedelta(days=i)).isoformat() in cubiertas
-                                  for i in range(8))][-args.semanas:]
+            if base_nombre == "modelo_k1":
+                cargadas = _modelo_k1(ucp, args.modelo_dir)
+                cache[ucp] = cargadas
+                if cargadas is None:
+                    continue
+                semanas = bt.semanas_modelo_k1(historico, args.semanas, cargadas[1], cargadas[0])
+            else:
+                semanas = bt.semanas_objetivo(historico, args.semanas if base_nombre != "archivo" else 10_000)
+                if base_nombre == "archivo":
+                    cubiertas = bt.cargar_archivo(args.archivo)
+                    semanas = [l for l in semanas
+                               if all((l - timedelta(days=1) + timedelta(days=i)).isoformat() in cubiertas
+                                      for i in range(8))][-args.semanas:]
             logger.info("%s %s: %d semanas", base_nombre, ucp, len(semanas))
             motor = asr.cargar_motor(ucp)
             frames.append(correr_historico(ucp, historico, semanas, factory, base_nombre, motor=motor,
@@ -516,7 +548,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--semana", help="lunes de la semana objetivo (modo semana)")
     ap.add_argument("--fecha-emision", help="modo semana: corte = último dato real anterior a esta fecha")
     ap.add_argument("--semanas", type=int, default=52)
-    ap.add_argument("--base", nargs="+", default=["ingenuo"], choices=["ingenuo", "archivo", "modelo"])
+    ap.add_argument("--base", nargs="+", default=["ingenuo"],
+                    choices=["ingenuo", "archivo", "modelo", "modelo_k1"])
+    ap.add_argument("--modelo-dir", type=Path, default=MODELO_DIR_DEFAULT,
+                    help="directorio de curvas_modelo_k1_<ucp>.csv")
     ap.add_argument("--archivo", type=Path, default=bt.ARCHIVO_DEFAULT)
     ap.add_argument("--base-csv", type=Path, help="modo semana: pronóstico base del analista")
     ap.add_argument("--analista-csv", type=Path, help="modo semana: resultado final ajustado a mano")

@@ -89,6 +89,78 @@ def proveedor_ingenuo(historico_cortado: pd.DataFrame) -> pipeline.BaseProvider:
     return provider
 
 
+MODELO_K1_DIR_DEFAULT = ROOT / "reports" / "ajustes"
+
+
+def _fecha_iso(valor) -> str:
+    return str(valor)[:10]
+
+
+def cargar_curvas_modelo_k1(
+    ucp: str, directorio: Path = MODELO_K1_DIR_DEFAULT
+) -> Tuple[Curves, Dict[str, date]]:
+    """
+    Lee `curvas_modelo_k1_<ucp>.csv` (Fase 2a) y devuelve `(Curves, {semana_inicio: corte})`.
+
+    Columnas esperadas: `ucp,k,semana_inicio,corte,origen,fecha,P1..P24`. Cada semana trae
+    8 días: el domingo de brecha (`corte+1`) y la semana objetivo (lunes..domingo). Las
+    curvas ya vienen generadas con corte previo y validadas sin fuga por la Fase 2a.
+    """
+    path = Path(directorio) / f"curvas_modelo_k1_{ucp}.csv"
+    if not path.exists():
+        raise FileNotFoundError(f"No existe la base modelo_k1 para UCP={ucp}: {path}")
+    df = pd.read_csv(path, dtype={"semana_inicio": str, "corte": str, "origen": str, "fecha": str})
+    periodos = [f"P{i}" for i in range(1, 25)]
+    faltantes = [c for c in ("semana_inicio", "corte", "fecha", *periodos) if c not in df.columns]
+    if faltantes:
+        raise ValueError(f"{path}: faltan columnas {faltantes}")
+    curvas: Curves = {}
+    semanas: Dict[str, date] = {}
+    for _, fila in df.iterrows():
+        fecha = _fecha_iso(fila["fecha"])
+        valores = [float(fila[p]) for p in periodos]
+        if not np.isfinite(valores).all():
+            raise ValueError(f"{path}: curva no finita en {fecha}")
+        curvas[fecha] = valores
+        semana = _fecha_iso(fila["semana_inicio"])
+        corte = date.fromisoformat(_fecha_iso(fila["corte"]))
+        if semana in semanas and semanas[semana] != corte:
+            raise ValueError(f"{path}: corte inconsistente para la semana {semana}")
+        semanas[semana] = corte
+    return curvas, dict(sorted(semanas.items()))
+
+
+def semanas_modelo_k1(
+    historico: pd.DataFrame,
+    n: int,
+    semanas_corte: Dict[str, date],
+    curvas: Optional[Curves] = None,
+) -> List[date]:
+    """
+    Últimas `n` semanas de `modelo_k1` con el rango `corte+1..domingo` completo.
+
+    `corte` es el sábado anterior a la semana objetivo, así que el rango completo son 8
+    días (domingo de brecha + lunes..domingo). Si se pasa `curvas`, se exige que esos días
+    existan; además se exigen los 7 días reales de la semana objetivo cuando el histórico
+    los tenga (para poder calcular métricas).
+    """
+    if historico is not None and "fecha" not in historico.columns:
+        historico = data.normalizar_historico(historico)
+    reales = set(data.curvas_reales(historico)) if historico is not None else set()
+    completas: List[date] = []
+    for semana, corte in sorted(semanas_corte.items(), key=lambda kv: kv[1]):
+        lunes = date.fromisoformat(semana)
+        dias = [(corte + timedelta(days=i)).isoformat() for i in range(1, 9)]
+        if dias[-1] != (lunes + timedelta(days=6)).isoformat():
+            continue
+        if curvas is not None and not all(d in curvas for d in dias):
+            continue
+        if reales and not all((lunes + timedelta(days=i)).isoformat() in reales for i in range(7)):
+            continue
+        completas.append(lunes)
+    return completas[-n:] if n and n > 0 else []
+
+
 def cargar_archivo(path: Path) -> Curves:
     """Lee el pronóstico horario guardado (fecha, periodo, pronostico_mwh) a Curves."""
     df = pd.read_csv(path)
