@@ -8,9 +8,29 @@ from pathlib import Path
 # Añadir raíz del proyecto al path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import tempfile
+
+import src.pipeline.orchestrator as orquestador
 from src.pipeline.orchestrator import run_automated_pipeline
 
+
 def test_pipeline():
+    """Prueba el pipeline completo escribiendo sus salidas en un directorio temporal.
+
+    Antes escribía data/features/data_with_features_latest.csv y
+    data/processed/*_clean_latest.csv del repo (solo pasaba sin escribir porque con
+    pandas 3 el pipeline fallaba y la excepción se tragaba).
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        procesados_prev = orquestador.PROCESSED_DATA_DIR
+        orquestador.PROCESSED_DATA_DIR = Path(tmp)
+        try:
+            return _correr_pipeline(Path(tmp) / "features")
+        finally:
+            orquestador.PROCESSED_DATA_DIR = procesados_prev
+
+
+def _correr_pipeline(output_dir: Path):
     """Prueba el pipeline completo"""
     print("="*70)
     print("PROBANDO PIPELINE AUTOMATIZADO - FASE 1")
@@ -36,7 +56,8 @@ def test_pipeline():
         df_final, report = run_automated_pipeline(
             power_data_path=str(power_path),
             weather_data_path=str(weather_path) if weather_path else None,
-            start_date='2017-01-01'
+            start_date='2017-01-01',
+            output_dir=output_dir
         )
 
         # Validaciones
@@ -64,7 +85,7 @@ def test_pipeline():
         print("OK - Calidad de datos validada")
 
         # 5. Verificar que el archivo de salida existe
-        output_file = base_dir / "data" / "features" / "data_with_features_latest.csv"
+        output_file = output_dir / "data_with_features_latest.csv"
         assert output_file.exists(), f"No se genero el archivo de salida: {output_file}"
         print(f"OK - Archivo de salida generado: {output_file}")
 

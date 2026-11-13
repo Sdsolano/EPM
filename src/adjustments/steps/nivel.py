@@ -9,6 +9,8 @@ Para cada día objetivo d (desfase = semana objetivo − semana referencia):
 - ratio = E(d') / E(a');  E*(d) = E(a) · ratio.
 - E(d) = (1 − α)·E_base(d) + α·E*(d), α default 0.25 (calibrado en el
   backtest 2026-11-12). La curva previa se escala a E(d) (forma intacta).
+- `alpha_por_tipo` (opcional, claves parciales de laboral/sabado/domingo/festivo según
+  `tipo_dia`): α del día = alpha_por_tipo[tipo_dia(d)] si la clave existe, si no `alpha`.
 - E*(d) no depende de α ni de la base: `evidencias(ctx)` la expone para que el
   paso control derive de ahí la tendencia semanal esperada.
 
@@ -40,8 +42,13 @@ from src.adjustments.data import (
     ANIOS_EXCLUIDOS_DEFAULT,
     ancla_mismo_dow,
     dias_semana,
+    TIPO_DOMINGO,
+    TIPO_FESTIVO,
+    TIPO_LABORAL,
+    TIPO_SABADO,
     energia_diaria,
     iso,
+    tipo_dia,
 )
 from src.adjustments.steps import _params
 from src.adjustments.types import Alert, Curves, RunContext, StepResult, validar_curva
@@ -52,11 +59,39 @@ MAX_SEMANAS_EXTRA_ANCLA = 6
 DESPLAZAMIENTOS_REF = (0, -7, 7, -14, 14)
 
 
+TIPOS_ALPHA = (TIPO_LABORAL, TIPO_SABADO, TIPO_DOMINGO, TIPO_FESTIVO)
+
+
 def validar_params(params: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """alpha: número finito en [0, 1]."""
+    # alpha_por_tipo es opcional y NO va en DEFAULTS: si falta o es None, los
+    # params normalizados quedan idénticos a los de antes de existir.
+    por_tipo = params.get("alpha_por_tipo") if isinstance(params, dict) else None
+    if isinstance(params, dict) and "alpha_por_tipo" in params:
+        params = {k: v for k, v in params.items() if k != "alpha_por_tipo"}
     p = _params.completar("nivel", DEFAULTS, params)
     p["alpha"] = _params.numero("nivel", "alpha", p["alpha"], minimo=0.0, maximo=1.0)
+    if por_tipo is not None:
+        p["alpha_por_tipo"] = _validar_alpha_por_tipo(por_tipo)
     return p
+
+
+def _validar_alpha_por_tipo(v: Any) -> Dict[str, float]:
+    """dict {tipo_dia: α} con claves ⊆ TIPOS_ALPHA y valores finitos en [0, 1]."""
+    if not isinstance(v, dict):
+        raise ValueError(
+            f"nivel.alpha_por_tipo debe ser un objeto {{tipo: alpha}}, llegó {_params._corto(v)}"
+        )
+    desconocidas = sorted(str(k) for k in v if k not in TIPOS_ALPHA)
+    if desconocidas:
+        raise ValueError(
+            f"nivel.alpha_por_tipo: claves desconocidas {desconocidas}; válidas: {list(TIPOS_ALPHA)}"
+        )
+    return {
+        k: _params.numero("nivel", f"alpha_por_tipo.{k}", v[k], minimo=0.0, maximo=1.0)
+        for k in TIPOS_ALPHA
+        if k in v
+    }
 
 
 def anios_excluidos(ctx: RunContext) -> Set[int]:
@@ -146,7 +181,10 @@ def evidencias(ctx: RunContext) -> Dict[str, Optional[Dict[str, Any]]]:
 
 
 def step(ctx: RunContext, prev: Curves, params: Dict[str, Any]) -> StepResult:
-    alpha = validar_params(params)["alpha"]
+    p = validar_params(params)
+    alpha = p["alpha"]
+    alpha_por_tipo = p.get("alpha_por_tipo")
+    festivos_set = set(ctx.festivos) if alpha_por_tipo is not None else set()
 
     curves: Curves = {f: list(v) for f, v in prev.items()}
     desfase = (
@@ -166,6 +204,9 @@ def step(ctx: RunContext, prev: Curves, params: Dict[str, Any]) -> StepResult:
         e_base = float(curva.sum())
         ev = evidencia_dias.get(f)
         alpha_d = alpha if ev is not None else 0.0
+        tipo_d = tipo_dia(d, festivos_set) if alpha_por_tipo is not None else None
+        if ev is not None and tipo_d in (alpha_por_tipo or {}):
+            alpha_d = alpha_por_tipo[tipo_d]
         if ev is None:
             sin_evidencia.append(f)
         e_obj = ev["E_objetivo"] if ev else None
@@ -189,6 +230,8 @@ def step(ctx: RunContext, prev: Curves, params: Dict[str, Any]) -> StepResult:
             "lag_dias": ev["lag_dias"] if ev else None,
             "regla": ev["regla"] if ev else "sin_evidencia",
         }
+        if alpha_por_tipo is not None:
+            por_dia[f]["tipo_dia"] = tipo_d
 
     alerts: List[Alert] = []
     if sin_evidencia:
@@ -221,4 +264,6 @@ def step(ctx: RunContext, prev: Curves, params: Dict[str, Any]) -> StepResult:
         "anios_excluidos": sorted(anios_excluidos(ctx)),
         "dias": por_dia,
     }
+    if alpha_por_tipo is not None:
+        diagnostics["alpha_por_tipo"] = dict(alpha_por_tipo)
     return StepResult(curves=curves, diagnostics=diagnostics, alerts=alerts)
