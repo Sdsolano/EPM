@@ -514,3 +514,4 @@ Resultados ya medidos para el RESUMEN: ASR (ver entrada arriba); 2a modelo real 
 - Pendientes fuera de EPM: backend intermedio debe añadir `usuario` en aprobar; registrar módulo en BD para quitar la inyección de menú de Sphere; front Sphere para el paso `especiales` (6 pasos) y alertas de eventos.
 - Fuera de git (copiar a mano al otro PC): `.env` (ver `.env.migracion-pc-epm-usb.zip`), `data/`, `models/`, y `reports/ajustes/curvas_modelo_k1_*.csv` (solo para re-correr backtests). `docs/` está en .gitignore → usar `git add -f`.
 - La sesión anterior se detuvo sin avisar (último commit 11:58).
+- 2026-11-13 Añadido plan de demo Railway: docs/work/ajustes/demo/PLAN.md y demo/PROMPT_EJECUTAR.md (ejecutar DESPUÉS de integrar Fase 4). Decisiones del usuario: interno (no público), datos reales y API key OpenAI permitidos.

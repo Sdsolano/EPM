@@ -1,0 +1,6 @@
+Retoma el repo EPM (C:\Users\samue\OneDrive\Documentos\GitHub\EPM; Sphere en ../Sphere). No tienes memoria del chat; todo está en documentos.
+ORDEN DE TRABAJO:
+1. Primero termina lo pendiente: lee el final de docs/work/ajustes/LOG.md ("ESTADO ACTUAL v3") y ejecuta docs/work/ajustes/fase4/PROMPT_EJECUTAR.md (integrar Fase 4 en main, RESUMEN_NOCHE.md).
+2. Cuando eso esté en main, sigue con el entorno de demo para Railway: lee docs/work/ajustes/demo/PLAN.md y ejecútalo (partes D0–D4).
+Contexto de la demo: es un entorno de test INTERNO en Railway (no público): puede usar datos reales y la API key de OpenAI vía variables de entorno (nunca en git). Debe ser autocontenido, con el mismo front de Sphere y funcionalidades completas, para mostrar el avance y los resultados. No hagas el despliegue real en Railway sin confirmación del usuario; deja todo listo y documentado.
+Metodología: REGLAS_AGENTES.md y la global del usuario: plan por parte, subagentes por parte, ronda 1 de revisión con ángulos separados (model sonnet) + regresión; solo repetir ronda completa con hallazgos críticos/altos; si no, corregir y una verificación estándar. Documenta el estado en LOG.md antes de cada fase y tras cada paso; `docs/` está en .gitignore → `git add -f`. Commits en español terminados con `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`; sin amend/force.
