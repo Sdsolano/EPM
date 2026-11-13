@@ -434,3 +434,9 @@ OpenAPI, preview `../x` → 422, `Foo` → 404, GET sin DSN → 503; checker rea
 - Suite: 242 passed, 4 skipped, 4 failed preexistentes. Router con Postgres: 68 passed. Import de la API sin env: /health 200, 8 rutas /adjustments. Sin bases temporales.
 - Ronda 2 sin críticos/altos → sin ronda 3 (regla del framework). Commit en `feat/ajustes-pipeline`.
 - Pendientes Fase 2/3: backtest con el modelo real (requiere arreglar fillna/pandas 3 en feature_engineering y aislar full_update_csv), α por tipo de día, pantalla Mesa de ajustes en Sphere + rutas en backend intermedio (enviar `X-Ajustes-Token`, `base_curvas`, `base_ref`), aplicar `sql/001`+`002` en el Postgres de despliegue y definir `AJUSTES_DATABASE_URL`/`AJUSTES_SERVICE_TOKEN`.
+
+## Cierre de sesión (2026-11-12)
+- Por pedido del usuario, la rama `feat/ajustes-pipeline` se pusheó como fast-forward a `origin/main`: `8501faa` (feature) y `c7b9d32` (guía `docs/work/ajustes/README.md` para continuar en otro PC). Sphere no se tocó en esta sesión (árbol limpio, nada pusheado a `test`).
+- Cambios ajenos del usuario que siguen sin commitear en el árbol, sin tocar: `fastapi_factores/test_*`, `reports/performance/README.md`, `.claude/settings.local.json`, carpeta `env.migracion-pc-epm-usb/`.
+- Framework global (`~/.claude/CLAUDE.md`) actualizado con dos reglas: la severidad la deciden los agentes revisores (el orquestador no sube medios a altos para forzar otra ronda); con Opus, los revisores corren con Sonnet.
+- Para retomar: leer `docs/work/ajustes/README.md` (estado, arranque, datos a copiar, pendientes por fase).
