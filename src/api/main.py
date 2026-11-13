@@ -768,7 +768,11 @@ async def get_future_events_from_openai(
     fecha_fin: str
 ) -> Dict[str, str]:
     """
-    Obtiene eventos futuros que podrían afectar la demanda energética usando OpenAI
+    Obtiene eventos futuros que podrían afectar la demanda energética.
+
+    Delega en `src.adjustments.eventos.obtener_eventos` (cache en disco por
+    UCP/semana y saneo); la consulta a OpenAI vive en ese módulo. Nunca lanza:
+    sin API_KEY o ante cualquier fallo devuelve `{}` (o la última cache válida).
 
     Args:
         ucp: Nombre del UCP (ej: 'Atlantico', 'Oriente')
@@ -779,72 +783,13 @@ async def get_future_events_from_openai(
         Dict[str, str]: Diccionario con formato {"YYYY-MM-DD": "Nombre del evento"}
     """
     try:
-        # Obtener API key desde variables de entorno
-        api_key = os.getenv('API_KEY')
-        if not api_key:
-            logger.warning("⚠ API_KEY no encontrada en .env, saltando búsqueda de eventos")
-            return {}
+        from src.adjustments import eventos as eventos_mod
+    except Exception as e:
+        logger.error(f"No se pudo importar src.adjustments.eventos: {e}")
+        return {}
 
-        # Inicializar cliente de OpenAI
-        client = OpenAI(api_key=api_key)
-
-        prompt = f"""Busca en internet todos los eventos que podrían afectar la demanda de energía eléctrica en {ucp}, Colombia entre {fecha_inicio} y {fecha_fin}.
-
-Incluye:
-- Festivos nacionales y locales
-- Eventos masivos (conciertos, festivales, ferias)
-- Partidos de fútbol importantes
-- Eventos climáticos previstos
-- Paros o manifestaciones programadas
-- Elecciones o eventos políticos
-- Cualquier otro evento relevante
-
-IMPORTANTE: Responde ÚNICAMENTE en formato JSON así:
-{{
-  "YYYY-MM-DD": "Nombre breve del evento",
-  "YYYY-MM-DD": "Otro evento"
-}}
-
-REGLAS:
-- NO incluyas links, URLs ni referencias a fuentes
-- Solo nombres cortos y concisos (máximo 50 caracteres)
-- NO agregues explicaciones adicionales
-- Solo el JSON puro"""
-
-        logger.info(f"🔍 Buscando eventos futuros para {ucp} ({fecha_inicio} a {fecha_fin})...")
-
-        response = await run_in_threadpool(
-            lambda: client.responses.create(
-                model="gpt-5-mini",
-                input=[
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
-                tools=[
-                    {
-                        "type": "web_search"
-                    }
-                ]
-            )
-        )
-
-        events_json = response.output_text.strip()
-
-        # Limpiar respuesta (quitar markdown si existe)
-        if events_json.startswith("```json"):
-            events_json = events_json.replace("```json", "").replace("```", "").strip()
-        elif events_json.startswith("```"):
-            events_json = events_json.replace("```", "").strip()
-
-        # Parsear JSON
-        import json
-        events = json.loads(events_json)
-
-        logger.info(f"✓ Eventos encontrados: {len(events)}")
-        return events
-
+    try:
+        return await eventos_mod.obtener_eventos(ucp, fecha_inicio, fecha_fin)
     except Exception as e:
         logger.error(f"Error obteniendo eventos futuros: {e}")
         logger.error(traceback.format_exc())

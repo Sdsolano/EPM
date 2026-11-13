@@ -266,7 +266,7 @@ class RunContext:
 @dataclass
 class StepRecord:  # lo que se persiste por paso
     orden: int
-    paso: str  # "base" | "referencia" | "nivel" | "forma" | "control"
+    paso: str  # "base" | "referencia" | "nivel" | "forma" | "especiales" | "control"
     estado: StepState
     params: Dict[str, Any]
     result: StepResult

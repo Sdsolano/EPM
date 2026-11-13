@@ -1,5 +1,5 @@
 """
-Pipeline de ajustes encadenados: base → referencia → nivel → forma → control.
+Pipeline de ajustes encadenados: base → referencia → nivel → forma → especiales → control.
 
 Cada paso puede estar:
 - `aplicado`: se ejecuta la función del paso con sus params.
@@ -8,9 +8,9 @@ Cada paso puede estar:
   del analista (validadas con `validar_curvas_editadas`: 24 periodos,
   finitos, no negativos, fechas permitidas) reemplazan esos días; los demás
   días conservan el ajuste calculado. La curva calculada de cada día editado
-  queda en `result.curvas_calculadas`. Solo para base, nivel y forma
-  (referencia se fuerza con el param `semana_ref_inicio`; control no produce
-  curvas).
+  queda en `result.curvas_calculadas`. Solo para base, nivel, forma y
+  especiales (referencia se fuerza con el param `semana_ref_inicio`; control no
+  produce curvas).
 
 Los params de cada paso se validan SIEMPRE (`<paso>.validar_params`, ValueError
 → 422 en el router) antes de ejecutarlo, también en `rerun_from`.
@@ -25,13 +25,14 @@ su estado y params guardados.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date, timedelta
 from typing import Any, Callable, Dict, List, Mapping, Optional, Union
 
 import pandas as pd
 
-from src.adjustments import data
-from src.adjustments.steps import _params, base, control, forma, nivel, referencia
+from src.adjustments import automatico, data
+from src.adjustments.steps import _params, base, control, especiales, forma, nivel, referencia
 from src.adjustments.types import (
     Alert,
     Curves,
@@ -43,7 +44,7 @@ from src.adjustments.types import (
     validar_curvas_editadas,
 )
 
-STEP_ORDER = ["base", "referencia", "nivel", "forma", "control"]  # orden 0..4
+STEP_ORDER = ["base", "referencia", "nivel", "forma", "especiales", "control"]  # orden 0..5
 BaseProvider = Callable[[str, date, int], Curves]  # (ucp, end_date=fecha_corte, n_days) -> curvas raw
 
 _MODULOS = {
@@ -51,9 +52,12 @@ _MODULOS = {
     "referencia": referencia,
     "nivel": nivel,
     "forma": forma,
+    "especiales": especiales,
     "control": control,
 }
-_PASOS_QUE_MODIFICAN = ("base", "nivel", "forma")  # producen curvas; son también los editables
+_PASOS_QUE_MODIFICAN = ("base", "nivel", "forma", "especiales")  # producen curvas; son también los editables
+_AUTOMATICO_PASOS = ("nivel", "forma", "especiales")  # pasos que anotan el estado R2 si se pide
+_NOMBRES_5_PASOS = ["base", "referencia", "nivel", "forma", "control"]
 
 
 def orden_de(paso: str) -> int:
@@ -85,8 +89,37 @@ def _validar_record(record: StepRecord, paso: str) -> None:
         )
 
 
+def _migrar_records_5_pasos(records: List[StepRecord]) -> List[StepRecord]:
+    """
+    Corridas viejas de 5 pasos: inserta `especiales` omitido (orden 4) y
+    renumera `control` a orden 5. No persiste nada por sí misma.
+    """
+    por_paso = {r.paso: r for r in records}
+    forma_rec = por_paso["forma"]
+    especiales_rec = StepRecord(
+        orden=orden_de("especiales"),
+        paso="especiales",
+        estado=StepState.OMITIDO,
+        params={},
+        result=StepResult(
+            curves=_copiar(forma_rec.result.curves),
+            diagnostics={"omitido": True, "migrado": True},
+        ),
+    )
+    return [
+        por_paso["base"],
+        por_paso["referencia"],
+        por_paso["nivel"],
+        por_paso["forma"],
+        especiales_rec,
+        replace(por_paso["control"], orden=orden_de("control")),
+    ]
+
+
 def _records_por_paso(records: List[StepRecord]) -> Dict[str, StepRecord]:
     """Indexa por nombre; ValueError si faltan, sobran o se repiten pasos, o el orden no cuadra."""
+    if [r.paso for r in records] == _NOMBRES_5_PASOS:
+        records = _migrar_records_5_pasos(records)
     nombres = [r.paso for r in records]
     if sorted(nombres) != sorted(STEP_ORDER):
         raise ValueError(
@@ -202,6 +235,17 @@ def _aplicar_edicion(
                       curvas_calculadas=calculadas)
 
 
+def _fechas_editadas_previas(previos: List[StepRecord]) -> set:
+    """Días editados a mano en pasos ya ejecutados (para que especiales no los pise)."""
+    fechas = set()
+    for record in previos:
+        if record.estado != StepState.EDITADO:
+            continue
+        for f in record.result.diagnostics.get("fechas_editadas") or []:
+            fechas.add(str(f)[:10])
+    return fechas
+
+
 def _calcular(
     ctx: RunContext,
     paso: str,
@@ -223,6 +267,8 @@ def _calcular(
         result.diagnostics["semana_inicio"] = data.iso(ctx.semana_inicio)
         result.diagnostics["origen_energia_nivel"] = origen
         return result
+    if paso == "especiales":
+        return especiales.step(ctx, prev, p, fechas_editadas=_fechas_editadas_previas(previos))
     return _MODULOS[paso].step(ctx, prev, p)
 
 
@@ -261,7 +307,26 @@ def _ejecutar(
     if paso == "referencia":
         _aplicar_referencia(ctx, result.diagnostics)
 
+    if estado != StepState.OMITIDO and paso in _AUTOMATICO_PASOS and ctx.extras.get("aplicar_automatico"):
+        result.diagnostics["automatico"] = _diagnostico_automatico(ctx, paso)
+
     return StepRecord(orden=orden, paso=paso, estado=estado, params=p, result=result)
+
+
+def _diagnostico_automatico(ctx: RunContext, paso: str) -> Dict[str, Dict[str, str]]:
+    """
+    Estado R2 por día de la semana objetivo (solo diagnóstico; no altera curvas).
+
+    Cada día trae `{"tipo_dia", "estado", "paso"}` (contrato PLAN_4C). `paso`
+    permite al front agregar el detalle sin depender del nombre del record.
+    """
+    festivos = ctx.festivos or []
+    por_dia: Dict[str, Dict[str, str]] = {}
+    for d in data.dias_semana(ctx.semana_inicio):
+        tipo = data.tipo_dia(d, festivos)
+        estado = automatico.estado(ctx.ucp, tipo, paso) if paso in automatico.PASOS else automatico.SUGERIDO
+        por_dia[data.iso(d)] = {"tipo_dia": tipo, "estado": estado, "paso": paso}
+    return por_dia
 
 
 def _aplicar_referencia(ctx: RunContext, diagnostics: Optional[Dict[str, Any]]) -> None:
@@ -296,21 +361,34 @@ def _energia_nivel(previos: List[StepRecord]) -> tuple:
     """
     (origen, energía diaria) de referencia para el enclavamiento del control:
     la que calculó el paso nivel (pre-edición); si nivel se omitió, la del paso
-    base (sus curvas finales: nivel omitido = identidad sobre la base).
+    base (sus curvas finales: nivel omitido = identidad sobre la base). A los
+    días que ajustó `especiales` (aplicado=true) se les sustituye su `E_final`
+    como baseline, para que el ajuste intencional no se lea como desvío.
     """
     por_paso = {r.paso: r for r in previos}
     nivel_rec = por_paso.get("nivel")
     if nivel_rec is not None and nivel_rec.estado != StepState.OMITIDO:
-        return "nivel", _energia_calculada(nivel_rec)
-    if "base" in por_paso:
-        return "base", data.energia_curvas(por_paso["base"].result.curves)
-    return None, None
+        origen, energia = "nivel", _energia_calculada(nivel_rec)
+    elif "base" in por_paso:
+        origen, energia = "base", data.energia_curvas(por_paso["base"].result.curves)
+    else:
+        return None, None
+    esp = por_paso.get("especiales")
+    if esp is not None:
+        dias = esp.result.diagnostics.get("dias") or {}
+        for f in esp.result.diagnostics.get("dias_ajustados") or []:
+            info = dias.get(f) or {}
+            e_final = info.get("E_final")
+            if info.get("aplicado") and e_final is not None:
+                energia[str(f)[:10]] = float(e_final)
+    return origen, energia
 
 
 def _energia_esperada(previos: List[StepRecord]) -> Optional[Dict[str, float]]:
     """
     Energía diaria final del paso nivel para reconciliar la forma. Los días
-    editados a mano en forma no se reconcilian (los vigila el enclavamiento).
+    editados a mano en forma y los que ajustó `especiales` no se reconcilian
+    (los vigila el enclavamiento).
     """
     por_paso = {r.paso: r for r in previos}
     if "nivel" not in por_paso or "forma" not in por_paso:
@@ -319,6 +397,13 @@ def _energia_esperada(previos: List[StepRecord]) -> Optional[Dict[str, float]]:
     forma_rec = por_paso["forma"]
     if forma_rec.estado == StepState.EDITADO:
         for f in forma_rec.result.diagnostics.get("fechas_editadas") or []:
+            energia.pop(f, None)
+    especiales_rec = por_paso.get("especiales")
+    if especiales_rec is not None:
+        if especiales_rec.estado == StepState.EDITADO:
+            for f in especiales_rec.result.diagnostics.get("fechas_editadas") or []:
+                energia.pop(f, None)
+        for f in especiales_rec.result.diagnostics.get("dias_ajustados") or []:
             energia.pop(f, None)
     return energia
 
@@ -334,7 +419,7 @@ def run_pipeline(
     overrides: Optional[Mapping[Union[int, str], StepRecord]] = None,  # por orden o nombre
 ) -> List[StepRecord]:
     """
-    Corre los 5 pasos. `overrides` (omitidos/editados/params) se indexan por
+    Corre los 6 pasos. `overrides` (omitidos/editados/params) se indexan por
     orden o por nombre de paso; el `paso` de cada override debe coincidir con
     la clave (no se reinterpreta por posición).
     """
@@ -403,7 +488,7 @@ def rerun_from(
 
 
 def final_curves(records: List[StepRecord]) -> Curves:
-    """Curvas del último paso que modifica (base/nivel/forma), incluida la brecha."""
+    """Curvas del último paso que modifica (base/nivel/forma/especiales), incluida la brecha."""
     por_paso = {r.paso: r for r in records}
     for paso in reversed(_PASOS_QUE_MODIFICAN):
         if paso in por_paso:

@@ -1028,6 +1028,12 @@ def test_postgres_store(pg):
     run = store.get_run(rid)
     assert len(run["records"]) == 2 and run["eventos"] == [] and run["meta"]["version"] == 1
 
+    # list_runs: dos queries (corridas + pasos por ANY), sin eventos y con el límite acotado
+    corridas = store.list_runs(ucp, None, None, 10 ** 9)
+    assert corridas and all(set(c) == {"meta", "records"} and c["records"] for c in corridas)
+    semanas = [c["meta"]["semana_inicio"] for c in corridas]
+    assert semanas == sorted(semanas, reverse=True)
+
 
 def test_postgres_aprobaciones_concurrentes(pg):
     dsn, ucp = pg

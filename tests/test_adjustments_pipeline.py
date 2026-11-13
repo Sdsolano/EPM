@@ -74,7 +74,7 @@ def test_run_pipeline_completo():
     prov = ProveedorPlano()
     records = run_pipeline(ctx, prov)
     assert [r.paso for r in records] == STEP_ORDER
-    assert [r.orden for r in records] == [0, 1, 2, 3, 4]
+    assert [r.orden for r in records] == [0, 1, 2, 3, 4, 5]
     assert all(r.estado == StepState.APLICADO for r in records)
     assert len(prov.llamadas) == 1
     assert ctx.semana_ref_inicio == date(2024, 9, 9)
@@ -87,7 +87,7 @@ def test_run_pipeline_completo():
         assert abs(sum(records[3].result.curves[f]) - e_nivel[f]) <= 1e-6
     assert approval_blockers(records) == []
     finales = final_curves(records)
-    assert finales == records[3].result.curves
+    assert finales == records[4].result.curves
     assert len(finales) == 11  # brecha (4) + semana (7)
     for f in ["2025-09-04", "2025-09-07"]:
         assert finales[f] == records[0].result.curves[f]
@@ -172,7 +172,7 @@ def test_base_editada_superpone_dias_al_pronostico():
 def test_control_no_admite_edicion():
     with pytest.raises(ValueError):
         run_pipeline(_ctx(), ProveedorPlano(),
-                     overrides={4: _record(4, "editado", curves={"2025-09-10": [1.0] * 24})})
+                     overrides={5: _record(5, "editado", curves={"2025-09-10": [1.0] * 24})})
 
 
 # ---------------------------------------------------------------- rerun_from
@@ -188,8 +188,8 @@ def test_rerun_from_recalcula_posteriores_sin_tocar_anteriores():
     f = "2025-09-10"
     assert sum(nuevos[2].result.curves[f]) != pytest.approx(sum(records[2].result.curves[f]))
     assert sum(nuevos[3].result.curves[f]) == pytest.approx(sum(nuevos[2].result.curves[f]), abs=1e-6)
-    assert nuevos[4].result.diagnostics["energia_semana_ajustada"] != pytest.approx(
-        records[4].result.diagnostics["energia_semana_ajustada"]
+    assert nuevos[5].result.diagnostics["energia_semana_ajustada"] != pytest.approx(
+        records[5].result.diagnostics["energia_semana_ajustada"]
     )
     # mismo resultado que correr todo de cero con esos params
     desde_cero = run_pipeline(_ctx(), ProveedorPlano(), params={"nivel": {"alpha": 1.0}})
@@ -203,7 +203,7 @@ def test_rerun_from_referencia_forzada_propaga_a_nivel():
     nuevos = rerun_from(ctx, records, 1, prov, _record(1, "aplicado", {"semana_ref_inicio": "2023-09-11"}))
     assert ctx.semana_ref_inicio == date(2023, 9, 11)
     assert nuevos[2].result.diagnostics["semana_ref_inicio"] == "2023-09-11"
-    assert nuevos[4].result.diagnostics["semana_ref_inicio"] == "2023-09-11"
+    assert nuevos[5].result.diagnostics["semana_ref_inicio"] == "2023-09-11"
 
 
 def test_rerun_from_toma_referencia_de_records_con_ctx_nuevo():
@@ -260,7 +260,7 @@ def test_control_tendencia_ref_con_festivo_objetivo_sin_festivo_no_alerta():
     festivos = set(ctx.festivos)
     records = run_pipeline(ctx, _proveedor_real(festivos))
     assert ctx.semana_ref_inicio == date(2024, 5, 13) and "2024-05-13" in festivos
-    ctrl = records[4].result
+    ctrl = records[5].result
     assert not any(a.codigo.startswith("TENDENCIA_") for a in ctrl.alerts)
     assert abs(ctrl.diagnostics["diferencia_tendencia_pp"]) < 0.01
     assert ctrl.diagnostics["dias_sin_evidencia"] == []
@@ -279,7 +279,7 @@ def test_control_con_nivel_omitido_recalcula_e_objetivo():
     semana = date(2025, 5, 12)
     ctx = _ctx(semana)
     records = run_pipeline(ctx, _proveedor_real(set(ctx.festivos)), overrides={2: _record(2, "omitido")})
-    ctrl = records[4].result
+    ctrl = records[5].result
     assert ctrl.diagnostics["tendencia_esperada_pct"] is not None
     assert abs(ctrl.diagnostics["diferencia_tendencia_pp"]) < 0.01
     # enclavamiento contra la energía del paso base (nivel omitido)
@@ -330,10 +330,41 @@ def test_rerun_from_recalcula_curvas_calculadas_de_la_edicion():
 
 def test_control_sin_ediciones_no_alerta_y_desvio_cero():
     records = run_pipeline(_ctx(), ProveedorPlano())
-    ctrl = records[4].result
+    ctrl = records[5].result
     assert ctrl.diagnostics["origen_energia_nivel"] == "nivel"
     assert ctrl.diagnostics["desvio_pp"] == pytest.approx(0.0, abs=1e-9)
     assert not any(a.codigo == "TENDENCIA_FUERA_BANDA" for a in ctrl.alerts)
+
+
+def _hist_semana_santa(factor=1.5):
+    from src.adjustments import analogos as buscador
+    from src.adjustments.data import PERIODOS
+
+    hist = HIST.copy()
+    fechas = []
+    d = date(2021, 1, 1)
+    while d <= date(2024, 12, 31):
+        if buscador.es_semana_santa(d):
+            fechas.append(d.isoformat())
+        d += timedelta(days=1)
+    hist.loc[hist["FECHA"].isin(fechas), PERIODOS] *= factor
+    return hist
+
+
+def test_control_no_alerta_por_el_ajuste_intencional_de_especiales():
+    semana = date(2025, 4, 7)
+    ctx = build_context(
+        "Sintetica", semana, fecha_emision=semana - timedelta(days=4),
+        historico=_hist_semana_santa(),
+    )
+    records = run_pipeline(
+        ctx, ProveedorPlano(),
+        params={"especiales": {"aplicar": True, "ancla": "analogos"}},
+    )
+    assert records[4].result.diagnostics["dias_ajustados"] == ["2025-04-13"]
+    ctrl = records[5].result
+    assert not any(a.codigo == "TENDENCIA_FUERA_BANDA" for a in ctrl.alerts)
+    assert ctrl.diagnostics["desvio_pp"] == pytest.approx(0.0, abs=1e-9)
 
 
 @pytest.mark.parametrize("orden", [2, 3])
@@ -342,7 +373,7 @@ def test_control_edicion_que_sube_un_dia_10pct_alerta(orden):
     f = "2025-09-10"
     editada = {f: [v * 1.10 for v in sin_edicion[orden].result.curves[f]]}
     records = run_pipeline(_ctx(), ProveedorPlano(), overrides={orden: _record(orden, "editado", curves=editada)})
-    ctrl = records[4].result
+    ctrl = records[5].result
     alerta = next(a for a in ctrl.alerts if a.codigo == "TENDENCIA_FUERA_BANDA")
     assert alerta.fechas[0] == f
     e_nivel = sum(sum(sin_edicion[2].result.curves[x]) for x in FECHAS_SEMANA)
@@ -425,7 +456,7 @@ def test_params_invalidos_value_error_en_run_y_rerun(params):
 # ---------------------------------------------------------------- identificación por nombre
 
 def test_orden_de():
-    assert [orden_de(p) for p in STEP_ORDER] == [0, 1, 2, 3, 4]
+    assert [orden_de(p) for p in STEP_ORDER] == [0, 1, 2, 3, 4, 5]
     with pytest.raises(ValueError):
         orden_de("dias_especiales")
 
@@ -462,7 +493,7 @@ def test_rerun_from_records_desalineados_value_error(como):
     ctx = _ctx()
     records = _desalinear(run_pipeline(ctx, ProveedorPlano()), como)
     with pytest.raises(ValueError):
-        rerun_from(ctx, records, "control", ProveedorPlano(), _record(4, "aplicado"))
+        rerun_from(ctx, records, "control", ProveedorPlano(), _record(5, "aplicado"))
 
 
 def test_run_pipeline_override_con_paso_que_no_coincide_value_error():
@@ -481,7 +512,7 @@ def test_bloqueo_por_dia_faltante_incluso_con_control_omitido():
     codigos = {a.codigo for a in approval_blockers(records)}
     assert "PERIODOS_FALTANTES" in codigos
 
-    records_sin_control = run_pipeline(_ctx(), prov, overrides={4: _record(4, "omitido")})
+    records_sin_control = run_pipeline(_ctx(), prov, overrides={5: _record(5, "omitido")})
     bloqueos = approval_blockers(records_sin_control)
     assert [a.codigo for a in bloqueos] == ["PERIODOS_FALTANTES"]
     assert bloqueos[0].fechas == ["2025-09-12"]
@@ -557,14 +588,14 @@ def _proveedor_escalado(festivos, factor, desde):
 
 
 def _alerta(records, codigo):
-    return next((a for a in records[4].result.alerts if a.codigo == codigo), None)
+    return next((a for a in records[5].result.alerts if a.codigo == codigo), None)
 
 
 def test_control_tendencia_referencia_default_info_con_alpha_cero():
     ctx = _ctx(SEMANA_TENDENCIA)
     prov = _proveedor_escalado(set(ctx.festivos), 1.10, SEMANA_TENDENCIA)
     records = run_pipeline(ctx, prov, params={"nivel": {"alpha": 0.0}})
-    ctrl = records[4].result
+    ctrl = records[5].result
     alerta = _alerta(records, "TENDENCIA_REFERENCIA_FUERA_BANDA")
     assert alerta is not None and alerta.nivel == "info"
     assert ctrl.diagnostics["banda_referencia_pp"] == 2.0
@@ -582,8 +613,8 @@ def test_control_tendencia_referencia_con_nivel_omitido():
     records = run_pipeline(ctx, prov, overrides={2: _record(2, "omitido")})
     alerta = _alerta(records, "TENDENCIA_REFERENCIA_FUERA_BANDA")
     assert alerta is not None and alerta.nivel == "info"
-    assert records[4].result.diagnostics["diferencia_tendencia_pp"] < -2.0
-    assert records[4].result.diagnostics["origen_energia_nivel"] == "base"
+    assert records[5].result.diagnostics["diferencia_tendencia_pp"] < -2.0
+    assert records[5].result.diagnostics["origen_energia_nivel"] == "base"
     assert _alerta(records, "TENDENCIA_FUERA_BANDA") is None
 
 
@@ -599,7 +630,7 @@ def test_control_tendencia_referencia_con_base_editada():
     alerta = _alerta(records, "TENDENCIA_REFERENCIA_FUERA_BANDA")
     assert alerta is not None and alerta.nivel == "info"
     # α=0.25 devuelve un cuarto hacia E*: queda ≈ +7.5 pp sobre la referencia
-    assert records[4].result.diagnostics["diferencia_tendencia_pp"] > 2.0
+    assert records[5].result.diagnostics["diferencia_tendencia_pp"] > 2.0
     assert _alerta(records, "TENDENCIA_FUERA_BANDA") is None
 
 
@@ -609,7 +640,7 @@ def test_control_tendencia_referencia_null_la_desactiva():
     records = run_pipeline(ctx, prov, params={"nivel": {"alpha": 0.0},
                                               "control": {"banda_referencia_pp": None}})
     assert _alerta(records, "TENDENCIA_REFERENCIA_FUERA_BANDA") is None
-    assert records[4].result.diagnostics["diferencia_tendencia_pp"] > 2.0  # el diagnóstico sigue
+    assert records[5].result.diagnostics["diferencia_tendencia_pp"] > 2.0  # el diagnóstico sigue
 
 
 # ---------------------------------------------------------------- brecha inválida (fix ronda 2)
@@ -628,7 +659,7 @@ def test_brecha_invalida_warning_no_bloquea():
     assert alerta is not None and alerta.nivel == "warning"
     assert alerta.fechas == ["2025-09-05", "2025-09-06"]
     assert alerta.detalle["motivos"] == {"2025-09-05": "VALORES_NO_FINITOS", "2025-09-06": "PERIODOS_FALTANTES"}
-    assert records[4].result.diagnostics["dias_brecha"] == ["2025-09-04", "2025-09-05", "2025-09-06", "2025-09-07"]
+    assert records[5].result.diagnostics["dias_brecha"] == ["2025-09-04", "2025-09-05", "2025-09-06", "2025-09-07"]
     # approval_blockers solo cubre la semana objetivo
     assert approval_blockers(records) == []
     json.dumps([r.to_dict() for r in records], allow_nan=False)

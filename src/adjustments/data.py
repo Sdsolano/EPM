@@ -14,12 +14,12 @@ from __future__ import annotations
 import math
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 import numpy as np
 import pandas as pd
 
-from src.adjustments.types import Curves, parse_date
+from src.adjustments.types import Curves, parse_date, validar_curva
 from src.prediction.holiday_homology import colombia_holiday_map
 
 PERIODOS: List[str] = [f"P{i}" for i in range(1, 25)]
@@ -129,6 +129,17 @@ def energia_diaria(historico: pd.DataFrame) -> Dict[str, float]:
 def energia_curvas(curves: Curves) -> Dict[str, float]:
     """{fecha_iso: suma de los periodos} de unas curvas (None → NaN, nunca lanza por None)."""
     return {f: float(np.sum(np.asarray(v, dtype=float))) for f, v in curves.items()}
+
+
+def energia_curva(valores: Any) -> Optional[float]:
+    """
+    Energía (suma de los 24 periodos) de una curva diaria VÁLIDA; None si la
+    curva no lo es (periodos faltantes, no finitos o negativos). Helper único
+    para especiales y control.
+    """
+    if validar_curva(valores) is not None:
+        return None
+    return float(np.sum(np.asarray(valores, dtype=float)))
 
 
 # ---------------------------------------------------------------------------
