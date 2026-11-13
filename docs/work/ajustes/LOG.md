@@ -446,3 +446,54 @@ OpenAPI, preview `../x` → 422, `Foo` → 404, GET sin DSN → 503; checker rea
 - Analista: el ajuste inteligente por escenario de referencia (ASR, Sphere `handleASR` → `/validate-hourly-adjustments`) no le sirve como quisiera; revisión el viernes 2026-11-13.
 - Nuevo requerimiento: buscador de días/escenarios análogos muy específicos (p. ej. martes de mayo después de festivo) usable como fuente de forma/nivel/referencia.
 - Todo documentado en `docs/work/ajustes/REQUERIMIENTOS.md` (R1 ASR, R2 automatizar, R3 análogos, backlog priorizado). README apunta a ese archivo.
+
+## Sesión autónoma 2026-11-12/13 (orquestador)
+Plan maestro: `docs/work/ajustes/PLAN_NOCHE.md`. Logs por fase en `docs/work/ajustes/<fase>/LOG.md` (en la rama/worktree de cada fase).
+- [x] Framework global: agregadas las reglas "quién decide la severidad" y "modelo de revisores = sonnet" a `~/.claude/CLAUDE.md` (no estaban en este PC).
+- [x] Entorno: este PC no tenía `.venv` → creado con `py -3.11 -m venv .venv` + `pip install -r requirements.txt pytest`. Python: `.venv/Scripts/python.exe`.
+- [x] Worktrees: `../EPM-wt-asr` (feat/ajustes-asr-comparacion), `../EPM-wt-2a` (feat/ajustes-fase2a), `../EPM-wt-2b` (feat/ajustes-fase2b) desde main 74bc100, con copias de data/raw/{Antioquia,Atlantico}, models, data/features; `../Sphere-wt-mesa` (feat/mesa-ajustes) desde origin/test 57eb4fb.
+- Hallazgo temprano ASR (Sphere `handleASR`): manda `tipo_dia: "laboral"` FIJO para cualquier día; ajuste = pred + (h2−h3) − (pred−h1) = h1 + (h2−h3) hora a hora (redondeado a entero), luego el validador ±15 % del cluster.
+- Decisión tomada sin el usuario: fases en paralelo en worktrees separados (ASR, 2a, 2b, 3) para aprovechar la noche; cada una en su rama y con su propia ronda de revisión; se integran a main en orden de llegada con rebase y suite.
+### Progreso (hecho / en curso / falta)
+- En curso: ola 1 (ASR, 2a, 2b, 3).
+- Línea base suite en este PC: 242 passed, 4 skipped, 1 failed (christmas). Fase 3 lanzada.
+- Ola 1 lanzada (4 coordinadores en background, cada uno con su worktree, docs de fase, revisión propia con revisores sonnet y commit LOCAL; el orquestador verifica, hace push y fast-forward):
+  - Fase 3 → `../Sphere-wt-mesa` (feat/mesa-ajustes), docs en EPM `docs/work/ajustes/fase3/`.
+  - Fase 2a → `../EPM-wt-2a`, docs `docs/work/ajustes/fase2a/`.
+  - Fase 2b → `../EPM-wt-2b`, docs `docs/work/ajustes/fase2b/`.
+  - ASR → `../EPM-wt-asr`, docs `docs/work/ajustes/asr/`.
+  Si la sesión se corta: revisar `git -C ../EPM-wt-<x> log main..HEAD` y el LOG.md de cada fase; si un coordinador quedó esperando a sus hijos, reanudarlo.
+- 2026-11-13 04:41 Los 4 coordinadores se cortaron por límite de uso (5 h); reanudados con SendMessage tras el reinicio.
+- 2026-11-13 07:45 Segundo corte por límite; reanudados ASR, 2b, hijo backtest de 2a (a8f9f127) y coordinador de Fase 3 (foundation terminado). Coordinador 2a: reanudar cuando su hijo termine.
+
+### ESTADO ACTUAL (snapshot 2026-11-13, orquestador) — leer esto primero para retomar
+Regla del usuario: documentar estado antes de cada fase y después de cada paso (agregada a REGLAS_AGENTES.md).
+Ninguna fase commiteada aún; todo el trabajo está sin commitear en cada worktree.
+| Fase | Worktree / rama | Coordinador (agentId) | Estado | Docs de fase |
+|---|---|---|---|---|
+| ASR | `../EPM-wt-asr` / feat/ajustes-asr-comparacion | ac820e2f693544d69 | código + tests hechos (asr.py, comparar_asr.py, router_asr.py, script); falta REPORTE, revisión, commit | `../EPM-wt-asr/docs/work/ajustes/asr/` |
+| 2a | `../EPM-wt-2a` / feat/ajustes-fase2a | a8e631a8352b58974 (espera a su hijo a8f9f127063692673 = backtest+recalibración) | pandas3 + aislamiento + alpha_por_tipo hechos (A_REPORTE); backtest modelo en curso (dry run OK); falta corrida completa, recalibración, revisión, commit | `../EPM-wt-2a/docs/work/ajustes/fase2a/` |
+| 2b | `../EPM-wt-2b` / feat/ajustes-fase2b | a63d0d1fa7ad341bc | analogos.py, endpoint, integración en pasos y backtest en curso (agente B); falta medición, revisión, commit | `../EPM-wt-2b/docs/work/ajustes/fase2b/` |
+| 3 | `../Sphere-wt-mesa` / feat/mesa-ajustes | a3e65c24035ba882f | Foundation hecho y verificado (tipos, servicio+mock, shell, router/menú); falta P1–P4, integración, revisión, commit | `docs/work/ajustes/fase3/` (en este repo) |
+Cómo retomar si el orquestador se corta: para cada fase leer su LOG de fase; si el coordinador está detenido, `SendMessage` a su agentId ("continúa desde tu LOG"); si un coordinador espera a un hijo que ya terminó, reanudar al coordinador. Cuando una fase tenga commit local: verificar suite en su worktree, `git rebase main`, push de la rama y `git push origin <rama>:main` (Sphere: `<rama>:test`).
+Pendiente después de la ola 1: Fase 4 (días especiales, alertas clima/eventos, aprendizaje F09, auto por segmento), rerun de 2b y ASR con base modelo, RESUMEN_NOCHE.md.
+- 2026-11-13 ASR TERMINADA y en main: `0e8de2e` + `c94c5d1` (push de la rama y fast-forward a main; suite 306 passed, 4 skipped, 1 preexistente). WAPE base→mesa→ASR: ingenuo Antioquia 4.05→3.71→5.26; Atlántico 6.36→6.00→8.24; archivo 3.03→2.79→5.42. Diagnóstico: ASR = h1+(h2−h3) ignora la base; ruido de días sueltos; festivos lo disparan; bug de orden desvi2 en el front. Recomendación: reemplazar por la mesa. Reporte: `reports/ajustes/asr_comparacion_20261112.md`.
+  Nota: las ramas 2a/2b deberán rebasear sobre main (c94c5d1) antes de subir.
+- 2026-11-13 Fase 2a: hijo B terminó. Backtest con modelo real sin fuga (reentreno semanal k=1, 21 semanas holdout): WAPE base→final Antioquia 2.44→2.33, Atlántico 5.86→5.46; energía semanal MAPE 1.52→1.37 / 4.57→4.41. Holdout confirma defaults (α 0.25, promedio_n n=4, banda 2.0); alpha_por_tipo no mejora → no se cambia ningún default. R2: forma automática en laborales (ambas UCP) y domingos Atlántico. Coordinador 2a reanudado para revisión + commit.
+
+### ESTADO ACTUAL v2 (2026-11-13, orquestador al ~80 % de uso) — REEMPLAZA a la tabla anterior; leer primero
+main local y origin/main = `c94c5d1` (ASR integrada). LOG.md maestro, PLAN_NOCHE.md y REGLAS_AGENTES.md están SIN commitear en el checkout principal (docs/ está en .gitignore → `git add -f`).
+| Fase | Worktree / rama | Coordinador | Estado | Siguiente paso |
+|---|---|---|---|---|
+| ASR | `../EPM-wt-asr` | ac820e2f693544d69 | **TERMINADA, en main** (0e8de2e, c94c5d1) | — |
+| 2a | `../EPM-wt-2a` / feat/ajustes-fase2a | a8e631a8352b58974 | A+B+C hechos, sin commit; ronda 1 de revisión (9 revisores sonnet) en curso | coordinador consolida hallazgos, corrige, verifica, commit local |
+| 2b | `../EPM-wt-2b` / feat/ajustes-fase2b | a63d0d1fa7ad341bc | A+B+C hechos (backtest_analogos_20261113.md, defaults sin cambio), sin commit; ronda 1 en curso | ídem |
+| 3 | `../Sphere-wt-mesa` / feat/mesa-ajustes | a3e65c24035ba882f | Foundation hecho; P1–P4 (componentes) en curso; sin commit | integrar, build/lint, revisión, commit local |
+Al recibir el commit local de cada fase (lo hace el orquestador o quien lo reemplace):
+1. `cd ../EPM-wt-<f> && git rebase main` (2a y 2b tocan `nivel.py`/`forma.py`: el segundo en llegar tendrá conflictos → resolver conservando ambos cambios, que son aditivos).
+2. Suite en el worktree: `../EPM/.venv/Scripts/python.exe -m pytest tests -q --ignore=tests/test_hourly_disaggregation.py -p no:cacheprovider` (solo falla christmas) + `python -c "import src.api.main"`.
+3. `git push origin <rama>` y `git push origin <rama>:main`; luego en `../EPM`: `git merge --ff-only origin/main`.
+4. Sphere: en `../Sphere-wt-mesa`, `git fetch && git rebase origin/test`, `npx vite build`, `git push origin feat/mesa-ajustes` y `git push origin feat/mesa-ajustes:test`.
+5. Anotar commits aquí.
+Después: re-correr backtest de análogos y comparador ASR con base modelo (scripts de 2a: `scripts/backtest_modelo.py`, `scripts/recalibrar_ajustes.py`); Fase 4 (días especiales — festivos y post-Semana Santa son el segmento con más error: WAPE festivo ~12.6 % —, alertas clima/eventos, aprendizaje F09); `docs/work/ajustes/RESUMEN_NOCHE.md` con tabla antes/después (datos en esta sección y en los REPORTE.md de cada fase) y push a main.
+Resultados ya medidos para el RESUMEN: ASR (ver entrada arriba); 2a modelo real holdout 21 sem: WAPE base→final Antioquia 2.44→2.33, Atlántico 5.86→5.46; energía semanal 1.52→1.37 / 4.57→4.41.
