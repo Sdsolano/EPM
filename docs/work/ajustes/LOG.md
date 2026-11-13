@@ -440,3 +440,9 @@ OpenAPI, preview `../x` → 422, `Foo` → 404, GET sin DSN → 503; checker rea
 - Cambios ajenos del usuario que siguen sin commitear en el árbol, sin tocar: `fastapi_factores/test_*`, `reports/performance/README.md`, `.claude/settings.local.json`, carpeta `env.migracion-pc-epm-usb/`.
 - Framework global (`~/.claude/CLAUDE.md`) actualizado con dos reglas: la severidad la deciden los agentes revisores (el orquestador no sube medios a altos para forzar otra ronda); con Opus, los revisores corren con Sonnet.
 - Para retomar: leer `docs/work/ajustes/README.md` (estado, arranque, datos a copiar, pendientes por fase).
+
+## Retroalimentación del analista y backlog (2026-11-12, post-cierre)
+- Usuario reafirma el objetivo final: reducir mucho el error de las predicciones semanales; la mesa da las herramientas y el paso a paso, y el sistema debe hacer gran parte del trabajo del analista.
+- Analista: el ajuste inteligente por escenario de referencia (ASR, Sphere `handleASR` → `/validate-hourly-adjustments`) no le sirve como quisiera; revisión el viernes 2026-11-13.
+- Nuevo requerimiento: buscador de días/escenarios análogos muy específicos (p. ej. martes de mayo después de festivo) usable como fuente de forma/nivel/referencia.
+- Todo documentado en `docs/work/ajustes/REQUERIMIENTOS.md` (R1 ASR, R2 automatizar, R3 análogos, backlog priorizado). README apunta a ese archivo.

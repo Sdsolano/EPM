@@ -1,7 +1,8 @@
 # Servicio de ajustes por pasos — cómo continuar
 
 Punto de entrada para retomar este trabajo en otro PC o con otro agente. Leer en este orden:
-1. Este archivo (estado y arranque).
+1. Este archivo (estado y arranque) y `REQUERIMIENTOS.md`, con el objetivo final, la
+   retroalimentación del analista (ASR, buscador de análogos) y el backlog priorizado.
 2. `PLAN.md`: diseño, pasos, esquema y endpoints. La sección "Contratos entre módulos" es la
    versión inicial; si algo difiere, manda el código y las secciones "Fix ronda 1/2" de `LOG.md`.
 3. `LOG.md`: decisiones, hallazgos de revisión, lo que se aceptó sin corregir y por qué.
@@ -52,6 +53,9 @@ recalcula los siguientes:
   Escribe en `reports/ajustes/`. Los `.md` están versionados; los `.csv` (~10 MB) no, se regeneran.
 
 ## Pendiente (siguientes fases)
+El orden y el detalle actualizados viven en `REQUERIMIENTOS.md`, que manda sobre esta lista. Lo más
+próximo: la revisión del ASR con el analista el viernes 2026-11-13 y el buscador de días análogos
+(R3), junto con el punto 1.
 1. **Backtest con el modelo real.** `--base modelo` existe, pero hoy falla por dos razones:
    - `src/pipeline/feature_engineering.py:493` usa `fillna(method='ffill')`, que pandas 3 ya no acepta.
    - `run_predict_flow` llama a `full_update_csv`, que va a la red y reescribe `datos.csv`.
