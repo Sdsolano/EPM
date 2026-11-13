@@ -177,7 +177,9 @@ def install_demo(app: FastAPI) -> None:
         logger.warning("[demo] sin DATABASE_URL/AJUSTES_DATABASE_URL: /adjustments responderá 503")
     static_dir = Path(os.getenv(ENV_STATIC) or DEFAULT_STATIC)
     if not os.getenv(ENV_PASSWORD):
-        logger.warning("[demo] DEMO_PASSWORD no definido: el entorno queda SIN autenticación")
+        if not _activo("DEMO_ALLOW_NOAUTH"):
+            raise RuntimeError("DEMO_MODE exige DEMO_PASSWORD (o DEMO_ALLOW_NOAUTH=1 para desarrollo local sin auth)")
+        logger.warning("[demo] DEMO_PASSWORD no definido y DEMO_ALLOW_NOAUTH=1: entorno SIN autenticación")
     else:
         _instalar_auth(app, static_dir)
     if not _activo(ENV_REFRESH):

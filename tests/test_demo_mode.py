@@ -29,8 +29,9 @@ def _basic(clave: str, usuario: str = "x") -> dict:
 @pytest.fixture
 def entorno(monkeypatch):
     for v in ("DEMO_PASSWORD", "DEMO_STATIC_DIR", "DEMO_REFRESH_DATA", "DEMO_SKIP_MIGRATIONS",
-              "DATABASE_URL", "AJUSTES_DATABASE_URL"):
+              "DATABASE_URL", "AJUSTES_DATABASE_URL", "DEMO_ALLOW_NOAUTH"):
         monkeypatch.delenv(v, raising=False)
+    monkeypatch.setenv("DEMO_ALLOW_NOAUTH", "1")
     anterior = router_mod._data_refresher
     yield monkeypatch
     router_mod._data_refresher = anterior
@@ -73,6 +74,12 @@ def test_demo_activo_por_variable(entorno):
     assert demo.demo_activo() is True
     entorno.setenv("DEMO_MODE", "0")
     assert demo.demo_activo() is False
+
+
+def test_sin_password_falla_cerrado(entorno):
+    entorno.delenv("DEMO_ALLOW_NOAUTH")
+    with pytest.raises(RuntimeError):
+        demo.install_demo(_app_base())
 
 
 def test_sin_password_no_hay_auth(entorno):

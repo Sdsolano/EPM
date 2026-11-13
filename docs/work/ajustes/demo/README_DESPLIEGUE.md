@@ -29,9 +29,10 @@ DEMO_PASSWORD=algo docker compose up --build      # http://localhost:8000
    | `DEMO_PASSWORD` | la clave compartida que daras al equipo |
    | `DATABASE_URL` | referencia al plugin: `${{Postgres.DATABASE_URL}}` |
    | `API_KEY` | clave de OpenAI (opcional; sin ella las alertas de eventos IA se omiten en silencio) |
+   | `DEMO_REFRESH_DATA` / `DEMO_SKIP_MIGRATIONS` / `DEMO_ALLOW_NOAUTH` | opcionales; no definir en Railway |
    | `DEMO_STATIC_DIR` | `/app/static_demo` (ya es el ENV por defecto del Dockerfile) |
    `PORT` lo inyecta Railway. No definas `AJUSTES_SERVICE_TOKEN`.
-4. Desde `EPM/` (con `static_demo/` y `demo_snapshot/` ya generados): `railway up` (usa `Dockerfile` y `railway.json`;
+4. Desde `EPM/` (con `static_demo/` y `demo_snapshot/` ya generados): `railway up --no-gitignore` (usa `Dockerfile` y `railway.json`;
    sube el contexto local, incluidas las carpetas ignoradas por git; el `.dockerignore` NO las excluye).
    Si `railway up` respeta `.gitignore` en tu version del CLI y omite esas carpetas, usa `railway up --no-gitignore` o
    construye la imagen local y publicala (`docker build` + registro).
@@ -39,7 +40,7 @@ DEMO_PASSWORD=algo docker compose up --build      # http://localhost:8000
 6. Generar dominio publico del servicio y entrar con cualquier nombre + la `DEMO_PASSWORD`.
 
 ## 4. Notas
-- Acceso: pantalla propia del front; la clave se valida contra `/api/demo/ucps`. Sin `DEMO_PASSWORD` no hay auth (se avisa en logs).
+- Acceso: pantalla propia del front; la clave se valida contra `/api/demo/ucps`. Sin `DEMO_PASSWORD` la app NO arranca (salvo `DEMO_ALLOW_NOAUTH=1`, solo para desarrollo local).
 - Solo lectura sobre datos: la demo no refresca datos ni entrena. Para actualizar datos: re-generar snapshot y `railway up`.
 - El calculo de una semana tarda ~ver REPORTE_D3D4.md; CPU del contenedor puede ser mas lento.
 - Docker NO se probo en la maquina de desarrollo (no instalado): Dockerfile, compose y railway.json revisados a mano; la prueba E2E se hizo con uvicorn + Postgres local (ver REPORTE_D3D4.md).

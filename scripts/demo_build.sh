@@ -7,8 +7,10 @@ cd "$(dirname "$0")/.."
 SPHERE_DIR="${SPHERE_DIR:-../Sphere}"
 PY="${PYTHON:-.venv/bin/python}"
 [ -d "$SPHERE_DIR" ] || { echo "No existe SPHERE_DIR=$SPHERE_DIR"; exit 1; }
-( cd "$SPHERE_DIR" && git checkout test >/dev/null 2>&1 || true; npm ci && npm run build:demo )
+[ -z "$(git -C "$SPHERE_DIR" status --porcelain)" ] || { echo "Sphere tiene cambios sin commitear; abortando"; exit 1; }
+echo "Compilando Sphere en la rama: $(git -C "$SPHERE_DIR" branch --show-current) (debe ser test)"
+( cd "$SPHERE_DIR" && npm ci && npm run build:demo )
 rm -rf static_demo && cp -R "$SPHERE_DIR/dist" static_demo
 rm -rf demo_snapshot && "$PY" scripts/demo_snapshot.py --dest demo_snapshot
 "$PY" scripts/demo_snapshot.py --verify --dest demo_snapshot
-echo "Listo: static_demo/ y demo_snapshot/ generados. Siguiente: docker compose up --build  |  railway up"
+echo "Listo: static_demo/ y demo_snapshot/ generados. Siguiente: docker compose up --build  |  railway up --no-gitignore"
