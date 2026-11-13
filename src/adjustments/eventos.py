@@ -38,6 +38,7 @@ import json
 import logging
 import os
 import re
+import uuid
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
@@ -240,7 +241,9 @@ def _escribir_cache(ruta: Path, ucp: str, inicio: date, fin: date,
         "eventos": eventos,
     }
     ruta.parent.mkdir(parents=True, exist_ok=True)
-    temporal = ruta.with_suffix(".tmp")
+    # Temporal único por proceso+escritura: dos corridas concurrentes de la misma
+    # (UCP, inicio, fin) no comparten el `.tmp` ni pisan el archivo final a medias.
+    temporal = ruta.with_name(f".{ruta.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
     temporal.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     os.replace(temporal, ruta)
 

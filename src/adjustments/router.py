@@ -20,9 +20,10 @@
 `steps[i].params`. `meta.extras.base_ref` = `base_ref` del request (enlace al pronóstico emitido en Sphere).
 `meta.extras.aplicar_automatico` viaja al pipeline (diagnósticos R2 por día) y `meta.extras.eventos` se reusa
 al recalcular (PATCH) sin volver a consultar OpenAI; las corridas viejas sin ese campo simplemente no emiten
-alertas de eventos. `meta.extras.modos_paso` (`{paso: "automatico"|"sugerido"}`) viaja SIEMPRE: R2 es una
-clasificación de revisión para el front, no una instrucción de ejecución (el backend aplica siempre los
-pasos). Ni `festivos` ni `eventos` se exponen en las respuestas.
+alertas de eventos. `meta.extras.modos_paso` (`{paso: "automatico"|"sugerido"}`) y
+`meta.extras.segmentos_paso` (`{tipo_dia: {paso: "no_aplicar"|"automatico"|"sugerido"}}`) viajan SIEMPRE:
+R2 es una clasificación de revisión para el front, no una instrucción de ejecución (el backend aplica siempre
+los pasos). Ni `festivos` ni `eventos` se exponen en las respuestas.
 
 Origen del pronóstico base:
 - Sin `base_curvas`: se refrescan los datos (hook `set_data_refresher`), se calcula el último dato real
@@ -555,6 +556,8 @@ def _run_out(records: List[StepRecord], meta: Dict[str, Any], run_id: Optional[s
     # Contrato con el front: `modos_paso` siempre presente (también en corridas viejas).
     if not isinstance(extras_out.get("modos_paso"), dict):
         extras_out["modos_paso"] = automatico.modos_paso(meta.get("ucp"))
+    if not isinstance(extras_out.get("segmentos_paso"), dict):
+        extras_out["segmentos_paso"] = automatico.segmentos(meta.get("ucp"))
     meta_out["extras"] = extras_out
     return RunOut(
         id=run_id,
@@ -613,6 +616,7 @@ async def _compute(req: RunRequest) -> Tuple[List[StepRecord], Dict[str, Any]]:
     ctx.extras["fuente_festivos"] = fuente_festivos
     ctx.extras["aplicar_automatico"] = req.aplicar_automatico
     ctx.extras["modos_paso"] = automatico.modos_paso(ctx.ucp)
+    ctx.extras["segmentos_paso"] = automatico.segmentos(ctx.ucp)
     try:
         ctx.extras["eventos"] = await asyncio.wait_for(
             eventos.eventos_de_semana(ctx.ucp, ctx.semana_inicio), timeout=EVENTOS_TIMEOUT
@@ -642,6 +646,7 @@ async def _compute(req: RunRequest) -> Tuple[List[StepRecord], Dict[str, Any]]:
             "aplicar_automatico": req.aplicar_automatico,
             # R2 para el front: qué revisiones puede automatizar (no altera curvas)
             "modos_paso": automatico.modos_paso(ctx.ucp),
+            "segmentos_paso": automatico.segmentos(ctx.ucp),
         },
         "creado_por": req.usuario,
     }
@@ -687,9 +692,14 @@ async def _context_from_meta(meta: Dict[str, Any], hist: Optional[pd.DataFrame] 
     ctx.extras["modelo_version"] = meta.get("modelo_version")
     ctx.extras["fuente_festivos"] = fuente
     ctx.extras["aplicar_automatico"] = bool(extras.get("aplicar_automatico"))
-    # Corridas viejas sin `modos_paso`: se recalcula (barato, sin store ni datos).
+    # Corridas viejas sin `modos_paso`/`segmentos_paso`: se recalculan (barato, sin store ni datos).
     modos = extras.get("modos_paso")
     ctx.extras["modos_paso"] = dict(modos) if isinstance(modos, dict) else automatico.modos_paso(ucp)
+    segmentos = extras.get("segmentos_paso")
+    ctx.extras["segmentos_paso"] = (
+        {tipo: dict(pasos) for tipo, pasos in segmentos.items() if isinstance(pasos, dict)}
+        if isinstance(segmentos, dict) else automatico.segmentos(ucp)
+    )
     eventos_extras = extras.get("eventos")
     # Solo las corridas nuevas traen meta.extras.eventos. En las viejas no se
     # vuelve a consultar OpenAI (un PATCH no debe cambiar las alertas de eventos).

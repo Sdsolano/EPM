@@ -27,8 +27,31 @@ def _esperado(cambios: List[Tuple[str, str]]) -> Dict[str, Dict[str, str]]:
     return config
 
 
+def _esperado_segmentos(cambios: List[Tuple[str, str, str]]) -> Dict[str, Dict[str, str]]:
+    """Los 4 tipos × 2 pasos en `sugerido` salvo los pares (tipo, paso, recomendación)."""
+    config = {tipo: {paso: "sugerido" for paso in automatico.PASOS} for tipo in automatico.TIPOS}
+    for tipo, paso, rec in cambios:
+        config[tipo][paso] = rec
+    return config
+
+
 ANTIOQUIA = [("laboral", "forma")]
 ATLANTICO = [("laboral", "forma"), ("domingo", "forma"), ("sabado", "nivel")]
+ANTIOQUIA_SEG = [("laboral", "forma", "automatico"), ("domingo", "nivel", "no_aplicar")]
+ATLANTICO_SEG = [
+    ("laboral", "nivel", "no_aplicar"),
+    ("laboral", "forma", "automatico"),
+    ("sabado", "nivel", "automatico"),
+    ("domingo", "forma", "automatico"),
+]
+
+
+def _recomendaciones(cambios: List[Tuple[str, str, str]]) -> List[Dict[str, str]]:
+    """Lista de recomendaciones explícitas en el orden TIPOS × PASOS."""
+    return [
+        {"tipo_dia": tipo, "paso": paso, "recomendacion": rec}
+        for tipo, paso, rec in cambios
+    ]
 
 
 # ---------------------------------------------------------------- constantes
@@ -37,6 +60,7 @@ def test_tipos_pasos_y_estados():
     assert automatico.TIPOS == ("laboral", "sabado", "domingo", "festivo")
     assert automatico.PASOS == ("nivel", "forma")
     assert automatico.ESTADOS == ("automatico", "sugerido")
+    assert automatico.RECOMENDACIONES == ("automatico", "sugerido", "no_aplicar")
 
 
 def test_config_r2_coincide_con_el_backtest():
@@ -47,6 +71,10 @@ def test_config_r2_coincide_con_el_backtest():
             "domingo": {"forma": "automatico"},
             "sabado": {"nivel": "automatico"},
         },
+    }
+    assert automatico.CONFIG_NO_APLICAR == {
+        "Antioquia": {"domingo": ("nivel",)},
+        "Atlantico": {"laboral": ("nivel",)},
     }
 
 
@@ -59,16 +87,16 @@ def test_metadatos_de_fuente():
 # ---------------------------------------------------------------- configuracion
 
 @pytest.mark.parametrize(
-    "ucp, cambios",
+    "ucp, cambios, seg_cambios",
     [
-        ("Antioquia", ANTIOQUIA),
-        ("Atlantico", ATLANTICO),
-        ("Desconocida", []),
-        ("atlantico", []),  # la UCP se compara exacta
-        (None, []),
+        ("Antioquia", ANTIOQUIA, ANTIOQUIA_SEG),
+        ("Atlantico", ATLANTICO, ATLANTICO_SEG),
+        ("Desconocida", [], []),
+        ("atlantico", [], []),  # la UCP se compara exacta
+        (None, [], []),
     ],
 )
-def test_configuracion_completa_por_tipo(ucp, cambios):
+def test_configuracion_completa_por_tipo(ucp, cambios, seg_cambios):
     cfg = automatico.configuracion(ucp)
     assert cfg["ucp"] == ucp
     assert cfg["fuente"] == automatico.FUENTE
@@ -79,13 +107,19 @@ def test_configuracion_completa_por_tipo(ucp, cambios):
         assert list(cfg["tipos"][tipo]) == list(automatico.PASOS)
         assert set(cfg["tipos"][tipo].values()) <= set(automatico.ESTADOS)
     assert cfg["tipos"] == _esperado(cambios)
+    assert cfg["segmentos"] == _esperado_segmentos(seg_cambios)
+    assert cfg["recomendaciones"] == _recomendaciones(seg_cambios)
 
 
 def test_configuracion_devuelve_estructuras_nuevas():
     primera = automatico.configuracion("Antioquia")
     primera["tipos"]["laboral"]["forma"] = "tocado"
+    primera["segmentos"]["laboral"]["forma"] = "tocado"
+    primera["recomendaciones"][0]["recomendacion"] = "tocado"
     segunda = automatico.configuracion("Antioquia")
     assert segunda["tipos"]["laboral"]["forma"] == "automatico"
+    assert segunda["segmentos"]["laboral"]["forma"] == "automatico"
+    assert segunda["recomendaciones"][0]["recomendacion"] == "automatico"
     assert automatico.CONFIG_R2["Antioquia"]["laboral"]["forma"] == "automatico"
 
 
@@ -137,6 +171,73 @@ def test_estado_valida_claves_antes_de_la_ucp():
         automatico.estado("Desconocida", "laboral", "control")
     with pytest.raises(ValueError, match="tipo_dia inválido"):
         automatico.estado("Desconocida", "martes", "forma")
+
+
+# ---------------------------------------------------------------- recomendacion
+
+@pytest.mark.parametrize(
+    "ucp, tipo_dia, paso, esperado",
+    [
+        # 4 segmentos respaldados por el backtest
+        ("Antioquia", "laboral", "forma", "automatico"),
+        ("Atlantico", "laboral", "forma", "automatico"),
+        ("Atlantico", "domingo", "forma", "automatico"),
+        ("Atlantico", "sabado", "nivel", "automatico"),
+        # "no aplicar" del §8
+        ("Antioquia", "domingo", "nivel", "no_aplicar"),
+        ("Atlantico", "laboral", "nivel", "no_aplicar"),
+        # resto: evidencia insuficiente o mixta
+        ("Antioquia", "laboral", "nivel", "sugerido"),
+        ("Antioquia", "sabado", "forma", "sugerido"),
+        ("Antioquia", "festivo", "nivel", "sugerido"),
+        ("Atlantico", "sabado", "forma", "sugerido"),
+        ("Atlantico", "domingo", "nivel", "sugerido"),
+        ("Atlantico", "festivo", "forma", "sugerido"),
+        # UCP desconocida / no-str
+        ("Desconocida", "domingo", "nivel", "sugerido"),
+        ("atlantico", "laboral", "nivel", "sugerido"),
+        ("", "laboral", "forma", "sugerido"),
+        (None, "domingo", "forma", "sugerido"),
+    ],
+)
+def test_recomendacion_por_segmento(ucp, tipo_dia, paso, esperado):
+    assert automatico.recomendacion(ucp, tipo_dia, paso) == esperado
+
+
+@pytest.mark.parametrize("tipo_dia", ["lunes", "", "Laboral", None, 5])
+def test_recomendacion_tipo_invalido(tipo_dia):
+    with pytest.raises(ValueError, match="tipo_dia inválido"):
+        automatico.recomendacion("Antioquia", tipo_dia, "forma")
+
+
+@pytest.mark.parametrize("paso", ["especiales", "base", "", "Forma", None, 1])
+def test_recomendacion_paso_invalido(paso):
+    with pytest.raises(ValueError, match="paso inválido"):
+        automatico.recomendacion("Antioquia", "laboral", paso)
+
+
+# ---------------------------------------------------------------- segmentos
+
+@pytest.mark.parametrize(
+    "ucp, seg_cambios",
+    [("Antioquia", ANTIOQUIA_SEG), ("Atlantico", ATLANTICO_SEG),
+     ("Desconocida", []), (None, [])],
+)
+def test_segmentos_completos(ucp, seg_cambios):
+    seg = automatico.segmentos(ucp)
+    assert list(seg) == list(automatico.TIPOS)
+    for tipo in automatico.TIPOS:
+        assert list(seg[tipo]) == list(automatico.PASOS)
+        assert set(seg[tipo].values()) <= set(automatico.RECOMENDACIONES)
+    assert seg == _esperado_segmentos(seg_cambios)
+
+
+def test_segmentos_devuelve_estructura_nueva():
+    primera = automatico.segmentos("Antioquia")
+    primera["domingo"]["nivel"] = "tocado"
+    segunda = automatico.segmentos("Antioquia")
+    assert segunda["domingo"]["nivel"] == "no_aplicar"
+    assert automatico.CONFIG_NO_APLICAR["Antioquia"]["domingo"] == ("nivel",)
 
 
 # ---------------------------------------------------------------- pasos_automaticos

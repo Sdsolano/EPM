@@ -8,9 +8,10 @@ from __future__ import annotations
 import json
 from datetime import date, timedelta
 
+import numpy as np
 import pytest
 
-from src.adjustments.aprendizaje import a_dict, resumir
+from src.adjustments.aprendizaje import _energia, a_dict, resumir
 from src.adjustments.store import InMemoryStore
 from src.adjustments.types import StepRecord, StepResult, StepState
 
@@ -51,6 +52,15 @@ def _run(run_id: str, ucp: str, records: list, festivos=None) -> dict:
 # ---------------------------------------------------------------------------
 # resumir
 # ---------------------------------------------------------------------------
+
+
+def test_energia_robusta_a_ndarray_y_vacios():
+    assert _energia(np.array([1.0, 2.0, 3.0])) == pytest.approx(6.0)
+    assert _energia(np.array([])) is None
+    assert _energia(np.array([np.nan])) is None
+    assert _energia([]) is None
+    assert _energia(None) is None
+    assert _energia([1.0, 2.0]) == pytest.approx(3.0)
 
 def test_edicion_nivel_y_forma_medias_signos_y_agrupacion():
     run = _run("r1", "UCP1", [

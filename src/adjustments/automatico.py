@@ -11,15 +11,24 @@ El backtest clasifica cada (ucp, tipo_dia, paso) como `automático`, `sugerido` 
 - `sugerido`: cualquier otro caso con evidencia insuficiente o mixta.
 - `no aplicar`: empeora en calibración y en prueba.
 
-En este módulo solo se exponen los `automático` (R2 = "automatico"); todo lo
-demás queda como `sugerido`. R2 es una **clasificación de revisión para el
-front**: el backend aplica siempre los pasos del pipeline y este módulo no
-cambia ninguna curva ni ningún default. `modos_paso(ucp)` resume, por paso, si
-**los 4 tipos de día** son automáticos (`"automatico"`) o no (`"sugerido"`; un
-tipo sin regla cuenta como sugerido); el router lo publica siempre en
-`meta.extras["modos_paso"]`.
-`configuracion()` y `estado()` son el detalle por tipo de día que consume el
-endpoint `GET /adjustments/automatico` (ver PLAN_4C).
+`estado(ucp, tipo_dia, paso)` se mantiene en **dos estados**
+(`"automatico"` / `"sugerido"`) porque es lo que consume el pipeline.
+`recomendacion(ucp, tipo_dia, paso)` expone la clasificación completa del
+reporte con **tres estados**: añade `"no_aplicar"` para los pares que el §8
+marca "no aplicar" (Antioquia/domingo/nivel y Atlantico/laboral/nivel) y deja
+`"automatico"` en los 4 segmentos respaldados y `"sugerido"` en el resto.
+
+R2 es una **clasificación de revisión para el front**: el backend aplica
+siempre los pasos del pipeline y este módulo no cambia ninguna curva ni ningún
+default. `modos_paso(ucp)` sigue siendo conservador: un paso es `"automatico"`
+solo si **los 4 tipos de día** lo son (`"sugerido"` en cualquier otro caso, un
+tipo sin regla incluido); el router lo publica siempre en
+`meta.extras["modos_paso"]`, y `segmentos(ucp)` viaja en
+`meta.extras["segmentos_paso"]`.
+`configuracion()` es el detalle por tipo de día que consume el endpoint
+`GET /adjustments/automatico` (ver PLAN_4C) e incluye `tipos` (2 estados),
+`segmentos` (4 × 2 con `recomendacion`) y `recomendaciones` (solo los
+segmentos explícitos, es decir, los que no son `sugerido`).
 
 Sin dependencias del paquete (ni de `router`, ni de `pipeline`, ni de los
 pasos): importar este módulo no lee datos, no toca `DEFAULTS` ni provoca
@@ -33,7 +42,9 @@ from typing import Any, Dict, List
 
 AUTOMATICO = "automatico"
 SUGERIDO = "sugerido"
-ESTADOS = (AUTOMATICO, SUGERIDO)
+NO_APLICAR = "no_aplicar"
+ESTADOS = (AUTOMATICO, SUGERIDO)  # contrato del pipeline (2 estados)
+RECOMENDACIONES = (AUTOMATICO, SUGERIDO, NO_APLICAR)  # clasificación R2 para el front
 
 # Tipos de día tal como los devuelve `data.tipo_dia` (el festivo tiene prioridad).
 TIPOS = ("laboral", "sabado", "domingo", "festivo")
@@ -52,6 +63,13 @@ CONFIG_R2: Dict[str, Dict[str, Dict[str, str]]] = {
         "domingo": {"forma": AUTOMATICO},
         "sabado": {"nivel": AUTOMATICO},
     },
+}
+
+# Pares (tipo_dia, paso) que el reporte §8 marca "no aplicar": empeoran el WAPE
+# en calibración y en prueba, así que el backtest recomienda no aplicarlos.
+CONFIG_NO_APLICAR: Dict[str, Dict[str, Any]] = {
+    "Antioquia": {"domingo": ("nivel",)},
+    "Atlantico": {"laboral": ("nivel",)},
 }
 
 # Metadatos que acompañan a `configuracion()` para trazabilidad.
@@ -88,6 +106,11 @@ def _regla(ucp: Any, tipo_dia: str, paso: str) -> str:
     return AUTOMATICO if valor == AUTOMATICO else SUGERIDO
 
 
+def _es_no_aplicar(ucp: Any, tipo_dia: str, paso: str) -> bool:
+    """True si el §8 del backtest marca ese (ucp, tipo_dia, paso) como "no aplicar"."""
+    return paso in CONFIG_NO_APLICAR.get(_clave_ucp(ucp), {}).get(tipo_dia, ())
+
+
 def estado(ucp: Any, tipo_dia: Any, paso: Any) -> str:
     """
     `"automatico"` si el backtest habilita ese (ucp, tipo_dia, paso), si no
@@ -97,6 +120,28 @@ def estado(ucp: Any, tipo_dia: Any, paso: Any) -> str:
     (la validación ocurre antes de mirar la UCP).
     """
     return _regla(ucp, _validar_tipo(tipo_dia), _validar_paso(paso))
+
+
+def recomendacion(ucp: Any, tipo_dia: Any, paso: Any) -> str:
+    """
+    Clasificación R2 completa del segmento:
+    `"no_aplicar"` | `"automatico"` | `"sugerido"`.
+
+    - `"no_aplicar"`: el §8 marca el par como "no aplicar" (empeora en
+      calibración y en prueba).
+    - `"automatico"`: el backtest lo respalda (mismos 4 segmentos que `estado`).
+    - `"sugerido"`: evidencia insuficiente o mixta.
+
+    UCP desconocida (o `None`) → `"sugerido"`. Valida `tipo_dia` y `paso` (mismo
+    ValueError que `estado`, antes de mirar la UCP).
+    """
+    tipo_dia = _validar_tipo(tipo_dia)
+    paso = _validar_paso(paso)
+    if _regla(ucp, tipo_dia, paso) == AUTOMATICO:
+        return AUTOMATICO
+    if _es_no_aplicar(ucp, tipo_dia, paso):
+        return NO_APLICAR
+    return SUGERIDO
 
 
 def pasos_automaticos(ucp: Any, tipo_dia: Any) -> List[str]:
@@ -130,6 +175,32 @@ def modos_paso(ucp: Any) -> Dict[str, str]:
     return modos
 
 
+def segmentos(ucp: Any) -> Dict[str, Dict[str, str]]:
+    """
+    Recomendación R2 por segmento: `{tipo_dia: {paso: recomendacion}}` con los
+    4 tipos de día × 2 pasos, cada uno `"no_aplicar"` | `"automatico"` |
+    `"sugerido"`. UCP desconocida (o `None`) → todo `"sugerido"`. Devuelve
+    estructuras nuevas (mutarlas no altera CONFIG_R2 ni CONFIG_NO_APLICAR).
+
+    Es barato (no lee datos ni base) y no altera curvas: el router lo publica en
+    `meta.extras["segmentos_paso"]` para que el front decida qué segmentos
+    puede automatizar u omitir (esta última es una decisión de producto, no del
+    backend: el pipeline aplica siempre los pasos).
+    """
+    return {tipo: {paso: recomendacion(ucp, tipo, paso) for paso in PASOS} for tipo in TIPOS}
+
+
+def _recomendaciones_explicitas(ucp: Any) -> List[Dict[str, str]]:
+    """Solo los segmentos con recomendación distinta de `sugerido`, en orden de TIPOS/PASOS."""
+    out: List[Dict[str, str]] = []
+    for tipo in TIPOS:
+        for paso in PASOS:
+            rec = recomendacion(ucp, tipo, paso)
+            if rec != SUGERIDO:
+                out.append({"tipo_dia": tipo, "paso": paso, "recomendacion": rec})
+    return out
+
+
 def configuracion(ucp: Any) -> Dict[str, Any]:
     """
     Configuración completa por tipo de día, con ambos pasos y su estado.
@@ -145,10 +216,17 @@ def configuracion(ucp: Any) -> Dict[str, Any]:
                 "laboral": {"nivel": "sugerido" | "automatico", "forma": ...},
                 "sabado": {...}, "domingo": {...}, "festivo": {...},
             },
+            "segmentos": {tipo: {paso: "no_aplicar" | "automatico" | "sugerido"}},
+            "recomendaciones": [
+                {"tipo_dia": <tipo>, "paso": <paso>, "recomendacion": <rec>},
+                ...  # solo los segmentos que no son `sugerido`
+            ],
         }
 
-    UCP desconocida → todos los tipos/pasos en `"sugerido"`. Devuelve
-    estructuras nuevas en cada llamada (mutarlas no altera CONFIG_R2).
+    `tipos` mantiene el contrato de 2 estados del pipeline; `segmentos` y
+    `recomendaciones` exponen la clasificación de 3 estados para el front. UCP
+    desconocida → todo `"sugerido"` (y `recomendaciones` vacío). Devuelve
+    estructuras nuevas en cada llamada (mutarlas no altera las constantes).
     """
     return {
         "ucp": ucp,
@@ -158,4 +236,6 @@ def configuracion(ucp: Any) -> Dict[str, Any]:
         "tipos": {
             tipo: {paso: _regla(ucp, tipo, paso) for paso in PASOS} for tipo in TIPOS
         },
+        "segmentos": segmentos(ucp),
+        "recomendaciones": _recomendaciones_explicitas(ucp),
     }

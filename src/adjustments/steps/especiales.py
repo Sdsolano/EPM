@@ -41,7 +41,8 @@ Aplicación:
   la curva del día toma la forma normalizada de los análogos escalada a E(d);
   con `ancla="actual"` se escala la curva previa (forma intacta). Como el
   backtest no respalda este ajuste, emite una vez el warning
-  `ESPECIALES_SIN_BACKTEST` (no bloquea).
+  `ESPECIALES_SIN_BACKTEST` (no bloquea) **solo si efectivamente ajustó algún
+  día** (`aplicar=true` sin días ajustables no emite el aviso).
 - `analogos`/`filtros_analogos` con `ancla != "analogos"` se ignoran y emiten
   info `PARAMS_ANALOGOS_IGNORADOS` (no rompe clientes).
 - `alpha <= 0`: no se modifica ni la energía ni la forma; el día queda
@@ -348,7 +349,7 @@ def step(
             dias_elecciones.append(f)
 
     alerts: List[Alert] = []
-    if aplicar:
+    if aplicar and ajustados:
         alerts.append(
             Alert(
                 nivel="warning",

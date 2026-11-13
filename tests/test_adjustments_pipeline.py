@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from src.adjustments import automatico
 from src.adjustments.data import curvas_reales, dias_semana, energia_curvas, iso
 from src.adjustments.pipeline import (
     STEP_ORDER,
@@ -91,6 +92,37 @@ def test_run_pipeline_completo():
     assert len(finales) == 11  # brecha (4) + semana (7)
     for f in ["2025-09-04", "2025-09-07"]:
         assert finales[f] == records[0].result.curves[f]
+
+
+def test_diagnostico_automatico_incluye_estado_y_recomendacion():
+    ctx = _ctx()
+    ctx.ucp = "Antioquia"
+    ctx.extras["aplicar_automatico"] = True
+    records = run_pipeline(ctx, ProveedorPlano())
+    por_paso = {r.paso: r for r in records}
+
+    for paso in ("nivel", "forma"):
+        diag = por_paso[paso].result.diagnostics["automatico"]
+        assert set(diag) == set(FECHAS_SEMANA)
+        for fecha in FECHAS_SEMANA:
+            dia = diag[fecha]
+            assert dia["paso"] == paso
+            assert dia["estado"] == automatico.estado("Antioquia", dia["tipo_dia"], paso)
+            assert dia["recomendacion"] == automatico.recomendacion(
+                "Antioquia", dia["tipo_dia"], paso
+            )
+            assert dia["recomendacion"] in automatico.RECOMENDACIONES
+
+    # 2025-09-14 es domingo: Antioquia/domingo/nivel es "no aplicar" en el §8.
+    domingo = "2025-09-14"
+    assert por_paso["nivel"].result.diagnostics["automatico"][domingo]["estado"] == "sugerido"
+    assert por_paso["nivel"].result.diagnostics["automatico"][domingo][
+        "recomendacion"
+    ] == "no_aplicar"
+    # 2025-09-09 es laboral: Antioquia/laboral/forma es automático.
+    assert por_paso["forma"].result.diagnostics["automatico"]["2025-09-09"][
+        "recomendacion"
+    ] == "automatico"
 
 
 def test_records_serializables_ida_y_vuelta():

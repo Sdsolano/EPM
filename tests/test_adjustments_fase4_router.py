@@ -51,6 +51,12 @@ def test_automatico_200_con_ucp_real(client):
     assert set(data["tipos"]) == {"laboral", "sabado", "domingo", "festivo"}
     assert data["tipos"]["laboral"]["forma"] == "automatico"
     assert data["fuente"].endswith("backtest_modelo_20261113.md")
+    # Contrato de 3 estados para el front: `segmentos` + `recomendaciones`.
+    assert data["segmentos"]["domingo"]["nivel"] == "no_aplicar"
+    assert data["segmentos"]["laboral"]["forma"] == "automatico"
+    assert {"tipo_dia": "domingo", "paso": "nivel", "recomendacion": "no_aplicar"} in data[
+        "recomendaciones"
+    ]
 
 
 def test_automatico_404_ucp_inexistente(client):
@@ -165,12 +171,20 @@ def test_aplicar_automatico_diagnostics_sin_cambiar_curvas(client):
         for fecha in _semana_iso():
             assert diag[fecha]["tipo_dia"] in {"laboral", "sabado", "domingo", "festivo"}
             assert diag[fecha]["estado"] in {"automatico", "sugerido"}
+            assert diag[fecha]["recomendacion"] in {"no_aplicar", "automatico", "sugerido"}
             assert diag[fecha]["paso"] == paso  # contrato PLAN_4C
     # Antioquia: forma automática en días laborales (el lunes de esta semana es festivo)
     martes = (SEMANA + timedelta(days=1)).isoformat()
     forma = _steps(auto)["forma"]["diagnostics"]["automatico"]
-    assert forma[martes] == {"tipo_dia": "laboral", "estado": "automatico", "paso": "forma"}
-    assert forma[SEMANA.isoformat()] == {"tipo_dia": "festivo", "estado": "sugerido", "paso": "forma"}
+    assert forma[martes] == {"tipo_dia": "laboral", "estado": "automatico", "paso": "forma",
+                             "recomendacion": "automatico"}
+    assert forma[SEMANA.isoformat()] == {"tipo_dia": "festivo", "estado": "sugerido",
+                                         "paso": "forma", "recomendacion": "sugerido"}
+    # Antioquia/domingo/nivel está marcado "no aplicar" en el §8.
+    domingo = (SEMANA + timedelta(days=6)).isoformat()
+    nivel = _steps(auto)["nivel"]["diagnostics"]["automatico"]
+    assert nivel[domingo] == {"tipo_dia": "domingo", "estado": "sugerido", "paso": "nivel",
+                              "recomendacion": "no_aplicar"}
 
 
 def test_modos_paso_en_meta_siempre(client):
@@ -196,6 +210,35 @@ def test_modos_paso_se_recalcula_en_corrida_vieja(client, store):
     store._runs[creada["id"]]["meta"]["extras"].pop("modos_paso", None)  # corrida previa al contrato
     data = client.get(f"/adjustments/{creada['id']}").json()
     assert data["meta"]["extras"]["modos_paso"] == {"nivel": "sugerido", "forma": "sugerido"}
+
+
+def test_segmentos_paso_en_meta_siempre(client):
+    # R2 de 3 estados para el front: viaja aunque el flag esté apagado.
+    data = client.post("/adjustments/preview", json=BODY).json()
+    seg = data["meta"]["extras"]["segmentos_paso"]
+    assert list(seg) == ["laboral", "sabado", "domingo", "festivo"]
+    assert seg["laboral"]["forma"] == "automatico"
+    assert seg["domingo"]["nivel"] == "no_aplicar"
+    assert seg["sabado"]["nivel"] == "sugerido"
+
+    auto = client.post("/adjustments/preview", json={**BODY, "aplicar_automatico": True}).json()
+    assert auto["meta"]["extras"]["segmentos_paso"] == seg
+
+
+def test_segmentos_paso_se_conserva_en_patch(client):
+    creada = _crear(client)
+    r = client.patch(f"/adjustments/{creada['id']}/steps/forma",
+                     json={"estado": "omitido", "version_esperada": 1})
+    assert r.status_code == 200, r.text
+    assert r.json()["meta"]["extras"]["segmentos_paso"] == creada["meta"]["extras"]["segmentos_paso"]
+
+
+def test_segmentos_paso_se_recalcula_en_corrida_vieja(client, store):
+    creada = _crear(client)
+    store._runs[creada["id"]]["meta"]["extras"].pop("segmentos_paso", None)
+    data = client.get(f"/adjustments/{creada['id']}").json()
+    assert data["meta"]["extras"]["segmentos_paso"]["laboral"]["forma"] == "automatico"
+    assert data["meta"]["extras"]["segmentos_paso"]["domingo"]["nivel"] == "no_aplicar"
 
 
 def test_corrida_vieja_de_5_pasos_se_migra_al_leer_y_en_patch(client, store):

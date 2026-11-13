@@ -10,6 +10,7 @@ import asyncio
 import json
 import os
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -190,6 +191,28 @@ def test_fallo_al_guardar_cache_devuelve_eventos(tmp_path):
 def test_env_cache_dir_vacio_usa_default(monkeypatch):
     monkeypatch.setenv(eventos.ENV_CACHE_DIR, "")
     assert eventos._dir_cache() == eventos.CACHE_DIR_DEFAULT
+
+
+def test_escribir_cache_usa_temporal_unico(tmp_path, monkeypatch):
+    """El temporal incluye pid + uuid para que dos escrituras concurrentes no colisionen."""
+    origen = {}
+    real = os.replace
+
+    def espia(src, dst):
+        origen["src"] = str(src)
+        return real(src, dst)
+
+    monkeypatch.setattr(eventos.os, "replace", espia)
+
+    ruta = tmp_path / "X_2025-09-08_2025-09-14.json"
+    eventos._escribir_cache(ruta, "X", date(2025, 9, 8), date(2025, 9, 14), {"2025-09-08": "e"})
+
+    assert ruta.is_file()
+    nombre = Path(origen["src"]).name
+    assert nombre.endswith(".tmp")
+    assert str(os.getpid()) in nombre
+    assert nombre != ruta.with_suffix(".tmp").name
+    assert list(tmp_path.glob("*.tmp")) == []
 
 
 def test_obtener_eventos_sanea_claves_valores_y_rango(tmp_path):

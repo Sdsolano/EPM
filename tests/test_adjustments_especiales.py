@@ -212,8 +212,10 @@ def test_aplicar_con_analogos_del_analista():
 
 def test_aplicar_emite_warning_sin_backtest_una_vez():
     ctx = _ctx(SEMANA_SANTA, _hist_semana_santa())
-    result = especiales.step(ctx, _prev_semana(ctx), {"aplicar": True, "alpha": 0.25})
+    result = especiales.step(ctx, _prev_semana(ctx), {"aplicar": True, "alpha": 0.25,
+                                                       "ancla": "analogos"})
     avisos = [a for a in result.alerts if a.codigo == "ESPECIALES_SIN_BACKTEST"]
+    assert result.diagnostics["dias_ajustados"] == ["2025-04-13"]
     assert len(avisos) == 1
     assert avisos[0].nivel == "warning"
     assert approval_blockers(
@@ -223,6 +225,14 @@ def test_aplicar_emite_warning_sin_backtest_una_vez():
 def test_no_aplicar_no_emite_warning_sin_backtest():
     ctx = _ctx(SEMANA_SANTA)
     result = especiales.step(ctx, _prev_semana(ctx), {})
+    assert not any(a.codigo == "ESPECIALES_SIN_BACKTEST" for a in result.alerts)
+
+
+def test_aplicar_sin_dias_ajustados_no_emite_warning_sin_backtest():
+    # Semana sin días especiales: `aplicar=true` no ajusta nada y no debe avisar.
+    ctx = _ctx(date(2025, 9, 8))
+    result = especiales.step(ctx, _prev_semana(ctx), {"aplicar": True})
+    assert result.diagnostics["dias_ajustados"] == []
     assert not any(a.codigo == "ESPECIALES_SIN_BACKTEST" for a in result.alerts)
 
 

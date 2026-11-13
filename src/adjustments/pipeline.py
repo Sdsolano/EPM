@@ -331,15 +331,24 @@ def _diagnostico_automatico(ctx: RunContext, paso: str) -> Dict[str, Dict[str, s
     """
     Estado R2 por día de la semana objetivo (solo diagnóstico; no altera curvas).
 
-    Cada día trae `{"tipo_dia", "estado", "paso"}` (contrato PLAN_4C). `paso`
-    permite al front agregar el detalle sin depender del nombre del record.
+    Cada día trae `{"tipo_dia", "estado", "paso", "recomendacion"}` (contrato
+    PLAN_4C). `estado` mantiene los 2 estados del pipeline
+    (`automatico`/`sugerido`); `recomendacion` expone la clasificación de 3
+    estados del reporte (`no_aplicar`/`automatico`/`sugerido`). `paso` permite
+    al front agregar el detalle sin depender del nombre del record.
     """
     festivos = ctx.festivos or []
     por_dia: Dict[str, Dict[str, str]] = {}
     for d in data.dias_semana(ctx.semana_inicio):
         tipo = data.tipo_dia(d, festivos)
-        estado = automatico.estado(ctx.ucp, tipo, paso) if paso in automatico.PASOS else automatico.SUGERIDO
-        por_dia[data.iso(d)] = {"tipo_dia": tipo, "estado": estado, "paso": paso}
+        if paso in automatico.PASOS:
+            estado = automatico.estado(ctx.ucp, tipo, paso)
+            recomendacion = automatico.recomendacion(ctx.ucp, tipo, paso)
+        else:
+            estado = recomendacion = automatico.SUGERIDO
+        por_dia[data.iso(d)] = {
+            "tipo_dia": tipo, "estado": estado, "paso": paso, "recomendacion": recomendacion,
+        }
     return por_dia
 
 

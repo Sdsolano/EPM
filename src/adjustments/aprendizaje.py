@@ -57,7 +57,12 @@ def _energia(valores: Any) -> Optional[float]:
     viejos no siempre tienen 24 periodos ni son no negativas, y este diagnóstico
     debe agregarlas igual mientras sean finitas; `energia_curva` las rechazaría.
     """
-    if not valores:
+    if valores is None:
+        return None
+    try:
+        if len(valores) == 0:  # ndarray: `if not valores` lanzaría con >1 elemento
+            return None
+    except TypeError:
         return None
     try:
         arr = np.asarray(valores, dtype=float)

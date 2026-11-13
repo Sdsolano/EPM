@@ -41,8 +41,9 @@ caracteres y fechas dentro de `[inicio, fin]` exactos. No importa `fastapi`.
 ## Alertas en `control` (solo lectura de `ctx.extras` / `ctx.festivos`)
 - `FESTIVO_EN_SEMANA` (info): festivos de `ctx.festivos` que caen en la semana.
 - `EVENTOS_SEMANA` (info): eventos de `ctx.extras["eventos"]` que caen en
-  lunes..domingo de `ctx.semana_inicio`; los de ±7 días alrededor se descartan
-  del listado y del detalle. Mensaje "Eventos sugeridos por IA, no verificados";
+  lunes..domingo de `ctx.semana_inicio`; el saneo de `eventos.py` ya acepta solo
+  fechas dentro de `[inicio, fin]` exactos (no hay margen ±7), así que no llegan
+  eventos de días vecinos. Mensaje "Eventos sugeridos por IA, no verificados";
   detalle `{eventos, fuente: "openai", verificado: false}`.
 - `CLIMA_OBSERVADO` (info/warning): si `analogos.cargar_clima(ucp)` cubre días
   de la semana. `info` con temp media y lluvia total; `warning` si la lluvia
@@ -77,7 +78,8 @@ caracteres y fechas dentro de `[inicio, fin]` exactos. No importa `fastapi`.
 6. `_context_from_meta` usa `{}` para corridas sin `meta.extras.eventos` (no
    consulta OpenAI en PATCH); las nuevas sí persisten el dict. Test.
 7. `EVENTOS_SEMANA` filtra a lunes..domingo de la semana objetivo en `fechas` y
-   `detalle`. Tests con eventos dentro/fuera.
+   `detalle`; el saneo de `eventos.py` es exacto a `[inicio, fin]` (sin margen
+   ±7). Tests con eventos dentro/fuera.
 8. `analogos.cargar_clima` cachea por `(ruta, mtime, tamaño)` con lock; dos
    llamadas devuelven el mismo objeto sin releer. Tests de cache y de control.
 9. Documentado que el clima observado sigue leyéndose del disco (cacheado) y no

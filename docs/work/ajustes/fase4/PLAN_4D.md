@@ -14,7 +14,8 @@ key `API_KEY` en `.env`). El usuario no entrega ningún dato. Nunca modifican cu
     dir default `Path(os.getenv("AJUSTES_EVENTOS_CACHE_DIR", ROOT/".cache"/"eventos_ajustes"))`
     (`.cache/` ya está en .gitignore). Lee si está fresco; si no, consulta y escribe.
   - cualquier excepción/fallo → devuelve la cache vieja si existe o `{}`, en silencio (log warning).
-  - sanea: claves `YYYY-MM-DD`, valores str ≤ 120 chars, solo fechas del rango pedido ±7 días.
+  - sanea: claves `YYYY-MM-DD`, valores str ≤ 120 chars, solo fechas del rango pedido **exacto**
+    `[inicio, fin]` (sin margen ±7; lo que quede fuera se descarta).
 - `eventos_de_semana(ucp, lunes, ...)` → rango lunes..domingo.
 - No importa `fastapi`; usa `asyncio.to_thread` para la llamada bloqueante.
 
@@ -27,8 +28,9 @@ key `API_KEY` en `.env`). El usuario no entrega ningún dato. Nunca modifican cu
   `ctx.extras["eventos"] = await eventos.eventos_de_semana(...)` con try/except total → `{}`.
   No se ejecuta dentro del threadpool del pipeline.
 - Guardar `eventos` en `meta.extras` (reproducible en PATCH); en `_context_from_meta` reusar
-  `extras["eventos"]` y solo consultar si falta. `_run_out` no expone `eventos` completo en `meta`
-  (filtrarlo igual que `festivos`); los detalles van en las alertas de `control`.
+  `extras["eventos"]` o `{}` si la corrida es vieja, **sin volver a consultar OpenAI**.
+  `_run_out` no expone `eventos` completo en `meta` (filtrarlo igual que `festivos`); los detalles
+  van en las alertas de `control`.
 - No bloquear el request si OpenAI tarda demasiado: timeout/Except → `{}` (degradación silenciosa).
 
 ## `steps/control.py`
