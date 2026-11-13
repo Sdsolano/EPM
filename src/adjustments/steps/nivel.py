@@ -29,6 +29,24 @@ Casos borde (regla elegida):
 - Sin evidencia para un día (o sin semana de referencia): α = 0 ese día y
   alerta "SIN_EVIDENCIA_NIVEL" (warning).
 - Los días de brecha (antes de la semana objetivo) se conservan tal cual.
+
+Ancla por días análogos (Fase 2b, R3; lógica en `steps/_analogos.py`):
+- Param `ancla`: "actual" (default, todo lo anterior intacto) | "analogos".
+  Con "analogos", para cada día d: a = ancla actual (último mismo día de semana
+  <= corte, observada, no festiva; retrocede de a 7 días hasta
+  MAX_SEMANAS_EXTRA_ANCLA), lag = d − a; para cada análogo c del día (mapa del
+  analista `analogos` o búsqueda automática con `filtros_analogos` / filtros
+  automáticos, `_analogos.LIMITE_AUTO_NIVEL` análogos), c_a = c − lag
+  (observada, no festiva, fuera de años excluidos y con la misma relación con
+  festivo que a; si no, retrocede de a 7 días). ratio = Σ score·E(c)/E(c_a) / Σ score; E*(d) = E(a)·ratio. Todo
+  <= fecha_corte (sin fuga). Sin ratios válidos → evidencia actual (semana de
+  referencia) con alerta info `NIVEL_ANCLA_ALTERNA`. Diagnóstico por día:
+  `regla: "analogos"`, `seleccion` y `analogos` [{fecha, ancla, ratio, peso}].
+- Params `analogos` (None | {"YYYY-MM-DD": ["YYYY-MM-DD", ...]}) y
+  `filtros_analogos` (None | filtros del buscador), como en forma. Con
+  `ancla="actual"` se aceptan (validados) pero no cambian nada; con su default
+  no se guardan en los params del record. `evidencias(ctx)` (la que usa el
+  control si nivel se omite) no cambia.
 """
 
 from __future__ import annotations
@@ -50,7 +68,7 @@ from src.adjustments.data import (
     iso,
     tipo_dia,
 )
-from src.adjustments.steps import _params
+from src.adjustments.steps import _analogos, _params
 from src.adjustments.types import Alert, Curves, RunContext, StepResult, validar_curva
 from src.prediction.holiday_homology import find_homologous_holiday_date
 
@@ -63,14 +81,20 @@ TIPOS_ALPHA = (TIPO_LABORAL, TIPO_SABADO, TIPO_DOMINGO, TIPO_FESTIVO)
 
 
 def validar_params(params: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """alpha: número finito en [0, 1]."""
+    """
+    alpha: número finito en [0, 1]. alpha_por_tipo (opcional): ver
+    `_validar_alpha_por_tipo`. ancla / analogos / filtros_analogos: ver
+    `_analogos.separar` (solo se devuelven si difieren de su default).
+    """
     # alpha_por_tipo es opcional y NO va en DEFAULTS: si falta o es None, los
     # params normalizados quedan idénticos a los de antes de existir.
     por_tipo = params.get("alpha_por_tipo") if isinstance(params, dict) else None
     if isinstance(params, dict) and "alpha_por_tipo" in params:
         params = {k: v for k, v in params.items() if k != "alpha_por_tipo"}
+    params, extra_analogos = _analogos.separar("nivel", params, _analogos.DEFAULTS_NIVEL)
     p = _params.completar("nivel", DEFAULTS, params)
     p["alpha"] = _params.numero("nivel", "alpha", p["alpha"], minimo=0.0, maximo=1.0)
+    p.update(extra_analogos)
     if por_tipo is not None:
         p["alpha_por_tipo"] = _validar_alpha_por_tipo(por_tipo)
     return p
@@ -191,6 +215,15 @@ def step(ctx: RunContext, prev: Curves, params: Dict[str, Any]) -> StepResult:
         (ctx.semana_inicio - ctx.semana_ref_inicio).days if ctx.semana_ref_inicio else None
     )
     evidencia_dias = evidencias(ctx)
+    p_analogos = {**_analogos.DEFAULTS_NIVEL, **p}
+    if p_analogos["ancla"] == "analogos":
+        _analogos.validar_mapa_ctx("nivel", p_analogos["analogos"], ctx)
+    ancla_alterna: List[str] = []
+    no_observadas: Dict[str, List[str]] = {}
+    if p_analogos["ancla"] == "analogos":
+        evidencia_dias, ancla_alterna, no_observadas = _analogos.evidencias_analogos(
+            ctx, p_analogos, evidencia_dias, MAX_SEMANAS_EXTRA_ANCLA
+        )
 
     por_dia: Dict[str, Any] = {}
     sin_evidencia: List[str] = []
@@ -232,6 +265,8 @@ def step(ctx: RunContext, prev: Curves, params: Dict[str, Any]) -> StepResult:
         }
         if alpha_por_tipo is not None:
             por_dia[f]["tipo_dia"] = tipo_d
+        if ev and ev.get("regla") == "analogos":
+            por_dia[f].update(seleccion=ev["seleccion"], analogos=ev["analogos"])
 
     alerts: List[Alert] = []
     if sin_evidencia:
@@ -257,6 +292,22 @@ def step(ctx: RunContext, prev: Curves, params: Dict[str, Any]) -> StepResult:
             )
         )
 
+    if ancla_alterna:
+        alerts.append(
+            Alert(
+                nivel="info",
+                codigo="NIVEL_ANCLA_ALTERNA",
+                mensaje=(
+                    "Sin análogos con ancla válida para algunos días; se usa la evidencia "
+                    "de la semana de referencia"
+                ),
+                fechas=ancla_alterna,
+            )
+        )
+    alerta_no_obs = _analogos.alerta_no_observadas(no_observadas)
+    if alerta_no_obs is not None:
+        alerts.append(alerta_no_obs)
+
     diagnostics = {
         "alpha": alpha,
         "semana_ref_inicio": iso(ctx.semana_ref_inicio) if ctx.semana_ref_inicio else None,
@@ -266,4 +317,6 @@ def step(ctx: RunContext, prev: Curves, params: Dict[str, Any]) -> StepResult:
     }
     if alpha_por_tipo is not None:
         diagnostics["alpha_por_tipo"] = dict(alpha_por_tipo)
+    if p_analogos["ancla"] != "actual":
+        diagnostics["ancla"] = p_analogos["ancla"]
     return StepResult(curves=curves, diagnostics=diagnostics, alerts=alerts)

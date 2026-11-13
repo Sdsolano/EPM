@@ -18,6 +18,26 @@ Fuente de forma por día:
     las formas de los últimos n días reales del mismo día de semana, no
     festivos (n default 4).
 β default 1.0 (forma de la fuente pura).
+
+Días análogos (Fase 2b, R3; lógica compartida en `steps/_analogos.py`):
+- `fuente="analogos"`: forma = promedio ponderado por score (sin suavizar
+  picos) de las formas normalizadas de los análogos del día:
+  * día con entrada en `params["analogos"]` → esas fechas (selección
+    "analista"; pesos = score de `analogos.puntuar_fechas`; las no observadas
+    se omiten con alerta info `ANALOGOS_NO_OBSERVADOS`);
+  * día sin entrada → búsqueda automática `analogos.seleccionar` con
+    `filtros_analogos` (o los automáticos `_analogos.FILTROS_AUTO`: mismo día
+    de semana y misma relación/distancia con festivo) + años excluidos de la
+    corrida y `limite = n` (selección "automatica");
+  * festivo SIN entrada en el mapa → perfil homólogo (igual que las otras fuentes);
+  * sin análogos observados → `promedio_n` con alerta `FORMA_FUENTE_ALTERNA`
+    (motivo `sin_analogos`).
+  Diagnóstico por día: `fechas_fuente`, `pesos`, `seleccion`.
+- Params nuevos: `analogos` (None | {"YYYY-MM-DD": ["YYYY-MM-DD", ...]}, default
+  None; claves en la semana objetivo, fechas <= corte y distintas del día, a lo
+  sumo 60 por día) y `filtros_analogos` (None | filtros del buscador, default
+  None). Con otra fuente se aceptan (validados) pero no cambian nada; con su
+  default no se guardan en los params del record.
 """
 
 from __future__ import annotations
@@ -29,22 +49,28 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 from src.adjustments.data import PERIODOS, ancla_mismo_dow, curvas_reales, dias_semana, iso
-from src.adjustments.steps import _params
+from src.adjustments.steps import _analogos, _params
 from src.adjustments.types import Alert, Curves, RunContext, StepResult, validar_curva
 from src.prediction.holiday_homology import average_holiday_hourly_profile
 
-FUENTES = ("reciente", "referencia", "promedio_n")
+FUENTES = ("reciente", "referencia", "promedio_n", "analogos")
 DEFAULTS: Dict[str, Any] = {"fuente": "promedio_n", "n": 4, "beta": 1.0}
 MAX_SEMANAS_BUSQUEDA = 12
 MAX_N = 60  # más de ~1 año de días del mismo día de semana no aporta y alarga la búsqueda
 
 
 def validar_params(params: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """fuente en FUENTES; n entero en [1, MAX_N]; beta número finito en [0, 1]."""
+    """
+    fuente en FUENTES; n entero en [1, MAX_N]; beta número finito en [0, 1].
+    analogos / filtros_analogos: ver `_analogos.separar` (solo se devuelven si
+    difieren de su default None).
+    """
+    params, extra_analogos = _analogos.separar("forma", params, _analogos.DEFAULTS_FORMA)
     p = _params.completar("forma", DEFAULTS, params)
     p["fuente"] = _params.opcion("forma", "fuente", p["fuente"], FUENTES)
     p["n"] = _params.entero("forma", "n", p["n"], minimo=1, maximo=MAX_N)
     p["beta"] = _params.numero("forma", "beta", p["beta"], minimo=0.0, maximo=1.0)
+    p.update(extra_analogos)
     return p
 
 
@@ -122,9 +148,41 @@ def _forma_fuente(
     return forma / forma.sum(), fuente, list(formas), motivo
 
 
+def _forma_analogos(
+    d: date,
+    n: int,
+    ctx: RunContext,
+    curvas: Dict[str, np.ndarray],
+    festivos: set,
+    mapa: Optional[Dict[str, List[str]]],
+    filtros: Dict[str, Any],
+    no_observadas: Dict[str, List[str]],
+) -> Tuple[Optional[np.ndarray], str, List[str], Optional[str], Dict[str, Any]]:
+    """fuente="analogos": (forma, fuente usada, fechas, motivo de fallback, diagnóstico extra)."""
+    f = iso(d)
+    if f in festivos and not (mapa and f in mapa):
+        forma, usada, fechas, motivo = _forma_fuente(d, "promedio_n", n, ctx, curvas, festivos)
+        return forma, usada, fechas, motivo, {"seleccion": "homologo_festivo", "pesos": None}
+    sel = _analogos.seleccion_dia(ctx, d, mapa, filtros)
+    if sel["omitidas"]:
+        no_observadas[f] = sel["omitidas"]
+    forma, fechas, pesos = _analogos.forma_ponderada(sel["items"])
+    if forma is not None:
+        return forma, "analogos", fechas, None, {"seleccion": sel["seleccion"], "pesos": pesos}
+    forma, usada, fechas, _ = _forma_fuente(d, "promedio_n", n, ctx, curvas, festivos)
+    return forma, usada, fechas, "sin_analogos", {"seleccion": sel["seleccion"], "pesos": None}
+
+
 def step(ctx: RunContext, prev: Curves, params: Dict[str, Any]) -> StepResult:
     p = validar_params(params)
     fuente, n, beta = p["fuente"], p["n"], p["beta"]
+    if fuente == "analogos":
+        _analogos.validar_mapa_ctx("forma", p.get("analogos"), ctx)
+    filtros_analogos = (
+        _analogos.filtros_efectivos(p.get("filtros_analogos"), _analogos.anios_excluidos_ctx(ctx), n)
+        if fuente == "analogos" else None
+    )
+    no_observadas: Dict[str, List[str]] = {}
 
     curves: Curves = {f: list(v) for f, v in prev.items()}
     curvas = curvas_reales(ctx.historico)
@@ -140,7 +198,13 @@ def step(ctx: RunContext, prev: Curves, params: Dict[str, Any]) -> StepResult:
         curva_prev = np.asarray(prev[f], dtype=float)
         energia = float(curva_prev.sum())
         forma_prev = _normalizar(curva_prev)
-        forma_src, usada, fechas, motivo = _forma_fuente(d, fuente, n, ctx, curvas, festivos)
+        extra_dia: Dict[str, Any] = {}
+        if fuente == "analogos":
+            forma_src, usada, fechas, motivo, extra_dia = _forma_analogos(
+                d, n, ctx, curvas, festivos, p.get("analogos"), filtros_analogos, no_observadas
+            )
+        else:
+            forma_src, usada, fechas, motivo = _forma_fuente(d, fuente, n, ctx, curvas, festivos)
 
         if forma_src is None or forma_prev is None:
             sin_forma.append(f)
@@ -161,6 +225,7 @@ def step(ctx: RunContext, prev: Curves, params: Dict[str, Any]) -> StepResult:
             "pico_despues": _pico(nueva),
             "diferencia_energia": float(np.sum(nueva) - energia),
         }
+        por_dia[f].update(extra_dia)
 
     alerts: List[Alert] = []
     if fallbacks:
@@ -183,5 +248,11 @@ def step(ctx: RunContext, prev: Curves, params: Dict[str, Any]) -> StepResult:
             )
         )
 
+    alerta_no_obs = _analogos.alerta_no_observadas(no_observadas)
+    if alerta_no_obs is not None:
+        alerts.append(alerta_no_obs)
+
     diagnostics = {"fuente": fuente, "n": n, "beta": beta, "dias": por_dia}
+    if filtros_analogos is not None:
+        diagnostics["filtros_analogos"] = filtros_analogos
     return StepResult(curves=curves, diagnostics=diagnostics, alerts=alerts)

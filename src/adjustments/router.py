@@ -11,6 +11,7 @@
 - `POST  /adjustments/{id}/approve`           aprueba (exige `version_esperada`; 422 si hay bloqueos). La
                                               aprobada anterior de la misma (ucp, semana) pasa a `reemplazada`.
                                               `excepciones_justificadas` debe referirse a warnings vigentes (422).
+- `POST  /adjustments/analogos`               días análogos a una fecha (R3; solo lectura, sin base ni modelo).
 
 `meta.params_iniciales` = `params` del request original (/run); los params vigentes de cada paso están en
 `steps[i].params`. `meta.extras.base_ref` = `base_ref` del request (enlace al pronóstico emitido en Sphere).
@@ -38,6 +39,7 @@ Inyección (main.py / tests):
 - `set_history_loader(fn)`: fn(ucp) -> DataFrame del histórico (default `data.cargar_historico`).
 - `set_festivos_loader(fn)`: fn(ucp, inicio, fin) -> lista ISO (default API de festivos por UCP; si
   falla, librería `holidays` + alerta info `FESTIVOS_FUENTE_ALTERNA`).
+- `set_clima_loader(fn)`: fn(ucp) -> {fecha: clima diario} (default `analogos.cargar_clima`; solo /analogos).
 - `get_store_dep`: dependencia FastAPI; los tests la sobreescriben con un InMemoryStore.
 """
 
@@ -59,7 +61,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field, field_validator
 
-from src.adjustments import data
+from src.adjustments import analogos, data
 from src.adjustments import pipeline as pl
 from src.adjustments.steps import base as base_step
 from src.adjustments.steps._params import FECHA_MAX, FECHA_MIN
@@ -916,3 +918,62 @@ async def approve(run_id: str, body: ApproveRequest, store: Optional[Store] = De
     logger.info("[ajustes] corrida %s aprobada (v%d) por %s", run_id, version, body.usuario)
     saved = await run_in_threadpool(_get_run_or_404, store, run_id)
     return _run_out(saved["records"], saved["meta"], run_id, saved.get("eventos"))
+
+
+# ---------------------------------------------------------------------------
+# Días análogos (R3): POST /adjustments/analogos
+# ---------------------------------------------------------------------------
+
+ClimaLoader = Callable[[str], Dict[str, Dict[str, float]]]
+_clima_loader: ClimaLoader = analogos.cargar_clima
+
+
+def set_clima_loader(fn: Optional[ClimaLoader]) -> ClimaLoader:
+    """None restaura el default (`analogos.cargar_clima`: data/raw/{ucp}/clima_new.csv)."""
+    global _clima_loader
+    anterior, _clima_loader = _clima_loader, (fn or analogos.cargar_clima)
+    return anterior
+
+
+class AnalogosRequest(BaseModel):
+    ucp: str = Field(..., pattern=UCP_PATTERN, description="UCP; debe existir data/raw/{ucp}/datos.csv")
+    fecha: date = Field(..., description="Día objetivo (YYYY-MM-DD)")
+    fecha_corte: Optional[date] = Field(
+        None, description="Solo días <= corte; ausente o posterior al último dato real → último dato real"
+    )
+    filtros: Optional[Dict[str, Any]] = Field(
+        None, description="Filtros de búsqueda (ver src/adjustments/analogos.py y fase2b/PLAN.md §2.1)"
+    )
+
+    @field_validator("fecha", "fecha_corte")
+    @classmethod
+    def _fecha_en_rango(cls, v: Optional[date]) -> Optional[date]:
+        if v is not None and not FECHA_MIN <= v <= FECHA_MAX:
+            raise ValueError(f"fecha fuera de rango ({FECHA_MIN.isoformat()}..{FECHA_MAX.isoformat()})")
+        return v
+
+
+@router.post("/analogos")
+async def post_analogos(req: AnalogosRequest) -> Dict[str, Any]:
+    """Días análogos a `fecha` (solo lectura: no refresca datos, no llama al modelo, no usa base)."""
+    ucp = _validar_ucp(req.ucp)
+    try:
+        analogos.validar_filtros(req.filtros)
+    except ERRORES_ENTRADA as e:
+        raise HTTPException(HTTP_422, detail=str(e))
+    hist = await _load_history(ucp)
+    festivos, _fuente = await _load_festivos(ucp, hist, req.fecha)
+    notas = []
+    try:
+        clima = await run_in_threadpool(_clima_loader, ucp) or {}
+    except Exception as e:  # noqa: BLE001 — archivo de clima ausente/corrupto: se busca sin clima
+        logger.warning("[ajustes] clima de %s no disponible (%s); análogos sin clima", ucp, _corto(e))
+        clima, notas = {}, [f"clima no disponible para {ucp}: búsqueda sin clima"]
+    try:
+        resultado = await run_in_threadpool(
+            analogos.buscar_analogos, hist, festivos, req.fecha, req.fecha_corte, req.filtros, clima
+        )
+    except ERRORES_ENTRADA as e:
+        raise HTTPException(HTTP_422, detail=str(e))
+    resultado["filtros_aplicados"]["notas"] = [*notas, *resultado["filtros_aplicados"].get("notas", [])]
+    return {"ucp": ucp, **resultado}

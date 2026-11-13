@@ -28,6 +28,15 @@ La semana elegida queda en `diagnostics["semana_ref_inicio"]` y los años
 excluidos en `diagnostics["anios_excluidos"]`; el pipeline los copia a
 `ctx.semana_ref_inicio` y `ctx.extras["anios_excluidos"]` (el paso no muta el
 contexto) para que nivel/control los respeten.
+
+Semanas sugeridas por días análogos (Fase 2b, R3; `steps/_analogos.py`):
+`diagnostics["semanas_sugeridas"]` = top 5 `[{"semana_inicio", "score",
+"dias": {fecha_objetivo: fecha_analoga}}]`. Para cada día de la semana objetivo
+se buscan sus 5 mejores análogos automáticos (mismo día de semana y misma
+relación con festivo, sin años excluidos, <= corte); cada semana histórica
+suma, por día objetivo, el score de su mejor análogo dentro de ella. Solo
+semanas con los 7 días <= corte y fuera de años excluidos. Es solo un
+diagnóstico: no cambia la semana elegida.
 """
 
 from __future__ import annotations
@@ -36,7 +45,7 @@ from datetime import date, timedelta
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from src.adjustments.data import ANIOS_EXCLUIDOS_DEFAULT, dias_semana, energia_diaria, iso, lunes_de
-from src.adjustments.steps import _params
+from src.adjustments.steps import _analogos, _params
 from src.adjustments.types import Alert, Curves, RunContext, StepResult, parse_date
 from src.prediction.holiday_homology import find_homologous_holiday_date
 
@@ -241,5 +250,9 @@ def step(ctx: RunContext, prev: Curves, params: Dict[str, Any]) -> StepResult:
         festivos_ref=[iso(d) for d in dias_semana(lunes_ref) if iso(d) in festivos_set],
         dias_con_datos=7 - len(faltantes),
     )
+    try:  # solo diagnóstico: nunca debe tumbar el paso
+        diag["semanas_sugeridas"] = _analogos.semanas_sugeridas(ctx, excluidos)
+    except Exception:  # noqa: BLE001
+        diag["semanas_sugeridas"] = []
     curves = {f: list(v) for f, v in prev.items()}
     return StepResult(curves=curves, diagnostics=diag, alerts=alerts)
