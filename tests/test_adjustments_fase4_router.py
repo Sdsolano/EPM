@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from datetime import timedelta
 
 import pytest
@@ -156,6 +157,7 @@ def test_aplicar_automatico_diagnostics_sin_cambiar_curvas(client):
     auto = client.post("/adjustments/preview", json={**BODY, "aplicar_automatico": True}).json()
     assert auto["final_curves"] == base["final_curves"]
     assert "automatico" not in _steps(base)["nivel"]["diagnostics"]
+    assert "automatico" not in _steps(auto)["especiales"]["diagnostics"]
 
     for paso in ("nivel", "forma"):
         diag = _steps(auto)[paso]["diagnostics"]["automatico"]
@@ -174,7 +176,7 @@ def test_aplicar_automatico_diagnostics_sin_cambiar_curvas(client):
 def test_modos_paso_en_meta_siempre(client):
     # R2 es una clasificación de revisión para el front: viaja aunque el flag esté apagado.
     data = client.post("/adjustments/preview", json=BODY).json()
-    assert data["meta"]["extras"]["modos_paso"] == {"nivel": "sugerido", "forma": "automatico"}
+    assert data["meta"]["extras"]["modos_paso"] == {"nivel": "sugerido", "forma": "sugerido"}
 
     auto = client.post("/adjustments/preview", json={**BODY, "aplicar_automatico": True}).json()
     assert auto["meta"]["extras"]["modos_paso"] == data["meta"]["extras"]["modos_paso"]
@@ -182,7 +184,7 @@ def test_modos_paso_en_meta_siempre(client):
 
 def test_modos_paso_se_conserva_en_patch(client):
     creada = _crear(client)
-    assert creada["meta"]["extras"]["modos_paso"]["forma"] == "automatico"
+    assert creada["meta"]["extras"]["modos_paso"]["forma"] == "sugerido"
     r = client.patch(f"/adjustments/{creada['id']}/steps/forma",
                      json={"estado": "omitido", "version_esperada": 1})
     assert r.status_code == 200, r.text
@@ -193,7 +195,26 @@ def test_modos_paso_se_recalcula_en_corrida_vieja(client, store):
     creada = _crear(client)
     store._runs[creada["id"]]["meta"]["extras"].pop("modos_paso", None)  # corrida previa al contrato
     data = client.get(f"/adjustments/{creada['id']}").json()
-    assert data["meta"]["extras"]["modos_paso"] == {"nivel": "sugerido", "forma": "automatico"}
+    assert data["meta"]["extras"]["modos_paso"] == {"nivel": "sugerido", "forma": "sugerido"}
+
+
+def test_corrida_vieja_de_5_pasos_se_migra_al_leer_y_en_patch(client, store):
+    creada = _crear(client)
+    run = store._runs[creada["id"]]
+    recs = run["records"]
+    run["records"] = [recs[0], recs[1], recs[2], recs[3], replace(recs[5], orden=4)]
+
+    data = client.get(f"/adjustments/{creada['id']}").json()
+    assert [s["paso"] for s in data["steps"]] == ["base", "referencia", "nivel", "forma",
+                                                 "especiales", "control"]
+    assert data["steps"][4]["estado"] == "omitido"
+
+    # PATCH de `especiales` funciona sin otro PATCH previo que migre la corrida.
+    r = client.patch(f"/adjustments/{creada['id']}/steps/especiales",
+                     json={"estado": "omitido", "version_esperada": 1})
+    assert r.status_code == 200, r.text
+    assert [s["paso"] for s in r.json()["steps"]] == ["base", "referencia", "nivel", "forma",
+                                                      "especiales", "control"]
 
 
 def test_aplicar_automatico_se_conserva_en_patch(client):

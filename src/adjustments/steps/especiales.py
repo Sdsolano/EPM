@@ -1,5 +1,5 @@
 """
-Paso 6 — `especiales` (orden 4, entre `forma` y `control`): detecta y (solo si
+Paso 5 — `especiales` (orden 4, entre `forma` y `control`): detecta y (solo si
 se activa) corrige días especiales.
 
 Días especiales detectados en la semana objetivo:
@@ -39,7 +39,11 @@ Aplicación:
   sugerencias por día y emite info `ESPECIALES_SUGERIDOS`.
 - `aplicar=true`: E(d) = (1−α)·E_previa(d) + α·E*(d). Con `ancla="analogos"`
   la curva del día toma la forma normalizada de los análogos escalada a E(d);
-  con `ancla="actual"` se escala la curva previa (forma intacta).
+  con `ancla="actual"` se escala la curva previa (forma intacta). Como el
+  backtest no respalda este ajuste, emite una vez el warning
+  `ESPECIALES_SIN_BACKTEST` (no bloquea).
+- `analogos`/`filtros_analogos` con `ancla != "analogos"` se ignoran y emiten
+  info `PARAMS_ANALOGOS_IGNORADOS` (no rompe clientes).
 - `alpha <= 0`: no se modifica ni la energía ni la forma; el día queda
   `aplicado=false` (α=0 no debe cambiar la curva).
 - Días editados a mano en pasos previos (`fechas_editadas` de los records que
@@ -344,6 +348,37 @@ def step(
             dias_elecciones.append(f)
 
     alerts: List[Alert] = []
+    if aplicar:
+        alerts.append(
+            Alert(
+                nivel="warning",
+                codigo="ESPECIALES_SIN_BACKTEST",
+                mensaje=(
+                    "El paso especiales se aplica sin respaldo del backtest "
+                    "(alpha/ancla no sostenidos); revise el resultado antes de aprobar"
+                ),
+                detalle={"alpha": alpha, "ancla": ancla},
+            )
+        )
+    analogos_ignorados = ancla != "analogos" and (
+        p.get("analogos") is not None or p.get("filtros_analogos") is not None
+    )
+    if analogos_ignorados:
+        alertas_ignoradas = {
+            k: v for k, v in (("analogos", p.get("analogos")),
+                              ("filtros_analogos", p.get("filtros_analogos"))) if v is not None
+        }
+        alerts.append(
+            Alert(
+                nivel="info",
+                codigo="PARAMS_ANALOGOS_IGNORADOS",
+                mensaje=(
+                    "Se recibieron analogos/filtros_analogos pero ancla no es 'analogos'; "
+                    "esos params no se usan"
+                ),
+                detalle=alertas_ignoradas,
+            )
+        )
     if detectados and not aplicar:
         alerts.append(
             Alert(

@@ -12,6 +12,7 @@ import os
 from datetime import date, datetime, timedelta, timezone
 
 import pandas as pd
+import pytest
 
 from src.adjustments import analogos, eventos
 from src.adjustments.data import dias_semana, iso
@@ -118,14 +119,33 @@ def test_obtener_eventos_fallo_devuelve_cache_vieja(tmp_path):
     assert r == {"2025-09-10": "Concierto"}
 
 
-def test_sin_api_key_devuelve_vacio(monkeypatch, tmp_path):
+def test_sin_api_key_no_cachea_y_no_borra_la_previa(monkeypatch, tmp_path):
     monkeypatch.delenv("API_KEY", raising=False)
-    assert eventos.consultar_openai("X", "2025-09-08", "2025-09-14") == {}
+    with pytest.raises(eventos.EventosNoDisponibles):
+        eventos.consultar_openai("X", "2025-09-08", "2025-09-14")
+
+    bueno = _run(eventos.obtener_eventos("X", "2025-09-08", "2025-09-14",
+                                         consultar=lambda *a, **k: {"2025-09-10": "Concierto"},
+                                         cache_dir=tmp_path))
+    assert bueno == {"2025-09-10": "Concierto"}
+    archivo = next(tmp_path.glob("*.json"))
+    antes = json.loads(archivo.read_text(encoding="utf-8"))
+
+    # Sin API_KEY el fallo no debe sobrescribir la cache buena (se fuerza TTL vencido).
+    archivo.write_text(json.dumps({**antes, "generado": "2000-01-01T00:00:00+00:00"}),
+                       encoding="utf-8")
+    r = _run(eventos.obtener_eventos("X", "2025-09-08", "2025-09-14", cache_dir=tmp_path))
+    assert r == {"2025-09-10": "Concierto"}
+    despues = json.loads(archivo.read_text(encoding="utf-8"))
+    assert despues["eventos"] == antes["eventos"]
+    assert despues["generado"] == "2000-01-01T00:00:00+00:00"  # no se reescribió
+
+
+def test_sin_api_key_sin_cache_previa_no_escribe(tmp_path, monkeypatch):
+    monkeypatch.delenv("API_KEY", raising=False)
     assert _run(eventos.obtener_eventos("X", "2025-09-08", "2025-09-14",
                                         cache_dir=tmp_path)) == {}
-    archivos = list(tmp_path.glob("*.json"))
-    assert len(archivos) == 1
-    assert json.loads(archivos[0].read_text(encoding="utf-8"))["eventos"] == {}
+    assert list(tmp_path.glob("*.json")) == []
 
 
 def test_respuesta_vacia_se_cachea_con_ttl_corto(tmp_path):
@@ -349,6 +369,31 @@ def test_cargar_clima_cachea_por_mtime_y_tamano(tmp_path, monkeypatch):
     c3 = analogos.cargar_clima("X", tmp_path)
     assert c3 == c1
     assert len(llamadas) == 2
+
+
+def test_cargar_clima_cache_lru_acotada_sin_clear_global(tmp_path, monkeypatch):
+    for ucp in ("A", "B", "C", "D", "E"):
+        _escribir_clima(tmp_path / ucp / "clima_new.csv", ["2025-09-08"])
+
+    llamadas = []
+    real = analogos.pd.read_csv
+
+    def contar(*args, **kwargs):
+        llamadas.append(args)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(analogos.pd, "read_csv", contar)
+
+    for ucp in ("A", "B", "C", "D", "E"):
+        analogos.cargar_clima(ucp, tmp_path)
+    assert len(llamadas) == 5
+
+    # E (la más reciente) sigue cacheada; A fue la víctima del LRU de 4.
+    assert analogos.cargar_clima("E", tmp_path)
+    assert len(llamadas) == 5
+    assert analogos.cargar_clima("A", tmp_path)
+    assert len(llamadas) == 6
+    assert len(analogos._CLIMA_CACHE) == analogos.MAX_CLIMA_CACHE
 
 
 def test_control_clima_no_se_rompe_con_cache(tmp_path, monkeypatch):

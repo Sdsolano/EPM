@@ -19,25 +19,29 @@ pipeline, más tests de integración. Sin commit ni push. No se tocaron `data/ra
     para el front; el backend aplica siempre los pasos (decisión sin usuario, ver LOG).
   - `_context_from_meta`: restaura el flag (default `False`), `modos_paso` (recalculado si la corrida
     vieja no lo trae) y reusa `extras["eventos"]`; solo consulta si falta (corridas viejas).
-  - `_run_out`: filtra `eventos` de `meta.extras` igual que `festivos`.
-  - Constantes: `HTTP_501`, `EVENTOS_TIMEOUT = 20`.
+  - `_run_out`: filtra `eventos` de `meta.extras` igual que `festivos`; migra los records
+    de corridas viejas de 5 pasos con `pipeline.migrar_records` (idempotente) para que el
+    GET devuelva siempre 6 pasos.
+  - `patch_step`: arma `by_paso` sobre `pipeline.migrar_records(saved["records"])`, así un
+    PATCH de `especiales` sobre una corrida vieja funciona sin un PATCH previo.
+  - Constantes: `HTTP_501`, `EVENTOS_TIMEOUT = 5`.
   - Docstring de cabecera con los endpoints nuevos y el uso de `meta.extras`.
 - `src/adjustments/pipeline.py`
   - Importa `automatico`.
-  - `_ejecutar`: si `estado != omitido`, `paso in ("nivel","forma","especiales")` y
+  - `migrar_records(records)`: público e idempotente (5 pasos → 6; 6 pasos → tal cual).
+  - `_ejecutar`: si `estado != omitido`, `paso in ("nivel","forma")` y
     `ctx.extras.get("aplicar_automatico")`, añade `result.diagnostics["automatico"]` con los 7 días
     (`tipo_dia` vía `data.tipo_dia(..., ctx.festivos)` y `automatico.estado`). No toca curvas.
   - `_diagnostico_automatico`: cada día trae `{"tipo_dia", "estado", "paso"}` (contrato PLAN_4C).
-  - `especiales` no está en `automatico.PASOS` (el contrato de `automatico.estado` lanza `ValueError`
-    para pasos fuera de `("nivel","forma")`), así que para ese paso se registra `"sugerido"` sin
-    invocar `estado`; el resto del comportamiento es el pedido.
+  - `especiales` queda fuera de `_AUTOMATICO_PASOS`: no hay reglas R2 para él, así que no recibe
+    `diagnostics["automatico"]` (solo `nivel`/`forma`).
 - `src/adjustments/automatico.py`: `modos_paso(ucp)` (resumen por paso para el front).
 - `src/adjustments/aprendizaje.py`: `min_casos` default 3; porcentajes ×100; `por_dia_semana` con el
   mismo `min_casos`.
 - `src/adjustments/store.py`: `_limite` acotado a 1..500; `list_runs` de Postgres en 2 queries
   (`corrida` + `corrida_paso ... ANY`) sin N+1 ni `corrida_evento`; InMemory con copia superficial
   para lectura.
-- `tests/test_adjustments_fase4_router.py` (nuevo, 23 tests): reusa las fixtures/fakes de
+- `tests/test_adjustments_fase4_router.py` (nuevo, 24 tests): reusa las fixtures/fakes de
   `tests/test_adjustments_router.py` (`env`, `client`, `client_sin_store`, `store`, `_crear`, `_steps`).
 
 ## Endpoints nuevos (registrados antes de `GET /{run_id}`)
@@ -51,12 +55,13 @@ pipeline, más tests de integración. Sin commit ni push. No se tocaron `data/ra
 
 ## Tests
 
-- `tests/test_adjustments_fase4_router.py`: 23 passed.
+- `tests/test_adjustments_fase4_router.py`: 24 passed.
 - Suite completa:
   `.venv\Scripts\python.exe -m pytest tests -q --ignore=tests/test_hourly_disaggregation.py -p no:cacheprovider`
-  → **625 passed, 5 skipped, 1 failed**. El único fallo es el preexistente
+  → **639 passed, 5 skipped, 1 failed**. El único fallo es el preexistente
   `tests/test_holiday_homology.py::TestHolidayProfileSelection::test_christmas_profile_uses_prior_christmases`
-  (`'Navidad' != 'Christmas Day'`), ajeno a esta integración.
+  (`'Navidad' != 'Christmas Day'`), ajeno a esta integración. `test_hourly_disaggregation.py`
+  no colecta (imports relativos, preexistente).
 - `python -c "import src.api.main"` → OK.
 - Postgres: `AJUSTES_DATABASE_URL=postgresql:///postgres` no está disponible en este entorno
   (`password authentication failed for user "samue"`), así que los 4 tests Postgres no se pudieron
@@ -84,5 +89,8 @@ pipeline, más tests de integración. Sin commit ni push. No se tocaron `data/ra
 - Falla preexistente de `test_holiday_homology` (christmas), no relacionada.
 - `InMemoryStore.list_runs` devuelve copia superficial de los records (sin clon JSON): el consumidor
   (`aprendizaje`) es de solo lectura y no debe mutarlos.
-- `especiales` recibe `diagnostics.automatico` con estado `sugerido` (el backtest R2 solo clasifica
-  `nivel`/`forma`); se documenta aquí por si se prefiere omitir ese paso del diagnóstico.
+- `especiales` no recibe `diagnostics.automatico`: el backtest R2 solo clasifica `nivel`/`forma`.
+- Limitaciones aceptadas (ronda 2): el clima observado no se persiste (se relee cacheado);
+  `aprendizaje` agrega corridas en cualquier estado (`borrador`/`aprobada`/`reemplazada`) sin
+  filtrarlas, y sus ediciones de todos los pasos; R2 solo es clasificación de revisión para el
+  front (no activa pasos).

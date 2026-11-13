@@ -17,7 +17,8 @@ Los params de cada paso se validan SIEMPRE (`<paso>.validar_params`, ValueError
 
 Los pasos se identifican por NOMBRE (`paso`), no por posición: los records
 cargados deben traer exactamente los nombres de `STEP_ORDER` con su orden
-coherente (`orden_de`), si no se lanza ValueError.
+coherente (`orden_de`), si no se lanza ValueError. Las corridas viejas de 5
+pasos se migran con `migrar_records` (idempotente) antes de validarlas.
 
 Al cambiar un paso (`rerun_from`) se recalculan todos los posteriores con
 su estado y params guardados.
@@ -56,7 +57,7 @@ _MODULOS = {
     "control": control,
 }
 _PASOS_QUE_MODIFICAN = ("base", "nivel", "forma", "especiales")  # producen curvas; son también los editables
-_AUTOMATICO_PASOS = ("nivel", "forma", "especiales")  # pasos que anotan el estado R2 si se pide
+_AUTOMATICO_PASOS = ("nivel", "forma")  # pasos con reglas R2; anotan el estado si se pide
 _NOMBRES_5_PASOS = ["base", "referencia", "nivel", "forma", "control"]
 
 
@@ -116,10 +117,23 @@ def _migrar_records_5_pasos(records: List[StepRecord]) -> List[StepRecord]:
     ]
 
 
+def migrar_records(records: List[StepRecord]) -> List[StepRecord]:
+    """
+    Devuelve los records con los 6 pasos de `STEP_ORDER` (idempotente).
+
+    Las corridas viejas de 5 pasos reciben `especiales` omitido (orden 4) y
+    `control` renumerado a 5; las que ya traen 6 pasos se devuelven tal cual.
+    No persiste nada por sí misma: el router la usa al leer (`GET`) y al armar
+    `by_paso` en `PATCH` para que una corrida vieja sea compatible.
+    """
+    if [r.paso for r in records] == _NOMBRES_5_PASOS:
+        return _migrar_records_5_pasos(records)
+    return records
+
+
 def _records_por_paso(records: List[StepRecord]) -> Dict[str, StepRecord]:
     """Indexa por nombre; ValueError si faltan, sobran o se repiten pasos, o el orden no cuadra."""
-    if [r.paso for r in records] == _NOMBRES_5_PASOS:
-        records = _migrar_records_5_pasos(records)
+    records = migrar_records(records)
     nombres = [r.paso for r in records]
     if sorted(nombres) != sorted(STEP_ORDER):
         raise ValueError(

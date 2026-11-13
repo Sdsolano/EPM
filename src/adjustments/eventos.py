@@ -11,16 +11,19 @@ Contrato
 - `consultar_openai(ucp, inicio, fin, *, client=None)`: síncrona; replica el
   prompt y la llamada `client.responses.create(model="gpt-5-mini",
   tools=[{"type": "web_search"}])`; limpia markdown y parsea JSON. Sin
-  `API_KEY` (o sin `openai`) devuelve `{}`. `client` es inyectable para tests.
+  `API_KEY` (o sin `openai`) **lanza** `EventosNoDisponibles`, igual que ante
+  cualquier fallo del cliente: un fallo no equivale a "sin eventos". Un
+  resultado vacío parseado sí es un éxito (`{}`). `client` es inyectable para
+  tests.
 - `obtener_eventos(ucp, inicio, fin, *, consultar=None, cache_dir=None,
   ttl_dias=7, ttl_vacios_dias=1)`: asíncrona; cache en `.cache/eventos_ajustes`
   (o `AJUSTES_EVENTOS_CACHE_DIR`, si está vacío se usa el default) con JSON
   `{ucp, inicio, fin, generado, eventos}`, con clave exacta `(ucp, inicio, fin)`
-  y archivo `{ucp}_{inicio}_{fin}.json`. Una respuesta vacía también se cachea,
-  pero con `ttl_vacios_dias` (corto, reintenta pronto). Cualquier fallo del
-  cliente devuelve la cache vieja si existe o `{}`, sin lanzar; un fallo al
-  guardar la cache no descarta los eventos frescos. La llamada síncrona se
-  ejecuta con `asyncio.to_thread`.
+  y archivo `{ucp}_{inicio}_{fin}.json`. Una respuesta vacía exitosa también se
+  cachea, pero con `ttl_vacios_dias` (corto, reintenta pronto). Cualquier fallo
+  de la consulta devuelve la cache vieja si existe o `{}`, **sin sobrescribirla**
+  ni lanzar; un fallo al guardar la cache no descarta los eventos frescos. La
+  llamada síncrona se ejecuta con `asyncio.to_thread`.
 - `eventos_de_semana(ucp, lunes, ...)`: rango lunes..domingo.
 
 Saneo: claves `YYYY-MM-DD` válidas, valores `str` no vacíos truncados a 120
@@ -55,6 +58,10 @@ _RE_SLUG = re.compile(r"[^A-Za-z0-9._-]+")
 # ---------------------------------------------------------------------------
 # Consulta síncrona a OpenAI
 # ---------------------------------------------------------------------------
+
+class EventosNoDisponibles(RuntimeError):
+    """La consulta de eventos no está configurada o falló (no equivale a `{}`)."""
+
 
 def _prompt(ucp: str, inicio: str, fin: str) -> str:
     return f"""Busca en internet todos los eventos que podrían afectar la demanda de energía eléctrica en {ucp}, Colombia entre {inicio} y {fin}.
@@ -112,8 +119,10 @@ def consultar_openai(
     """
     Consulta OpenAI (web search) y devuelve `{fecha ISO: evento}` crudo.
 
-    Sin `client` exige `API_KEY` en el entorno; si falta (o `openai` no está
-    instalado) devuelve `{}`. Nunca lanza: cualquier error → `{}`.
+    Sin `client` exige `API_KEY` en el entorno; si falta, `openai` no está
+    instalado, el cliente no se puede crear o la consulta falla, lanza
+    `EventosNoDisponibles` para que el llamador distinga un fallo de un
+    resultado vacío. Un resultado vacío parseado sí se devuelve como `{}`.
     """
     inicio_s, fin_s = _iso(inicio), _iso(fin)
     if not inicio_s or not fin_s:
@@ -122,18 +131,15 @@ def consultar_openai(
     if client is None:
         api_key = os.getenv("API_KEY")
         if not api_key:
-            logger.warning("API_KEY no encontrada; se omiten los eventos sugeridos por IA")
-            return {}
+            raise EventosNoDisponibles("API_KEY no encontrada; se omiten los eventos sugeridos por IA")
         try:
             from openai import OpenAI
         except Exception as exc:  # pragma: no cover - depende del entorno
-            logger.warning("openai no disponible; se omiten los eventos: %s", exc)
-            return {}
+            raise EventosNoDisponibles(f"openai no disponible: {exc}") from exc
         try:
-            client = OpenAI(api_key=api_key)
+            client = OpenAI(api_key=api_key, timeout=5, max_retries=0)
         except Exception as exc:
-            logger.warning("No se pudo crear el cliente OpenAI: %s", exc)
-            return {}
+            raise EventosNoDisponibles(f"No se pudo crear el cliente OpenAI: {exc}") from exc
 
     try:
         response = client.responses.create(
@@ -148,7 +154,7 @@ def consultar_openai(
         return dict(datos) if isinstance(datos, dict) else {}
     except Exception as exc:
         logger.warning("Error consultando eventos en OpenAI: %s", exc)
-        return {}
+        raise EventosNoDisponibles(f"Error consultando eventos en OpenAI: {exc}") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -259,8 +265,8 @@ async def obtener_eventos(
     Si la cache está fresca se reutiliza (un resultado vacío usa
     `ttl_vacios_dias`, más corto, para permitir reintentar pronto). Si no, se
     llama `consultar` (default `consultar_openai`) en un hilo. Un fallo de la
-    consulta devuelve la cache vieja o `{}`; un fallo al guardar no descarta los
-    eventos obtenidos. Solo deja warnings en el log.
+    consulta devuelve la cache vieja o `{}` y **no** la sobrescribe; un fallo al
+    guardar no descarta los eventos obtenidos. Solo deja warnings en el log.
     """
     inicio_d, fin_d = _fecha(inicio), _fecha(fin)
     if inicio_d is None or fin_d is None or fin_d < inicio_d:

@@ -21,15 +21,18 @@
 ## API del módulo (`src/adjustments/eventos.py`)
 - `consultar_openai(ucp, inicio, fin, *, client=None) -> dict`: sync; replica el
   prompt y `client.responses.create(model="gpt-5-mini", tools=[{"type":"web_search"}])`,
-  limpia markdown y parsea JSON. Sin `API_KEY`/`openai` (y sin `client`) → `{}`.
+  limpia markdown y parsea JSON. Sin `API_KEY`/`openai` (y sin `client`) lanza
+  `EventosNoDisponibles`, igual que ante cualquier fallo del cliente: un fallo no se
+  confunde con "sin eventos". Un `{}` parseado sí es un éxito.
 - `await obtener_eventos(ucp, inicio, fin, *, consultar=None, cache_dir=None,
   ttl_dias=7, ttl_vacios_dias=1)`: cache JSON
   `{ucp, inicio, fin, generado, eventos}` en `.cache/eventos_ajustes` (o
   `AJUSTES_EVENTOS_CACHE_DIR`; si la variable está vacía se usa el default), con
   archivo `{ucp}_{inicio}_{fin}.json` y clave exacta del rango. TTL 7 días para
   resultados no vacíos y 1 día para `{}` (permite reintentar). Un fallo de la
-  consulta devuelve la cache vieja o `{}`; un fallo al guardar la cache **no**
-  descarta los eventos frescos. La llamada síncrona usa `asyncio.to_thread`.
+  consulta devuelve la cache vieja o `{}` **sin sobrescribir** esa cache; un fallo al
+  guardar la cache **no** descarta los eventos frescos. La llamada síncrona usa
+  `asyncio.to_thread`.
 - `await eventos_de_semana(ucp, lunes, ...)`: rango lunes..domingo.
 
 Saneo: claves `YYYY-MM-DD` válidas, valores `str` no vacíos truncados a 120
@@ -83,6 +86,11 @@ caracteres y fechas dentro de `[inicio, fin]` exactos. No importa `fastapi`.
 ## Pendientes aceptados
 - El clima observado no se persiste en `meta.extras`; se relee (cacheado) al
   recalcular. Aceptado: solo alimenta una alerta informativa.
+- La cache de clima en memoria es un LRU de hasta 4 entradas por
+  `(ruta, mtime_ns, tamaño)`; una UCP que deje de consultarse puede requerir una
+  relectura, pero nunca se vacía la cache de las demás.
+- El cliente OpenAI se crea con `timeout=5, max_retries=0`: un fallo/API_KEY ausente
+  devuelve la cache vieja (o `{}`) y no sobrescribe la buena.
 - `tests/test_hourly_disaggregation.py` no colecta en el entorno actual
   (imports relativos `prediction.hourly`), igual que en `main`; no es de 4D.
 - El test de Navidad de `test_holiday_homology.py` sigue fallando por el nombre

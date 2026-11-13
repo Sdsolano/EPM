@@ -36,8 +36,9 @@ FUENTE, SECCION, CRITERIO, UCP_CON_AUTOMATICO
 - `pasos_automaticos(ucp, tipo_dia) -> list[str]` en el orden de `PASOS`
   (`[]` si no hay). Valida `tipo_dia` (mismo `ValueError`).
 - `modos_paso(ucp) -> dict[str, str]` → `{paso: "automatico" | "sugerido"}`. Un paso
-  es `"automatico"` solo si **todos** los tipos de día con regla en `CONFIG_R2` lo
-  marcan automático; mixto o sin reglas → `"sugerido"`. UCP desconocida → todo
+  es `"automatico"` solo si **los 4 tipos de día** lo marcan automático; cualquier
+  tipo sin regla en `CONFIG_R2` cuenta como `"sugerido"` (p. ej. Atlántico/nivel y
+  Antioquia/forma quedan `sugerido`). UCP desconocida → todo
   `"sugerido"`. Es el resumen que el router publica siempre en
   `meta.extras["modos_paso"]`; el front lo usa para decidir qué revisiones puede
   automatizar. No altera curvas ni params.
@@ -118,3 +119,9 @@ Cobertura de los tests:
   modifica curvas ni `params`.
 - Si en el futuro se recalibra el backtest, actualizar `CONFIG_R2`, `FUENTE` y
   `SECCION` juntos; los tests fijan los valores actuales.
+
+## Limitaciones aceptadas (ronda 2)
+- `modos_paso` exige los 4 tipos: con los datos actuales ninguna UCP queda `automatico` en
+  `nivel`/`forma` (solo hay respaldo parcial por segmento). Es intencional: el front recibe
+  `sugerido` y el detalle por tipo sigue en `configuracion()`.
+- R2 es solo una clasificación de revisión: no activa/desactiva pasos ni altera curvas.

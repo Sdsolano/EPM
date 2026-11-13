@@ -423,19 +423,22 @@ def clima_diario(df_clima: pd.DataFrame) -> Dict[str, Dict[str, float]]:
     }
 
 
-# Cache de módulo del clima: `(ruta, mtime_ns, tamaño) -> clima diario`. Evita
-# releer y reparar el CSV completo en cada `control.step` mientras no cambie el
-# archivo. Ver `cargar_clima`.
-_CLIMA_CACHE: Dict[Tuple[str, int, int], Dict[str, Dict[str, float]]] = {}
+# Cache de módulo del clima: `(ruta, mtime_ns, tamaño) -> clima diario` con a lo
+# sumo `MAX_CLIMA_CACHE` entradas (LRU). Evita releer y reparar el CSV completo
+# en cada `control.step` mientras no cambie el archivo, sin vaciar la cache de
+# otras UCP/paths. Ver `cargar_clima`.
+MAX_CLIMA_CACHE = 4
+_CLIMA_CACHE: "OrderedDict[Tuple[str, int, int], Dict[str, Dict[str, float]]]" = OrderedDict()
 _CLIMA_CACHE_LOCK = threading.Lock()
 
 
 def cargar_clima(ucp: str, data_dir: Optional[Path] = None) -> Dict[str, Dict[str, float]]:
     """Clima diario de `data/raw/{ucp}/clima_new.csv` si existe; si no, {}. Solo lectura.
 
-    Cachea en memoria por `(ruta, mtime, tamaño)`: dos llamadas sin cambios en el
-    archivo devuelven el mismo objeto sin releer ni reparar el CSV. La firma y el
-    retorno no cambian.
+    Cachea en memoria por `(ruta, mtime, tamaño)` con hasta `MAX_CLIMA_CACHE`
+    entradas (LRU): dos llamadas sin cambios en el archivo devuelven el mismo
+    objeto sin releer ni reparar el CSV, y una entrada nueva no descarta las de
+    otras UCP. La firma y el retorno no cambian.
     """
     raiz = Path(data_dir or data.RAW_DATA_DIR).resolve()
     ruta = (raiz / str(ucp) / "clima_new.csv").resolve()
@@ -448,12 +451,15 @@ def cargar_clima(ucp: str, data_dir: Optional[Path] = None) -> Dict[str, Dict[st
     clave = (str(ruta), st.st_mtime_ns, st.st_size)
     with _CLIMA_CACHE_LOCK:
         cacheado = _CLIMA_CACHE.get(clave)
-    if cacheado is not None:
-        return cacheado
+        if cacheado is not None:
+            _CLIMA_CACHE.move_to_end(clave)
+            return cacheado
     datos = clima_diario(pd.read_csv(ruta))
     with _CLIMA_CACHE_LOCK:
-        _CLIMA_CACHE.clear()
         _CLIMA_CACHE[clave] = datos
+        _CLIMA_CACHE.move_to_end(clave)
+        while len(_CLIMA_CACHE) > MAX_CLIMA_CACHE:
+            _CLIMA_CACHE.popitem(last=False)
     return datos
 
 
