@@ -1,0 +1,140 @@
+"""Modo demo (DEMO_MODE=1): entorno interno autocontenido para Railway. Nada de esto actúa sin la variable.
+
+Variables:
+- DEMO_MODE            1/true/yes activa todo lo de este módulo (main.py llama a `install_demo`).
+- DATABASE_URL         Postgres de Railway; se copia a AJUSTES_DATABASE_URL si esta no está definida.
+- AJUSTES_DATABASE_URL (preferente si existe) DSN que usa el módulo de ajustes.
+- DEMO_PASSWORD        contraseña compartida. Si no está definida NO hay auth. Nunca va en el código.
+- DEMO_STATIC_DIR      carpeta del build del front (default `static_demo`); con fallback SPA a index.html.
+- DEMO_REFRESH_DATA    1 para permitir que el módulo refresque datos desde la red (default: solo lectura).
+- DEMO_SKIP_MIGRATIONS 1 para no aplicar migraciones al arrancar.
+- API_KEY              clave de OpenAI (nombre que ya usa el código; alertas de eventos 4D).
+- PORT                 lo lee main.py en el arranque directo (`python -m src.api.main`).
+
+Auth: HTTP Basic (usuario cualquiera, clave = DEMO_PASSWORD). El navegador pregunta una vez y reenvía la
+credencial en todas las peticiones del mismo origen (fetch incluido), sin login propio en el front.
+También se acepta la cabecera `X-Demo-Password` para scripts. /health queda exento (healthcheck).
+Es protección de entorno interno, no un sistema de usuarios.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import hmac
+import logging
+import os
+from pathlib import Path
+from typing import Optional
+
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse, JSONResponse, Response
+
+logger = logging.getLogger(__name__)
+
+ENV_MODE = "DEMO_MODE"
+ENV_PASSWORD = "DEMO_PASSWORD"
+ENV_STATIC = "DEMO_STATIC_DIR"
+ENV_REFRESH = "DEMO_REFRESH_DATA"
+ENV_SKIP_MIG = "DEMO_SKIP_MIGRATIONS"
+DEFAULT_STATIC = "static_demo"
+RUTAS_EXENTAS = {"/health"}
+_VERDADERO = {"1", "true", "yes", "on"}
+
+
+def _activo(nombre: str) -> bool:
+    return os.getenv(nombre, "").strip().lower() in _VERDADERO
+
+
+def demo_activo() -> bool:
+    return _activo(ENV_MODE)
+
+
+def resolver_dsn() -> Optional[str]:
+    """Garantiza AJUSTES_DATABASE_URL (usa DATABASE_URL de Railway si hace falta) y la devuelve."""
+    dsn = os.getenv("AJUSTES_DATABASE_URL") or os.getenv("DATABASE_URL")
+    if dsn and not os.getenv("AJUSTES_DATABASE_URL"):
+        os.environ["AJUSTES_DATABASE_URL"] = dsn
+    return dsn or None
+
+
+def password_valida(request: Request, esperado: str) -> bool:
+    candidatos = []
+    cab = request.headers.get("authorization", "")
+    if cab[:6].lower() == "basic ":
+        try:
+            decodificado = base64.b64decode(cab[6:].strip()).decode("utf-8")
+            candidatos.append(decodificado.partition(":")[2])
+        except Exception:  # noqa: BLE001 — cabecera mal formada = no autenticado
+            pass
+    cab_dir = request.headers.get("x-demo-password")
+    if cab_dir:
+        candidatos.append(cab_dir)
+    e = esperado.encode("utf-8")
+    return any(hmac.compare_digest(c.encode("utf-8"), e) for c in candidatos)
+
+
+def _instalar_auth(app: FastAPI) -> None:
+    @app.middleware("http")
+    async def _auth_demo(request: Request, call_next):
+        esperado = os.getenv(ENV_PASSWORD)  # se lee por petición: nunca queda en código ni en estado
+        if not esperado or request.url.path in RUTAS_EXENTAS or password_valida(request, esperado):
+            return await call_next(request)
+        return JSONResponse({"detail": "Autenticación requerida"}, status_code=401,
+                            headers={"WWW-Authenticate": 'Basic realm="EPM", charset="UTF-8"'})
+
+
+def _instalar_estaticos(app: FastAPI, static_dir: Path) -> None:
+    raiz = static_dir.resolve()
+    index = raiz / "index.html"
+    # "/" pasa a ser la SPA (el JSON informativo de main.py deja de ser la raíz en modo demo)
+    app.router.routes[:] = [r for r in app.router.routes
+                            if not (getattr(r, "path", None) == "/" and "GET" in (getattr(r, "methods", None) or ()))]
+
+    @app.get("/{ruta:path}", include_in_schema=False)
+    async def _spa(ruta: str, request: Request):
+        # Registrada al final: solo recibe lo que ninguna ruta de la API atendió.
+        if ruta:
+            candidato = (raiz / ruta).resolve()
+            if candidato.is_file() and raiz in candidato.parents:
+                return FileResponse(candidato)
+        ultimo = ruta.rsplit("/", 1)[-1]
+        quiere_html = "text/html" in request.headers.get("accept", "")
+        if "." not in ultimo and quiere_html and index.is_file():
+            return FileResponse(index, headers={"Cache-Control": "no-cache"})
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+
+
+def install_demo(app: FastAPI) -> None:
+    """Activa el modo demo sobre `app`. Llamar DESPUÉS de incluir todos los routers."""
+    from src.adjustments.router import set_data_refresher
+
+    dsn = resolver_dsn()
+    if not dsn:
+        logger.warning("[demo] sin DATABASE_URL/AJUSTES_DATABASE_URL: /adjustments responderá 503")
+    if not os.getenv(ENV_PASSWORD):
+        logger.warning("[demo] DEMO_PASSWORD no definido: el entorno queda SIN autenticación")
+    else:
+        _instalar_auth(app)
+    if not _activo(ENV_REFRESH):
+        set_data_refresher(None)  # solo lectura: sin red ni escritura sobre data/raw
+
+    static_dir = Path(os.getenv(ENV_STATIC) or DEFAULT_STATIC)
+    if (static_dir / "index.html").is_file():
+        _instalar_estaticos(app, static_dir)
+    else:
+        logger.warning("[demo] no hay index.html en %s: no se sirve el front", static_dir)
+
+    @app.on_event("startup")
+    async def _migrar() -> None:
+        if not dsn or _activo(ENV_SKIP_MIG):
+            return
+        from src.adjustments.migrations import aplicar_migraciones
+
+        try:
+            await asyncio.get_running_loop().run_in_executor(None, aplicar_migraciones, dsn)
+        except Exception:  # noqa: BLE001 — el servicio arranca igual; /adjustments fallará con detalle
+            logger.exception("[demo] fallaron las migraciones de ajustes")
+
+    logger.info("[demo] modo demo activo (auth=%s, front=%s)", bool(os.getenv(ENV_PASSWORD)),
+                (static_dir / "index.html").is_file())

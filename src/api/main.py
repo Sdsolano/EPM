@@ -4094,6 +4094,11 @@ set_model_checker(_adjustments_model_checker)
 app.include_router(adjustments_router)
 app.include_router(adjustments_asr_router)  # POST /adjustments/comparar-asr (diagnóstico del ASR)
 
+# Entorno demo (Railway): solo si DEMO_MODE=1; sin la variable no cambia nada. Ver src/api/demo.py.
+from src.api.demo import demo_activo, install_demo  # noqa: E402
+if demo_activo():
+    install_demo(app)
+
 
 # ============================================================================
 # INICIALIZACIÓN
@@ -4118,4 +4123,4 @@ async def shutdown_event():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8000")))
