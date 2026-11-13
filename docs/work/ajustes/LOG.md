@@ -555,3 +555,4 @@ La ronda 3 dejÃ³ un ALTO de diseÃ±o en 4C (R2 no distinguÃ­a "no aplicar")
   `reports/ajustes/curvas_modelo_k1_*.csv`.
 - Para retomar: leer `RESUMEN_NOCHE.md` y `README.md`, luego `fase4/LOG.md`. Comandos de verificación
   en `RESUMEN_NOCHE.md` §5.
+- 2026-11-13 Fase 4 CERRADA e integrada en main (8f86f03, febb595, ce4b6fb). Suite en main: 678 passed, 5 skipped, 4 failed preexistentes (christmas + 3 async sin pytest-asyncio); import API OK. Resumen final en `docs/work/ajustes/RESUMEN_NOCHE.md`.

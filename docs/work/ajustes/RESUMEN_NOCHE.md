@@ -117,3 +117,8 @@ ajustes en `test_adjustments_{pipeline,analogos_pasos,router}.py`.
 Paso 0: `scripts/{backtest_adjustments,backtest_analogos,comparar_asr}.py`,
 `tests/test_backtest_analogos_modelo_k1.py`, reportes `*_modelo.md`.
 Docs: `docs/work/ajustes/fase4/` (planes, reportes, LOG), este resumen y `LOG.md` maestro.
+
+## Verificación final en main (2026-11-13, tras cerrar Fase 4)
+- `pytest tests -q --ignore=tests/test_hourly_disaggregation.py -p no:cacheprovider`: 678 passed, 5 skipped, 4 failed.
+- Los 4 fallos son preexistentes y de entorno: `test_christmas_profile_uses_prior_christmases` (locale) y 3 tests async (`test_future_events`, 2 de `test_openai_analysis`) por falta de pytest-asyncio. Ninguno viene de la Fase 4.
+- `python -c "import src.api.main"`: OK.
