@@ -39,6 +39,7 @@ from fastapi.concurrency import run_in_threadpool
 from src.adjustments.router import (
     router as adjustments_router, set_base_provider, set_data_refresher, set_model_checker,
 )
+from src.adjustments.router_asr import router as adjustments_asr_router
 
 # Cliente del portal IDO de XM (DNA) — instancia única a nivel de módulo
 # para reutilizar el token de Azure B2C (dura 1h) entre requests.
@@ -4146,6 +4147,7 @@ set_base_provider(_adjustments_base_provider)
 set_data_refresher(full_update_csv)  # refresca datos antes de calcular la fecha de corte
 set_model_checker(_adjustments_model_checker)
 app.include_router(adjustments_router)
+app.include_router(adjustments_asr_router)  # POST /adjustments/comparar-asr (diagnóstico del ASR)
 
 
 # ============================================================================
