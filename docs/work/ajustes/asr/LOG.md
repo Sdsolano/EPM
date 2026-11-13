@@ -8,7 +8,7 @@
   - ronda 2 completa: sin críticos ni altos; fixes de medios y bajos aplicados;
   - verificación estándar: 306 passed, 4 skipped, 1 failed preexistente (christmas). `import src.api.main`
     OK. Hash de data/raw, models y data/features sin cambios.
-- **En curso:** commit local en `feat/ajustes-asr-comparacion`.
+- **Hecho también:** commit local 0e8de2e en `feat/ajustes-asr-comparacion` (sin push).
 - **Falta:** nada de esta fase después del commit. No hay push (lo hace el coordinador).
 - **Archivos sin commitear** (hasta el commit):
   - código: src/adjustments/{asr,comparar_asr,router_asr}.py, src/api/main.py (2 líneas),
@@ -30,7 +30,7 @@
 - [x] Ronda 1 de revisión: 9 agentes sonnet, 7 relanzados tras corte por límite de uso.
 - [x] Ronda 2 completa (por el ALTO de la ronda 1): 9 agentes sonnet, sin críticos ni altos.
 - [x] Verificación estándar.
-- [ ] Commit local.
+- [x] Commit local 0e8de2e.
 
 ## Decisiones tomadas sin el usuario
 - Implementé yo el núcleo (asr.py), porque la fidelidad al front depende de detalles leídos en este
