@@ -28,3 +28,9 @@ python-dateutil>=2.8.2
 pytz>=2023.3
 requests>=2.31.0  # Para llamadas HTTP a la API
 holidays>=0.40  # Calendario oficial CO para festivos homólogos (Modelo Base)
+
+# Persistencia de ajustes por pasos (src/adjustments, AJUSTES_DATABASE_URL)
+psycopg2-binary>=2.9
+
+# Tests: fastapi.testclient (tests/test_adjustments_router.py)
+httpx>=0.25

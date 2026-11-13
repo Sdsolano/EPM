@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List, Dict, Any, Tuple
 from pathlib import Path
 from datetime import datetime, timedelta
+import asyncio
 import logging
 import re
 import traceback
@@ -35,6 +36,9 @@ from src.prediction.hourly.adjustment_validator import HourlyAdjustmentValidator
 from src.pipeline.update_csv import full_update_csv, full_update_csv_diario
 from src.prediction.xm_ido_client import XMIdoClient, formatear_eventos_dna
 from fastapi.concurrency import run_in_threadpool
+from src.adjustments.router import (
+    router as adjustments_router, set_base_provider, set_data_refresher, set_model_checker,
+)
 
 # Cliente del portal IDO de XM (DNA) — instancia única a nivel de módulo
 # para reutilizar el token de Azure B2C (dura 1h) entre requests.
@@ -4113,6 +4117,35 @@ async def root():
             "GET /models": "Lista de modelos disponibles"
         }
     }
+
+
+# ============================================================================
+# AJUSTES POR PASOS (/adjustments) — ver src/adjustments/router.py
+# ============================================================================
+
+async def _adjustments_base_provider(ucp: str, end_date, n_days: int):
+    """Pronóstico raw para el pipeline de ajustes: {fecha: [P1..P24]} + modelo_version.
+
+    El router siempre pasa end_date = último dato real (tras refrescar datos). run_predict_flow
+    hace trabajo CPU/IO bloqueante dentro de la corrutina: se ejecuta en un hilo con su propio
+    event loop para no bloquear /predict ni /health.
+    """
+    request = PredictRequest(ucp=ucp, end_date=end_date.strftime('%Y-%m-%d'), n_days=n_days)
+    response = await run_in_threadpool(lambda: asyncio.run(run_predict_flow(request)))
+    curves = {p.fecha: [float(getattr(p, f'P{i}')) for i in range(1, 25)] for p in response.predictions}
+    return curves, {"modelo_version": response.metadata.get("modelo_usado")}
+
+
+def _adjustments_model_checker(ucp: str) -> bool:
+    """True si la UCP tiene modelo horario y desagregador entrenados: el pipeline de ajustes no entrena
+    dentro del request (run_predict_flow entrenaría en línea); sin modelo el router responde 409 → /retrain."""
+    return check_model_exists(ucp)[0] and check_hourly_disaggregation_trained(ucp)
+
+
+set_base_provider(_adjustments_base_provider)
+set_data_refresher(full_update_csv)  # refresca datos antes de calcular la fecha de corte
+set_model_checker(_adjustments_model_checker)
+app.include_router(adjustments_router)
 
 
 # ============================================================================
