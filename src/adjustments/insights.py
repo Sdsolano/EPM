@@ -36,6 +36,7 @@ import numpy as np
 import pandas as pd
 
 from src.adjustments import data
+from src.adjustments.correccion import DEFAULTS_BANDA
 from src.adjustments.types import Alert, StepRecord, parse_date, validar_curva
 
 logger = logging.getLogger(__name__)
@@ -55,6 +56,17 @@ MAX_ANTIGUEDAD_DIAS = 140      # la evidencia de sesgo no puede terminar más de
 MIN_N_BANDA = 5
 MIN_FESTIVOS_BANDA = 10
 NIVEL_CONFIANZA_BANDA = 0.8
+# Factor de calibración de la banda (misma constante que B2, `correccion.DEFAULTS_BANDA["escala"]`). Los cuantiles p10/p90
+# del error relativo se multiplican por este factor: sin él la banda subcubre (backtest sin fuga de 21 semanas: cobertura
+# 71-76 % frente a 80 % nominal); con 1.2 (elegido en calibración) cubre 79-91 %. p50 no se escala.
+ESCALA_BANDA = float(DEFAULTS_BANDA["escala"])
+COBERTURA_MEDIDA = {
+    "nominal": 0.8,
+    "antioquia_prueba": 0.913,
+    "atlantico_prueba": 0.819,
+    "nota": "Medida en backtest sin fuga de 21 semanas con escala 1.2 (Antioquia: calibración 79.1 %, prueba 91.3 %; "
+            "Atlántico: calibración 83.5 %, prueba 81.9 %). Sin escala la cobertura era 71-76 %.",
+}
 SEMANAS_CONFIANZA = 8
 TENDENCIA_UMBRAL_PP = 0.3
 PASOS_PARCHE = ("forma", "especiales")  # pasos editables donde un día editado se respeta hasta el final
@@ -320,7 +332,7 @@ def nivel_confianza(wape_pct: Optional[float]) -> str:
 def tablas_banda(d: Datos, fecha_inicio: Optional[str] = None, fecha_fin: Optional[str] = None,
                  ) -> Dict[str, Dict[str, Any]]:
     """
-    {tipo_dia: {"n_dias", "p10","p50","p90" (arrays de 24 en fracción, o None), "nota"?}} con cuantiles del
+    {tipo_dia: {"n_dias", "p10","p50","p90" (arrays de 24 en fracción, o None), "nota"?}} con cuantiles (p10/p90 × ESCALA_BANDA) del
     error relativo real/pronóstico − 1. Festivo con < 10 casos usa la banda de domingo (con nota).
     """
     por_tipo: Dict[str, List[np.ndarray]] = {t: [] for t in TIPOS_DIA}
@@ -332,6 +344,9 @@ def tablas_banda(d: Datos, fecha_inicio: Optional[str] = None, fecha_fin: Option
         if n >= MIN_N_BANDA:
             E = np.vstack(errs)
             p10, p50, p90 = (np.percentile(E, q, axis=0) for q in (10, 50, 90))
+            # Calibración: ensancha los extremos (sobre 0, como B2); nunca cruza la mediana.
+            p10 = np.minimum(p10 * ESCALA_BANDA, p50)
+            p90 = np.maximum(p90 * ESCALA_BANDA, p50)
             out[t] = {"n_dias": n, "p10": p10, "p50": p50, "p90": p90}
         else:
             out[t] = {"n_dias": n, "p10": None, "p50": None, "p90": None}
@@ -357,6 +372,7 @@ def banda_json(tablas: Dict[str, Dict[str, Any]], d: Datos, tipo: Optional[str] 
         por_tipo[t] = item
     semanas = {d.semana_de[f] for f in _pares(d) if f in d.semana_de}
     return {"nivel_confianza": NIVEL_CONFIANZA_BANDA, "metodo": "cuantiles_empiricos_error_relativo",
+            "escala_calibracion": ESCALA_BANDA, "cobertura_medida": dict(COBERTURA_MEDIDA),
             "n_semanas_historial": len(semanas), "por_tipo_dia": por_tipo}
 
 

@@ -281,6 +281,8 @@ def test_banda_por_ucp(api, emitidos):
     j = r.json()
     assert j["ucp"] == UCP and j["nivel_confianza"] == 0.8 and j["metodo"] == "cuantiles_empiricos_error_relativo"
     assert j["n_semanas_historial"] == optionally(j) and "dias" not in j
+    assert j["escala_calibracion"] == 1.2 and j["cobertura_medida"]["nominal"] == 0.8
+    assert j["cobertura_medida"]["antioquia_prueba"] == 0.913 and j["cobertura_medida"]["atlantico_prueba"] == 0.819
     assert set(j["por_tipo_dia"]) == {"laboral", "sabado", "domingo", "festivo"}
     sab = j["por_tipo_dia"]["sabado"]
     assert sab["n_dias"] > 20 and len(sab["p10_pct"]) == 24

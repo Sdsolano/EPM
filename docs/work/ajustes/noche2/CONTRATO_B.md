@@ -165,3 +165,14 @@ Series continuas de la semana (168 puntos = 7 días × 24 h, lunes 00:00 → dom
     - Evidencia de sesgo: n ≥ 6 (últimas 8 ocurrencias del día de semana no festivo, 20 festivos), |sesgo| ≥ 0.5 %, mismo signo en
       ≥ 65 % de los días, mejora del error medida sin el día evaluado, y que la última muestra no tenga > 20 semanas de antigüedad.
     - Festivos: en endpoints por `ucp` calendario oficial (sin red); por `run_id` los festivos guardados en la corrida.
+- v1.2 (2026-11-14, B3; compatible hacia atrás, solo agrega campos y ensancha la banda): la banda (endpoint 4 `banda` y
+  `series.banda_inferior/superior`, ambos sobre las mismas tablas de `insights.tablas_banda`) usa la **banda calibrada**: los cuantiles
+  p10 y p90 del error relativo se multiplican por `ESCALA_BANDA = 1.2` (misma constante que B2, `correccion.DEFAULTS_BANDA["escala"]`;
+  p50 no se escala y p10/p90 nunca cruzan la mediana). Motivo: sin escala la banda de 80 % subcubría (cobertura 71-76 % en backtest sin
+  fuga). `por_tipo_dia.*.p10_pct/p90_pct` ya vienen escalados. El JSON de banda agrega:
+    - `escala_calibracion`: `1.2`.
+    - `cobertura_medida`: `{"nominal": 0.8, "antioquia_prueba": 0.913, "atlantico_prueba": 0.819, "nota": "..."}`. Valores **medidos en
+      backtest sin fuga de 21 semanas** (no una garantía): Antioquia calibración 79.1 % / prueba 91.3 %, Atlántico calibración 83.5 % /
+      prueba 81.9 %; ancho medio ≈ 9-10 % (Antioquia) y 18-21 % (Atlántico). El front puede mostrarlo como "cubre ~8 de cada 10 días
+      (medido en backtest)".
+  `resumen` no usa la banda (la `confianza` sale del WAPE reciente), no cambia.

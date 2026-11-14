@@ -155,6 +155,36 @@ def test_aplicar_banda_envuelve_la_curva():
     assert I.aplicar_banda([1.0] * 5, "laboral", t) is None  # curva inválida
 
 
+def test_banda_calibrada_escala_los_cuantiles(monkeypatch):
+    d = _datos()
+    monkeypatch.setattr(I, "ESCALA_BANDA", 1.0)
+    t1 = I.tablas_banda(d)
+    monkeypatch.setattr(I, "ESCALA_BANDA", 1.2)
+    t2 = I.tablas_banda(d)
+    for tipo in ("laboral", "sabado"):
+        a, b = t1[tipo], t2[tipo]
+        assert np.all(b["p10"] <= a["p10"] + 1e-12) and np.all(b["p90"] >= a["p90"] - 1e-12)
+        assert np.all(b["p10"] <= b["p50"]) and np.all(b["p50"] <= b["p90"])
+        assert np.allclose(b["p50"], a["p50"])
+        ancho1, ancho2 = a["p90"] - a["p10"], b["p90"] - b["p10"]
+        assert np.all(ancho2 >= ancho1 - 1e-12) and ancho2.sum() > ancho1.sum()
+    # los p10/p90 del laboral cambian exactamente por el factor cuando no cruzan la mediana
+    lab1, lab2 = t1["laboral"], t2["laboral"]
+    assert np.allclose(lab2["p90"], np.maximum(lab1["p90"] * 1.2, lab1["p50"]))
+    assert np.allclose(lab2["p10"], np.minimum(lab1["p10"] * 1.2, lab1["p50"]))
+
+
+def test_banda_json_incluye_escala_y_cobertura_medida():
+    d = _datos()
+    j = I.banda_json(I.tablas_banda(d), d)
+    assert j["escala_calibracion"] == 1.2 == I.ESCALA_BANDA
+    cob = j["cobertura_medida"]
+    assert cob["nominal"] == 0.8 and cob["antioquia_prueba"] == 0.913 and cob["atlantico_prueba"] == 0.819
+    assert "21 semanas" in cob["nota"]
+    jv = I.banda_json(I.tablas_banda(I.Datos()), I.Datos())  # sin datos: los campos siguen presentes
+    assert jv["escala_calibracion"] == 1.2 and jv["cobertura_medida"]["nominal"] == 0.8
+
+
 # ---------------------------------------------------------------------------
 # sesgo y recomendaciones
 # ---------------------------------------------------------------------------
@@ -322,6 +352,10 @@ def test_series_168_puntos():
     assert all(v is None for v in s["series"]["real"]) and s["series"]["referencia"] is None
     assert all(v is not None for v in s["series"]["ajustado"])
     assert all(i <= u for i, u in zip(s["series"]["banda_inferior"], s["series"]["banda_superior"]))
+    # coherente con la banda calibrada de banda_corrida (misma tabla, mismas curvas finales)
+    bc = I.banda_corrida(_corrida(semana), I.tablas_banda(d))
+    assert s["series"]["banda_inferior"] == [v for f in s["fechas"] for v in bc[f]["inferior"]]
+    assert s["series"]["banda_superior"] == [v for f in s["fechas"] for v in bc[f]["superior"]]
     assert s["etiquetas_eje"][0] == {"i": 0, "texto": f"lun {semana.day}"} and len(s["etiquetas_eje"]) == 7
     assert len(s["energia_diaria"]["ajustado"]) == 7 and s["energia_diaria"]["real"] == [None] * 7
     assert [x["tipo_dia"] for x in s["dias"]][5] == "sabado"
