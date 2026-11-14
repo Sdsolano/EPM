@@ -559,3 +559,4 @@ La ronda 3 dejÃ³ un ALTO de diseÃ±o en 4C (R2 no distinguÃ­a "no aplicar")
 
 - 2026-11-14 Demo (D0-D4) terminada y DESPLEGADA en Railway (proyecto epm-demo-ajustes). Estado, redespliegue y pendientes: `docs/work/ajustes/demo/ESTADO_DESPLIEGUE.md`. Commits: EPM e24428b, 322ec58, 2cd04c1; Sphere test 8a6302c.
 - 2026-11-14 SESIÓN NOCTURNA 2: plan en docs/work/ajustes/noche2/PLAN.md (UX wow + curvas, mejora de pronósticos medida, redeploy). Agente de despliegue previo ya desplegó demo en Railway (ver demo/ESTADO_DESPLIEGUE.md).
+- 2026-11-14 Lanzadas pistas: B backend/modelo = a61691ed16a309744 (worktree ../EPM-wt-n2, feat/noche2-backend); A front = ae796b7c8dabb0731 (../Sphere-wt-n2, feat/noche2-front). Sin push hasta integrar. Cierre (orquestador): rebase, suite, merge main/test, demo_build, redeploy Railway, RESUMEN noche2.
