@@ -1,0 +1,178 @@
+src/components/alertas/DetalleAlertaDrawer.tsx: error TS6133: 'Divider' is declared but its value is never read.
+src/layouts/MainLayout.tsx: error TS2322: Type 'string | number | undefined' is not assignable to type 'string | undefined'.
+src/providers/factores/index.ts: error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'.
+src/providers/factores/index.ts: error TS2724: '"../../types/factores"' has no exported member named 'GuardarReportePayload'. Did you mean 'GuardarReportePayloadDNA'?
+src/views/pages/alertas/Mapa_variaciones.tsx: error TS2339: Property 'atipicas' does not exist on type 'never'.
+src/views/pages/alertas/Mapa_variaciones.tsx: error TS2339: Property 'fecha' does not exist on type 'never'.
+src/views/pages/demanda/DemandaPronostico.tsx: error TS2345: Argument of type '(prev: UserModelItem[]) => (UserModelItem | { id: number; model_name: string; start_date: string; end_date: string; })[]' is not assignable to parameter of type 'SetStateAction<UserModelItem[]>'.
+src/views/pages/dna/Dna.tsx: error TS2339: Property 'circuitos' does not exist on type 'APISuccessResponseCurvasTipicasCircuitos'.
+src/views/pages/dna/Dna.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/dna/Dna.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/dna/Dna.tsx: error TS2353: Object literal may only specify known properties, and 'hidden' does not exist in type 'Partial<ChartsLegendProps | ContinuousColorLegendProps | PiecewiseColorLegendProps> & ChartsLegendPosition'.
+src/views/pages/dna/Dna.tsx: error TS2741: Property 'mercadoSel' is missing in type '{ id: number; subArea: string; fechaHoraInicio: string; fechaHoraFin: string; dnaTotal: string; }' but required in type 'EntradaIDO'.
+src/views/pages/dna/Dna.tsx: error TS6133: 'barColor' is declared but its value is never read.
+src/views/pages/dna/Dna.tsx: error TS6133: 'detalleExpandidos' is declared but its value is never read.
+src/views/pages/dna/Dna.tsx: error TS6133: 'identificarMercadoPorRPM' is declared but its value is never read.
+src/views/pages/dna/Dna.tsx: error TS6133: 'toggleDetalleGrafico' is declared but its value is never read.
+src/views/pages/dna/Dna.tsx: error TS6196: 'FactDnaData' is declared but never used.
+src/views/pages/dna/Dna.tsx: error TS7006: Parameter 'curvasMap' implicitly has an 'any' type.
+src/views/pages/dna/Dna.tsx: error TS7006: Parameter 'dMapRaw' implicitly has an 'any' type.
+src/views/pages/dna/Dna.tsx: error TS7006: Parameter 'festivosISO' implicitly has an 'any' type.
+src/views/pages/dna/Dna.tsx: error TS7006: Parameter 'i' implicitly has an 'any' type.
+src/views/pages/dna/Dna.tsx: error TS7006: Parameter 'inc' implicitly has an 'any' type.
+src/views/pages/dna/Dna.tsx: error TS7006: Parameter 'incs' implicitly has an 'any' type.
+src/views/pages/dna/Dna.tsx: error TS7006: Parameter 'mercado' implicitly has an 'any' type.
+src/views/pages/factores_distribucion/Factores_distribucion.tsx: error TS1261: Already included file name 'C:/Users/samue/OneDrive/Documentos/GitHub/Sphere-wt-n2/src/views/pages/factores_distribucion/components/Modalcomparadorfactores.tsx' differs from file name 'C:/Users/samue/OneDrive/Documentos/GitHub/Sphere-wt-n2/src/views/pages/factores_distribucion/components/ModalComparadorFactores.tsx' only in casing.
+src/views/pages/factores_distribucion/Factores_distribucion.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/factores_distribucion/Factores_distribucion.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/factores_distribucion/Factores_distribucion.tsx: error TS2339: Property 'fp_actual_barra' does not exist on type 'ResultadoAjusteFpGenerador'.
+src/views/pages/factores_distribucion/Factores_distribucion.tsx: error TS2339: Property 'p_barra_actual' does not exist on type 'ResultadoAjusteFpGenerador'.
+src/views/pages/factores_distribucion/Factores_distribucion.tsx: error TS2339: Property 'p_gen_actual' does not exist on type 'ResultadoAjusteFpGenerador'.
+src/views/pages/factores_distribucion/Factores_distribucion.tsx: error TS2339: Property 'q_barra_actual' does not exist on type 'ResultadoAjusteFpGenerador'.
+src/views/pages/factores_distribucion/Factores_distribucion.tsx: error TS6133: 'curvasTipicasCalculo' is declared but its value is never read.
+src/views/pages/factores_distribucion/Factores_distribucion.tsx: error TS6133: 'factorComplementarioNuevo' is declared but its value is never read.
+src/views/pages/factores_distribucion/Factores_distribucion.tsx: error TS6133: 'festivosActuales' is declared but its value is never read.
+src/views/pages/factores_distribucion/Factores_distribucion.tsx: error TS6133: 'listadoFestivos' is declared but its value is never read.
+src/views/pages/factores_distribucion/Factores_distribucion.tsx: error TS6133: 'variaciones' is declared but its value is never read.
+src/views/pages/factores_distribucion/components/Modalcomparadorfactores.tsx: error TS2322: Type '(v: number, name: string) => [string, "MAPE Vigente" | "MAPE Referencia"]' is not assignable to type 'Formatter<number, string>'.
+src/views/pages/factores_distribucion/components/Modalcomparadorfactores.tsx: error TS2322: Type 'BarraItem[]' is not assignable to type 'BarraInfo[]'.
+src/views/pages/factores_distribucion/components/Modalcomparadorfactores.tsx: error TS2322: Type 'import("C:/Users/samue/OneDrive/Documentos/GitHub/Sphere-wt-n2/src/types/factores").AgrupacionItem[]' is not assignable to type 'AgrupacionItem[]'.
+src/views/pages/factores_distribucion/components/Modalcomparadorfactores.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/factores_distribucion/helpers/generarPromediosFactores.ts: error TS2694: Namespace '"C:/Users/samue/OneDrive/Documentos/GitHub/Sphere-wt-n2/node_modules/xlsx/types/index"' has no exported member 'CellStyle'.
+src/views/pages/factores_distribucion/helpers/generarPromediosFactores.ts: error TS2694: Namespace '"C:/Users/samue/OneDrive/Documentos/GitHub/Sphere-wt-n2/node_modules/xlsx/types/index"' has no exported member 'CellStyle'.
+src/views/pages/factores_distribucion/helpers/generarPromediosFactores.ts: error TS2694: Namespace '"C:/Users/samue/OneDrive/Documentos/GitHub/Sphere-wt-n2/node_modules/xlsx/types/index"' has no exported member 'CellStyle'.
+src/views/pages/factores_distribucion/helpers/generarPromediosFactores.ts: error TS2694: Namespace '"C:/Users/samue/OneDrive/Documentos/GitHub/Sphere-wt-n2/node_modules/xlsx/types/index"' has no exported member 'CellStyle'.
+src/views/pages/factores_distribucion/helpers/generarPromediosFactores.ts: error TS2694: Namespace '"C:/Users/samue/OneDrive/Documentos/GitHub/Sphere-wt-n2/node_modules/xlsx/types/index"' has no exported member 'CellStyle'.
+src/views/pages/factores_distribucion/helpers/generarPromediosFactores.ts: error TS2694: Namespace '"C:/Users/samue/OneDrive/Documentos/GitHub/Sphere-wt-n2/node_modules/xlsx/types/index"' has no exported member 'CellStyle'.
+src/views/pages/factores_distribucion/helpers/generarPromediosFactores.ts: error TS2694: Namespace '"C:/Users/samue/OneDrive/Documentos/GitHub/Sphere-wt-n2/node_modules/xlsx/types/index"' has no exported member 'CellStyle'.
+src/views/pages/factores_distribucion/helpers/generarPromediosFactores.ts: error TS2694: Namespace '"C:/Users/samue/OneDrive/Documentos/GitHub/Sphere-wt-n2/node_modules/xlsx/types/index"' has no exported member 'CellStyle'.
+src/views/pages/factores_distribucion/helpers/generarPromediosFactores.ts: error TS2694: Namespace '"C:/Users/samue/OneDrive/Documentos/GitHub/Sphere-wt-n2/node_modules/xlsx/types/index"' has no exported member 'CellStyle'.
+src/views/pages/factores_distribucion/helpers/generarPromediosFactores.ts: error TS2694: Namespace '"C:/Users/samue/OneDrive/Documentos/GitHub/Sphere-wt-n2/node_modules/xlsx/types/index"' has no exported member 'CellStyle'.
+src/views/pages/factores_distribucion/helpers/generarPromediosFactores.ts: error TS2694: Namespace '"C:/Users/samue/OneDrive/Documentos/GitHub/Sphere-wt-n2/node_modules/xlsx/types/index"' has no exported member 'CellStyle'.
+src/views/pages/factores_distribucion/helpers/generarPromediosFactores.ts: error TS2694: Namespace '"C:/Users/samue/OneDrive/Documentos/GitHub/Sphere-wt-n2/node_modules/xlsx/types/index"' has no exported member 'CellStyle'.
+src/views/pages/factores_distribucion/helpers/generarReporteFactores.ts: error TS2694: Namespace '"C:/Users/samue/OneDrive/Documentos/GitHub/Sphere-wt-n2/node_modules/xlsx/types/index"' has no exported member 'Border'.
+src/views/pages/factores_distribucion/helpers/generarReporteFactores.ts: error TS2694: Namespace '"C:/Users/samue/OneDrive/Documentos/GitHub/Sphere-wt-n2/node_modules/xlsx/types/index"' has no exported member 'BorderStyle'.
+src/views/pages/factores_distribucion/helpers/generarReporteFactores.ts: error TS2694: Namespace '"C:/Users/samue/OneDrive/Documentos/GitHub/Sphere-wt-n2/node_modules/xlsx/types/index"' has no exported member 'CellStyle'.
+src/views/pages/factores_distribucion/helpers/generarReporteFactores.ts: error TS2694: Namespace '"C:/Users/samue/OneDrive/Documentos/GitHub/Sphere-wt-n2/node_modules/xlsx/types/index"' has no exported member 'CellStyle'.
+src/views/pages/factores_distribucion/helpers/generarReporteFactores.ts: error TS2694: Namespace '"C:/Users/samue/OneDrive/Documentos/GitHub/Sphere-wt-n2/node_modules/xlsx/types/index"' has no exported member 'CellStyle'.
+src/views/pages/factores_distribucion/helpers/generarReporteFactores.ts: error TS2694: Namespace '"C:/Users/samue/OneDrive/Documentos/GitHub/Sphere-wt-n2/node_modules/xlsx/types/index"' has no exported member 'CellStyle'.
+src/views/pages/factores_distribucion/helpers/generarReporteFactores.ts: error TS2694: Namespace '"C:/Users/samue/OneDrive/Documentos/GitHub/Sphere-wt-n2/node_modules/xlsx/types/index"' has no exported member 'CellStyle'.
+src/views/pages/factores_distribucion/helpers/generarReporteFactores.ts: error TS2694: Namespace '"C:/Users/samue/OneDrive/Documentos/GitHub/Sphere-wt-n2/node_modules/xlsx/types/index"' has no exported member 'CellStyle'.
+src/views/pages/factores_distribucion/helpers/generarReporteFactores.ts: error TS2694: Namespace '"C:/Users/samue/OneDrive/Documentos/GitHub/Sphere-wt-n2/node_modules/xlsx/types/index"' has no exported member 'CellStyle'.
+src/views/pages/factores_distribucion/helpers/generarReporteFactores.ts: error TS2694: Namespace '"C:/Users/samue/OneDrive/Documentos/GitHub/Sphere-wt-n2/node_modules/xlsx/types/index"' has no exported member 'CellStyle'.
+src/views/pages/factores_distribucion/helpers/generarReporteFactores.ts: error TS2694: Namespace '"C:/Users/samue/OneDrive/Documentos/GitHub/Sphere-wt-n2/node_modules/xlsx/types/index"' has no exported member 'CellStyle'.
+src/views/pages/indicator_board/Indicator_board.tsx: error TS18047: 's' is possibly 'null'.
+src/views/pages/indicator_board/Indicator_board.tsx: error TS18047: 's' is possibly 'null'.
+src/views/pages/indicator_board/Indicator_board.tsx: error TS18048: 'res.data' is possibly 'undefined'.
+src/views/pages/indicator_board/Indicator_board.tsx: error TS18048: 'resPronosticos.data' is possibly 'undefined'.
+src/views/pages/indicator_board/Indicator_board.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/indicator_board/Indicator_board.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/indicator_board/Indicator_board.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/indicator_board/Indicator_board.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/indicator_board/Indicator_board.tsx: error TS6133: 'formatValue' is declared but its value is never read.
+src/views/pages/indicator_board/Indicator_board.tsx: error TS6133: 'ucp' is declared but its value is never read.
+src/views/pages/indicator_board/Indicator_board.tsx: error TS7006: Parameter 'p' implicitly has an 'any' type.
+src/views/pages/indicator_board/Indicator_board.tsx: error TS7015: Element implicitly has an 'any' type because index expression is not of type 'number'.
+src/views/pages/indicator_board/Indicator_board.tsx: error TS7015: Element implicitly has an 'any' type because index expression is not of type 'number'.
+src/views/pages/indicator_board/Indicator_board.tsx: error TS7015: Element implicitly has an 'any' type because index expression is not of type 'number'.
+src/views/pages/indicator_factores/Indicator_factores.tsx: error TS2322: Type '(value: number) => [string, "MAPE"]' is not assignable to type 'Formatter<number, "MAPE">'.
+src/views/pages/indicator_factores/Indicator_factores.tsx: error TS2322: Type '(value: number) => [string, "MAPE"]' is not assignable to type 'Formatter<number, "MAPE">'.
+src/views/pages/indicator_factores/Indicator_factores.tsx: error TS2322: Type '(value: number, name: string) => [string, string]' is not assignable to type 'Formatter<number, string>'.
+src/views/pages/indicator_factores/Indicator_factores.tsx: error TS2322: Type 'AgrupacionItem[]' is not assignable to type 'Agrupacion[]'.
+src/views/pages/indicator_factores/Indicator_factores.tsx: error TS2339: Property 'activePayload' does not exist on type 'MouseHandlerDataParam'.
+src/views/pages/indicator_factores/Indicator_factores.tsx: error TS2339: Property 'activePayload' does not exist on type 'MouseHandlerDataParam'.
+src/views/pages/indicator_factores/Indicator_factores.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/indicator_factores/Indicator_factores.tsx: error TS2741: Property 'estado' is missing in type 'BarraItem' but required in type 'Barra'.
+src/views/pages/indicator_factores/Indicator_factores.tsx: error TS2741: Property 'estado' is missing in type 'BarraItem' but required in type 'Barra'.
+src/views/pages/indicator_factores/Indicator_factores.tsx: error TS6133: 'fechaCreacion' is declared but its value is never read.
+src/views/pages/indicator_factores/Indicator_factores.tsx: error TS6133: 'todasLasBarras' is declared but its value is never read.
+src/views/pages/indicator_factores/Indicator_factores.tsx: error TS6133: 'todasLasBarras' is declared but its value is never read.
+src/views/pages/login/index.tsx: error TS2322: Type 'MercadoPublico | null' is not assignable to type 'MercadoPublico | undefined'.
+src/views/pages/loginS/index.tsx: error TS2304: Cannot find name 'setOpenModalRecuperar'.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS18048: 'playRes.data' is possibly 'undefined'.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS18048: 'res.data' is possibly 'undefined'.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS2322: Type '(number | null)[]' is not assignable to type 'number[]'.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS2322: Type '(number | null)[]' is not assignable to type 'number[]'.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS2322: Type '(value: number) => [string, "MAPE"]' is not assignable to type 'Formatter<number, "MAPE">'.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS2322: Type 'string | undefined' is not assignable to type 'string'.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponseGetEvents<GetEventsResponse>'.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponseGetEvents<GetEventsResponse>'.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS2339: Property 'message' does not exist on type '{}'.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS2339: Property 'variablesClimaticas' does not exist on type 'PeriodosItem'.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS2345: Argument of type 'any[]' is not assignable to parameter of type 'SetStateAction<never[]>'.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS2769: No overload matches this call.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS6133: 'buildUltimoHistPronPorDia' is declared but its value is never read.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS6133: 'mapaReferenciaMape' is declared but its value is never read.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS6133: 'v' is declared but its value is never read.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS6133: 'v' is declared but its value is never read.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS7006: Parameter 'adjustment' implicitly has an 'any' type.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS7006: Parameter 'e' implicitly has an 'any' type.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS7006: Parameter 'e' implicitly has an 'any' type.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS7006: Parameter 'hourIdx' implicitly has an 'any' type.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS7006: Parameter 'hourIdx' implicitly has an 'any' type.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS7006: Parameter 'n' implicitly has an 'any' type.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS7006: Parameter 'n' implicitly has an 'any' type.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS7006: Parameter 'p' implicitly has an 'any' type.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS7006: Parameter 'p' implicitly has an 'any' type.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS7006: Parameter 'r' implicitly has an 'any' type.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS7006: Parameter 'r' implicitly has an 'any' type.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS7006: Parameter 'value' implicitly has an 'any' type.
+src/views/pages/pronosticos/Pronosticos.tsx: error TS7053: Element implicitly has an 'any' type because expression of type '"soleado" | "nublado" | "lluvioso" | "otro"' can't be used to index type '{ total: number; soleado: number; nublado: number; lluvioso: number; festivos: number; despuesFestivo: number; ordinario: number; }'.
+src/views/pages/pronosticos/components/ModalTipoPronostico.tsx: error TS6133: 'intelligentChanges' is declared but its value is never read.
+src/views/pages/pronosticos/components/ModalTipoPronostico.tsx: error TS6192: All imports in import declaration are unused.
+src/views/pages/pronosticos/components/TablaVariablesClimaticas.tsx: error TS18048: 'fecha' is possibly 'undefined'.
+src/views/pages/pronosticos/components/TablaVariablesClimaticas.tsx: error TS18048: 'fecha' is possibly 'undefined'.
+src/views/pages/pronosticos/components/TablaVariablesClimaticas.tsx: error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'string'.
+src/views/pages/pronosticos/components/TablaVariablesClimaticas.tsx: error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'string'.
+src/views/pages/pronosticos/components/TablaVariablesClimaticas.tsx: error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'string'.
+src/views/pages/pronosticos/components/TablaVariablesClimaticas.tsx: error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'string'.
+src/views/pages/settings/components/mc/Mc.tsx: error TS2322: Type 'number' is not assignable to type 'string'.
+src/views/pages/settings/components/mc/Mc.tsx: error TS2322: Type 'string' is not assignable to type 'number'.
+src/views/pages/settings/components/mc/Mc.tsx: error TS2322: Type 'string' is not assignable to type 'number'.
+src/views/pages/settings/components/resumenClimatico/ResumenClimatico.tsx: error TS6133: 'dayjs' is declared but its value is never read.
+src/views/pages/settings/components/source/Source.tsx: error TS18048: 'res.data' is possibly 'undefined'.
+src/views/pages/settings/components/source/Source.tsx: error TS2322: Type 'number' is not assignable to type 'string'.
+src/views/pages/update_data/Update_data.tsx: error TS18048: 'f.valor_flujo' is possibly 'undefined'.
+src/views/pages/update_data/Update_data.tsx: error TS18048: 'res.data' is possibly 'undefined'.
+src/views/pages/update_data/Update_data.tsx: error TS18048: 'res.data' is possibly 'undefined'.
+src/views/pages/update_data/Update_data.tsx: error TS18048: 'res.data' is possibly 'undefined'.
+src/views/pages/update_data/Update_data.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/update_data/Update_data.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/update_data/Update_data.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/update_data/Update_data.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/update_data/Update_data.tsx: error TS2339: Property 'data' does not exist on type 'ApiSuccessResponse'.
+src/views/pages/update_data/Update_data.tsx: error TS2345: Argument of type 'any[]' is not assignable to parameter of type 'SetStateAction<never[]>'.
+src/views/pages/update_data/Update_data.tsx: error TS6133: 'validationDataRaw' is declared but its value is never read.
+src/views/pages/update_data/Update_data.tsx: error TS6133: 'valorFlujoActivo' is declared but its value is never read.
+src/views/pages/update_data/Update_data.tsx: error TS6196: 'PlayPronosticoRequest' is declared but never used.
+src/views/pages/valoracion/Valoracion.tsx: error TS2322: Type '(value: number | string) => string' is not assignable to type 'Formatter<string | number, NameType>'.
