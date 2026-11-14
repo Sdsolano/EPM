@@ -30,6 +30,7 @@ TIPO_LABORAL = "laboral"
 TIPO_SABADO = "sabado"
 TIPO_DOMINGO = "domingo"
 TIPO_FESTIVO = "festivo"
+TIPOS_DIA = (TIPO_LABORAL, TIPO_SABADO, TIPO_DOMINGO, TIPO_FESTIVO)
 
 # Años anómalos que nunca se usan como referencia (pandemia). Única fuente: la
 # importan referencia (DEFAULTS) y nivel (fallback si ctx no trae la lista).
@@ -184,6 +185,11 @@ def ancla_mismo_dow(d: date, corte: date) -> date:
 
 def lunes_de(fecha: date) -> date:
     return fecha - timedelta(days=fecha.weekday())
+
+
+def corte_semana(d: date) -> date:
+    """Sábado anterior al lunes de la semana de `d` (corte de emisión del modelo / del analista)."""
+    return lunes_de(d) - timedelta(days=2)
 
 
 def iso(d: date) -> str:

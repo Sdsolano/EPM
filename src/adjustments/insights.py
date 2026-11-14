@@ -14,11 +14,14 @@ None / [] / "sin_datos".
 
 Umbrales (documentados aquí, no son parámetros del modelo):
 - Confianza: WAPE reciente ≤ 3 % alta, ≤ 6 % media, > 6 % baja (`UMBRAL_CONFIANZA_ALTA/MEDIA`).
-- Recomendaciones de sesgo (tendencia reciente, NO una predicción): n ≥ 6 días, |sesgo| ≥ 0.5 %, mismo signo en ≥ 65 % de
-  los días, la corrección reduce el error medido sin mirar el día evaluado (leave-one-out) Y la misma regla, simulada sin
-  fuga con corte creciente en las últimas ~8 semanas (52 para festivos), reduce el error en ≥ 60 % de los días y mejora el
-  WAPE agregado (`validar_rolling`). Si falla la validación fuera de muestra, no se emite recomendación. Prioridad máxima
-  "media"; ninguna promesa numérica de mejora (backtest B2/B4: las correcciones de sesgo no mejoran de forma consistente).
+- Recomendaciones de sesgo (tendencia reciente, NO una predicción ni una mejora respaldada): n ≥ 6 días, |sesgo| ≥ 0.5 %,
+  mismo signo en ≥ 65 % de los días, la corrección reduce el error medido sin mirar el día evaluado (leave-one-out) Y la
+  misma regla, simulada con corte creciente en las últimas ~8 semanas (52 para festivos), actuó en ≥ ROLLING_MIN_DIAS días,
+  redujo el error en ≥ 75 % de ellos y mejoró el WAPE del segmento ≥ 0.3 pp (`validar_rolling`). OJO: esa simulación se
+  evalúa sobre las mismas semanas que originan la regla (selección sobre ventana corta), NO es validación independiente;
+  un backtest sin fuga (B5) mostró que no mejora fuera de muestra (Antioquia 3.08→2.71 por miércoles; Atlántico 5.03→7.13).
+  Por eso se emiten con prioridad "baja", `respaldo: "tendencia_reciente"` y `validado_fuera_de_muestra: false`; solo las
+  alertas del sistema (`respaldo: "alerta_del_sistema"`) cuentan como recomendación accionable en el resumen.
 - Banda: cuantiles empíricos p10/p50/p90 con ≥ 5 casos por tipo de día; festivo con < 10 casos usa domingo. Con run_id, la
   muestra de errores termina en min(semana − 1 día, fecha_corte de la corrida): sin fuga.
 - Historial estático: `precision_data/*_k1.csv` es una foto (Antioquia termina 2026-06-28, Atlántico 2026-05-03). La evidencia
@@ -40,7 +43,7 @@ import numpy as np
 import pandas as pd
 
 from src.adjustments import data
-from src.adjustments.types import Alert, StepRecord, parse_date, validar_curva
+from src.adjustments.types import MOTIVOS_CURVA, Alert, StepRecord, parse_date, validar_curva
 
 logger = logging.getLogger(__name__)
 
@@ -61,8 +64,13 @@ MIN_FESTIVOS_BANDA = 10
 NIVEL_CONFIANZA_BANDA = 0.8
 ROLLING_SEMANAS = 8            # ventana de la validación fuera de muestra (días de semana)
 ROLLING_SEMANAS_FESTIVO = 52   # los festivos son pocos: ventana más larga
-ROLLING_MIN_DIAS = 4           # días mínimos en los que la regla habría actuado para poder validarla
-ROLLING_MIN_MEJORA = 0.60      # fracción mínima de días en que la corrección redujo el error
+ROLLING_MIN_DIAS = 8           # días mínimos en los que la regla habría actuado en la ventana de selección
+ROLLING_MIN_MEJORA = 0.75      # fracción mínima de días de la ventana en que la corrección redujo el error
+ROLLING_MIN_MEJORA_WAPE_PP = 0.3  # el WAPE del segmento (ventana de selección) debe bajar al menos 0.3 pp
+RESPALDO_TENDENCIA = "tendencia_reciente"
+RESPALDO_ALERTA = "alerta_del_sistema"
+AVISO_TENDENCIA = ("Tendencia reciente observada; las pruebas del sistema no confirmaron que corregirla mejore el "
+                   "pronóstico. Úsala como referencia, tú decides.")
 # Factor de calibración de la banda: los cuantiles p10/p90 del error relativo se multiplican por este factor (p50 no). Sin
 # él la banda de 80 % subcubre; con 1.2 (elegido en la calibración de B2) cubre más. Constante propia de este módulo: no se
 # importa de `correccion` (opt-in, otro estimador).
@@ -74,15 +82,15 @@ COBERTURA_MEDIDA = {
     "antioquia_sin_escala": 0.813,
     "atlantico_sin_escala": 0.732,
     "ancho_medio_relativo_pct": {"antioquia": 9.9, "atlantico": 20.1},
-    "nota": "Medida con esta implementación (error relativo simple, escala 1.2 sobre p10/p90, banda con todo el historial "
-            "previo a cada semana) en backtest sin fuga de 21 semanas: Antioquia 87.6 %, Atlántico 80.2 % (sin escala "
+    "nota": "Medida el 2026-11-14 con esta implementación (error relativo simple, escala 1.2 sobre p10/p90, banda con todo el "
+            "historial previo a cada semana) en backtest sin fuga de 21 semanas: Antioquia 87.6 %, Atlántico 80.2 % (sin escala "
             "81.3 % / 73.2 %). Mínimos por segmento: festivo Antioquia 71 % (7 días), sábado Antioquia 82 %. No es una garantía.",
 }
 SEMANAS_CONFIANZA = 8
 TENDENCIA_UMBRAL_PP = 0.3
 PASOS_PARCHE = ("forma", "especiales")  # pasos editables donde un día editado se respeta hasta el final
 
-TIPOS_DIA = (data.TIPO_LABORAL, data.TIPO_SABADO, data.TIPO_DOMINGO, data.TIPO_FESTIVO)
+TIPOS_DIA = data.TIPOS_DIA
 DIAS_ES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
 DIAS_ABREV = ["lun", "mar", "mié", "jue", "vie", "sáb", "dom"]
 MESES_ABREV = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"]
@@ -191,9 +199,9 @@ def _festivos_anios(anio_ini: int, anio_fin: int) -> frozenset:
     return frozenset(data.festivos_colombia(range(anio_ini, anio_fin + 1)))
 
 
-def festivos_por_defecto(*fechas_iso: Iterable[str]) -> Set[str]:
+def festivos_por_defecto(fechas_iso: Iterable[str]) -> Set[str]:
     """Festivos oficiales (librería, sin red) que cubren las fechas dadas (±1 año)."""
-    anios = [int(f[:4]) for grupo in fechas_iso for f in grupo]
+    anios = [int(f[:4]) for f in fechas_iso]
     if not anios:
         anios = [date.today().year]
     return set(_festivos_anios(min(anios) - 1, max(anios) + 1))
@@ -232,11 +240,11 @@ def _semanas_completas(d: Datos) -> Dict[str, Tuple[Curvas, str]]:
         validas = {f: np.asarray(v, dtype=float) for f, v in curvas.items()
                    if validar_curva(v) is None and np.all(np.asarray(v, dtype=float) > 0)}
         if validas:
-            por_semana[s] = {**validas}
+            por_semana[s] = validas
             fuentes[s] = "corrida_aprobada"
     out = {}
     for s, curvas in por_semana.items():
-        fechas = [(parse_date(s) + timedelta(days=i)).isoformat() for i in range(7)]
+        fechas = [data.iso(x) for x in data.dias_semana(parse_date(s))]
         if all(f in curvas and f in d.reales for f in fechas):
             out[s] = ({f: curvas[f] for f in fechas}, fuentes[s])
     return out
@@ -415,8 +423,9 @@ def _loo_error(F: np.ndarray, R: np.ndarray, forma: bool) -> float:
     n = len(F)
     for i in range(n):
         m = np.arange(n) != i
-        if forma:
+        if forma:  # misma normalización de energía que `_corregir_curva`
             g = np.mean(R[m] / F[m], axis=0)
+            g = g * (F[i].sum() / float((F[i] * g).sum()))
         else:
             en = (F[m].sum(axis=1) - R[m].sum(axis=1)) / R[m].sum(axis=1)
             g = 1.0 / (1.0 + float(np.mean(en)))
@@ -489,7 +498,7 @@ class Corrida:
 
     @property
     def fechas(self) -> List[str]:
-        return [(self.semana_inicio + timedelta(days=i)).isoformat() for i in range(7)]
+        return [data.iso(x) for x in data.dias_semana(self.semana_inicio)]
 
     def tipo(self, fecha: str) -> str:
         """laboral / sabado / domingo / festivo de una fecha según los festivos de la corrida."""
@@ -522,7 +531,7 @@ def corrida_desde(meta: Dict[str, Any], records: List[StepRecord], final: Dict[s
     semana = parse_date(meta["semana_inicio"])
     festivos = {str(f)[:10] for f in (extras.get("festivos") or [])}
     if not festivos:  # corridas sin festivos guardados: calendario oficial (sin red)
-        festivos = festivos_por_defecto([(semana + timedelta(days=i)).isoformat() for i in range(7)])
+        festivos = festivos_por_defecto([data.iso(x) for x in data.dias_semana(semana)])
     try:
         corte = parse_date(meta.get("fecha_corte"))
     except (TypeError, ValueError):
@@ -563,6 +572,10 @@ _TEXTOS_ALERTA: Dict[str, Tuple[str, str]] = {
         "Revísalos con tu criterio."),
     "CURVA_BASE_NULA": (
         "Hay días sin pronóstico válido", "El pronóstico de {dias} no tiene valores útiles; no se pudo ajustar."),
+    "FESTIVOS_FUENTE_ALTERNA": (
+        "Calendario de festivos de respaldo",
+        "No se pudo consultar el calendario de festivos en línea; se usó el calendario oficial guardado. "
+        "Confirma que los festivos de la semana sean los correctos."),
     "BRECHA_INVALIDA": (
         "Faltan datos entre el último dato real y la semana",
         "Los días estimados antes de la semana ({dias}) vienen incompletos; no impide aprobar, pero la "
@@ -575,7 +588,7 @@ _TEXTOS_ALERTA: Dict[str, Tuple[str, str]] = {
     "ESPECIALES_SUGERIDOS": (
         "Hay días especiales con ajuste sugerido", "El sistema propone un ajuste para {dias}."),
     "RECONCILIACION_ROTA": (
-        "El resultado no cuadra con el pronóstico", "Las curvas finales no coinciden con la energía calculada; no se puede aprobar."),
+        "El resultado no cuadra con el pronóstico", "Las curvas finales de {dias} no coinciden con la energía calculada; no se puede aprobar."),
     "REFERENCIA_ANIO_EXCLUIDO": (
         "Semana de comparación poco confiable", "La semana usada para comparar cae en un año atípico; úsala con cautela."),
     "REFERENCIA_SIN_DATOS": (
@@ -587,9 +600,13 @@ _TEXTOS_ALERTA: Dict[str, Tuple[str, str]] = {
         "Se detectaron días con posibles elecciones ({dias}); no están verificados y no se ajustó ninguna curva. "
         "Confírmalos antes de tocar el pronóstico."),
 }
+# Bloqueos por curva inválida (códigos de `types.MOTIVOS_CURVA`): título del motivo + los días afectados.
+_TEXTOS_ALERTA.update({
+    motivo: (desc, f"{desc[0].upper()}{desc[1:]}: {{dias}}. Corrígelos antes de aprobar la semana.")
+    for motivo, desc in MOTIVOS_CURVA.items()})
 _INFO_OCULTAS = {"PARAMS_ANALOGOS_IGNORADOS", "NIVEL_ANCLA_ALTERNA", "FORMA_FUENTE_ALTERNA",
                  "REFERENCIA_AJUSTADA_A_LUNES", "ESPECIALES_EDICION_PRESERVADA", "ANALOGOS_NO_OBSERVADOS",
-                 "SIN_ENERGIA_NIVEL", "SIN_CONTROL_TENDENCIA", "ESPECIALES_SIN_EVIDENCIA", "SIN_FORMA"}
+                 "SIN_ENERGIA_NIVEL", "SIN_CONTROL_TENDENCIA", "ESPECIALES_SIN_EVIDENCIA"}
 
 
 def _lista_dias(fechas: List[str]) -> str:
@@ -675,15 +692,6 @@ def _plural(seg: str) -> str:
     return {"sábado": "sábados", "domingo": "domingos", "festivo": "festivos"}.get(seg, seg)
 
 
-def _articulo(seg: str) -> str:
-    return "Los" if seg == "festivo" else "El"
-
-
-def _prioridad_sesgo(s: float) -> str:
-    """Tendencia reciente observada: nunca "alta" (no es una predicción ni una mejora garantizada)."""
-    return "media" if abs(s) >= 1.0 else "baja"
-
-
 def _paso_parche(c: Corrida) -> Optional[str]:
     for p in PASOS_PARCHE:
         if c.estados_paso.get(p) in ("aplicado", "editado"):
@@ -714,10 +722,12 @@ def _corregir_curva(sg: Dict[str, Any], curva: np.ndarray, cat: str) -> np.ndarr
 
 def validar_rolling(d: Datos, seg: str, hasta: str) -> Dict[str, Any]:
     """
-    Validación fuera de muestra de la regla de sesgo para un segmento. Para cada día del segmento en las últimas
+    Simulación de la regla de sesgo de un segmento sobre la ventana con la que se elige. Para cada día del segmento en las últimas
     `ROLLING_SEMANAS` semanas (52 para festivos) hasta `hasta`, estima el sesgo SOLO con días del segmento hasta el sábado
     previo a su semana (corte de emisión del modelo), aplica la regla si habría tenido evidencia, y compara el error del día.
-    `pasa` = actuó en ≥ ROLLING_MIN_DIAS días, redujo el error en ≥ 60 % y mejoró el WAPE agregado.
+    `pasa` = actuó en ≥ ROLLING_MIN_DIAS días, redujo el error en ≥ ROLLING_MIN_MEJORA de ellos y bajó el WAPE agregado del
+    segmento ≥ ROLLING_MIN_MEJORA_WAPE_PP. NO es validación independiente: la ventana es la misma que origina la regla
+    (selección sobre una ventana corta); sirve solo como filtro de emisión, no como evidencia de mejora futura.
     """
     semanas = ROLLING_SEMANAS_FESTIVO if seg == data.TIPO_FESTIVO else ROLLING_SEMANAS
     fechas_seg = [f for f in _pares(d, hasta=hasta) if _segmento(d.tipo(f), f) == seg]
@@ -729,8 +739,7 @@ def validar_rolling(d: Datos, seg: str, hasta: str) -> Dict[str, Any]:
     for i, f in enumerate(fechas_seg):
         if f <= limite:
             continue
-        dia = parse_date(f)
-        corte = (dia - timedelta(days=dia.weekday() + 2)).isoformat()  # sábado anterior al lunes de su semana
+        corte = data.corte_semana(parse_date(f)).isoformat()  # sábado anterior al lunes de su semana
         previas = [g for g in fechas_seg[:i] if g <= corte][-_ocurrencias(seg):]
         sg = _stats_segmento(d, previas)
         if sg is None or not _hay_evidencia(sg):
@@ -753,15 +762,16 @@ def validar_rolling(d: Datos, seg: str, hasta: str) -> Dict[str, Any]:
     w0, w1 = wape(np.vstack(F_antes), R_all), wape(np.vstack(F_desp), R_all)
     out.update(pct_dias_mejora=mejoras / n, wape_antes_pct=_r(w0, 2), wape_despues_pct=_r(w1, 2))
     out["pasa"] = bool(n >= ROLLING_MIN_DIAS and mejoras / n >= ROLLING_MIN_MEJORA
-                       and w0 is not None and w1 is not None and w1 < w0)
+                       and w0 is not None and w1 is not None and w0 - w1 >= ROLLING_MIN_MEJORA_WAPE_PP)
     return out
 
 
 def _rec_sesgo(c: Corrida, f: str, seg: str, sg: Dict[str, Any], paso: Optional[str],
                val: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
-    Sugerencia del analista a partir de la tendencia reciente del segmento (ya con evidencia y validación rolling).
-    La corrección se aplica sobre lo que hoy muestra `final`; el delta explicado es el real. Sin promesa de mejora.
+    Tendencia reciente del segmento (ya con evidencia y filtro rolling) como referencia para el analista: prioridad "baja",
+    `respaldo: "tendencia_reciente"`, `validado_fuera_de_muestra: false`. La corrección se calcula sobre lo que hoy muestra
+    `final`; el delta explicado es el real. Sin promesa de mejora (las pruebas no la confirmaron).
     """
     n, s = sg["n"], sg["sesgo_pct"]
     final = _curva_valida(c.final, f)
@@ -792,7 +802,7 @@ def _rec_sesgo(c: Corrida, f: str, seg: str, sg: Dict[str, Any], paso: Optional[
                 return None  # el pipeline o el analista ya movieron el día en esa dirección
         corto = s < 0
         titulo = (f"Tendencia reciente: los festivos quedaron {'cortos' if corto else 'altos'}" if festivo
-                  else f"Tendencia reciente: {_articulo(ref_dia).lower()} {ref_dia} quedó {'corto' if corto else 'alto'}")
+                  else f"Tendencia reciente: el {ref_dia} quedó {'corto' if corto else 'alto'}")
         observado = (f"en los últimos {n} {pl} el pronóstico se quedó {abs(s):.1f} % por "
                      f"{'debajo' if corto else 'encima'} de lo real")
     sug = np.round(sug, 2)
@@ -808,38 +818,42 @@ def _rec_sesgo(c: Corrida, f: str, seg: str, sg: Dict[str, Any], paso: Optional[
     else:
         resumen = f"Redistribuir el {ref_dia} por horas (misma energía)"
         accion = "Sugerencia: redistribuir el día por horas sin cambiar su energía."
-    explicacion = (f"Tendencia reciente observada, no una predicción: {observado}. {accion} "
-                   f"En una prueba con semanas anteriores esta regla redujo el error en {val['dias_mejora']} de "
-                   f"{val['dias_evaluados']} días.")
+    explicacion = (f"{AVISO_TENDENCIA} Observado: {observado}. {accion} En las últimas semanas (ventana con la que se "
+                   f"eligió la regla) habría reducido el error en {val['dias_mejora']} de {val['dias_evaluados']} días.")
     ajuste = None
     if paso is not None:
         ajuste = {"resumen": resumen, "delta_energia_pct": _r(delta_pct), "delta_energia_mwh": _r(delta_mwh, 0),
                   "curva_sugerida": [float(x) for x in sug],
                   "patch": {"paso": paso,
                             "body": {"estado": "editado", "curvas": {f: [float(x) for x in sug]},
-                                     "motivo": f"Sugerencia del analista (tendencia reciente del {ref_dia})", "usuario": None}}}
+                                     "motivo": f"Tendencia reciente del {ref_dia} (referencia, no validada fuera de muestra)", "usuario": None}}}
     return {
-        "id": f"sesgo-{f}", "fecha": f, "dia": dia, "tipo_dia": c.tipo(f), "prioridad": _prioridad_sesgo(s),
+        "id": f"sesgo-{f}", "fecha": f, "dia": dia, "tipo_dia": c.tipo(f), "prioridad": "baja",
+        "respaldo": RESPALDO_TENDENCIA, "validado_fuera_de_muestra": False,
         "categoria": cat, "titulo": titulo, "explicacion": explicacion,
         "evidencia": {"n": n, "sesgo_pct": _r(s), "fuente": "historial",
-                      "validacion": {"dias_evaluados": val["dias_evaluados"], "dias_mejora": val["dias_mejora"],
-                                     "pct_dias_mejora": _r(val["pct_dias_mejora"] * 100, 0)}},
+                      "ventana_seleccion": {"dias_evaluados": val["dias_evaluados"], "dias_mejora": val["dias_mejora"],
+                                            "pct_dias_mejora": _r(val["pct_dias_mejora"] * 100, 0),
+                                            "wape_antes_pct": val["wape_antes_pct"],
+                                            "wape_despues_pct": val["wape_despues_pct"]}},
         "impacto_esperado": f"Basado en lo ocurrido en los últimos {n} {pl}; no garantiza mejora.",
         "aplicable": ajuste is not None and c.estado == "borrador", "ajuste": ajuste,
     }
 
 
 def _recs_alertas(c: Corrida) -> List[Dict[str, Any]]:
-    """Alertas del pipeline que piden criterio humano (warning/bloqueo y festivos/clima/eventos)."""
+    """Alertas del pipeline que piden criterio humano (warning/bloqueo y festivos/eventos). El clima `info` no es accionable."""
     out = []
     for i in insights_de_alertas(c):
-        if i["nivel"] == "info" and i["categoria"] == "alerta" and i["codigo"] != "EVENTOS_SEMANA":
+        if i["nivel"] == "info" and (i["categoria"] == "clima"
+                                     or (i["categoria"] == "alerta" and i["codigo"] != "EVENTOS_SEMANA")):
             continue
         f = i["fechas"][0] if i["fechas"] else c.semana_inicio.isoformat()
         prioridad = "alta" if i["nivel"] == "critico" else ("media" if i["nivel"] == "warning" else "baja")
         out.append({
             "id": i["id"], "fecha": f, "dia": nombre_dia(f), "tipo_dia": c.tipo(f), "prioridad": prioridad,
             "categoria": i["categoria"], "titulo": i["titulo"], "explicacion": i["texto"],
+            "respaldo": RESPALDO_ALERTA, "validado_fuera_de_muestra": None,
             "evidencia": {"n": None, "sesgo_pct": None, "fuente": "alerta_del_sistema"},
             "impacto_esperado": None, "aplicable": False, "ajuste": None,
         })
@@ -848,8 +862,9 @@ def _recs_alertas(c: Corrida) -> List[Dict[str, Any]]:
 
 def recomendaciones(c: Corrida, d: Datos) -> Dict[str, Any]:
     """
-    Recomendaciones por día (contrato §3). Solo con evidencia medida (validada fuera de muestra) o alertas reales del
-    pipeline. Las de sesgo son sugerencias del analista sobre una tendencia reciente, no correcciones automáticas.
+    Recomendaciones por día (contrato §3): alertas reales del pipeline (`respaldo: "alerta_del_sistema"`, accionables) y,
+    con evidencia estricta, tendencias recientes de sesgo (`respaldo: "tendencia_reciente"`, prioridad baja, referencia no
+    validada fuera de muestra, nunca automáticas).
     """
     paso = _paso_parche(c)
     ultimo_real = max(d.reales) if d.reales else None
@@ -869,7 +884,7 @@ def recomendaciones(c: Corrida, d: Datos) -> Dict[str, Any]:
             validaciones[seg] = validar_rolling(d, seg, hasta)
         val = validaciones[seg]
         if not val["pasa"]:
-            continue  # la regla no se sostiene fuera de muestra: no se vende mejora
+            continue  # ni siquiera en la ventana de selección es consistente: no se emite
         if f in c.editadas:  # el día ya se editó: con evidencia, la recomendación cuenta como resuelta
             resueltas.append(f"sesgo-{f}")
             continue
@@ -888,8 +903,8 @@ def recomendaciones(c: Corrida, d: Datos) -> Dict[str, Any]:
 def _energia_semana(c: Corrida, d: Datos, lunes: date, usar_final: bool) -> Optional[float]:
     """Energía de una semana: real si existe, si no el pronóstico de la corrida (brecha); None si falta algún día."""
     total = 0.0
-    for i in range(7):
-        f = (lunes + timedelta(days=i)).isoformat()
+    for dia in data.dias_semana(lunes):
+        f = data.iso(dia)
         if usar_final:
             e = data.energia_curva(c.final.get(f))
         else:
@@ -912,9 +927,9 @@ def _titulo_semana(c: Corrida, energia: Optional[float], variacion: Optional[flo
     return t + f", un {abs(variacion):.1f} % {'más' if variacion > 0 else 'menos'} que la semana pasada"
 
 
-def resumen(c: Corrida, d: Datos, recs: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def resumen(c: Corrida, d: Datos) -> Dict[str, Any]:
     """Resumen ejecutivo (contrato §1)."""
-    recs = recs if recs is not None else recomendaciones(c, d)
+    recs = recomendaciones(c, d)
     prec = precision(d, semanas=SEMANAS_CONFIANZA, hasta=c.semana_inicio - timedelta(days=7))
     rp = prec["resumen"]
     wape_r = rp["wape_pct"]
@@ -935,8 +950,11 @@ def resumen(c: Corrida, d: Datos, recs: Optional[Dict[str, Any]] = None) -> Dict
             pico = (float(cv.max()), f, int(cv.argmax()))
 
     n_por_fecha: Dict[str, int] = {}
+    sistema_por_fecha: Dict[str, int] = {}
     for r in recs["recomendaciones"]:
         n_por_fecha[r["fecha"]] = n_por_fecha.get(r["fecha"], 0) + 1
+        if r["respaldo"] == RESPALDO_ALERTA:
+            sistema_por_fecha[r["fecha"]] = sistema_por_fecha.get(r["fecha"], 0) + 1
     ins = insights_de_alertas(c)
     nivel_dia: Dict[str, str] = {}
     for i in ins:
@@ -949,7 +967,7 @@ def resumen(c: Corrida, d: Datos, recs: Optional[Dict[str, Any]] = None) -> Dict
     for f in c.fechas:
         cv, bv = _curva_valida(c.final, f), _curva_valida(c.base, f)
         ajuste = _r((cv.sum() / bv.sum() - 1) * 100) if cv is not None and bv is not None and bv.sum() > 0 else None
-        estado = nivel_dia.get(f) or ("revisar" if n_por_fecha.get(f) else "ok")
+        estado = nivel_dia.get(f) or ("revisar" if sistema_por_fecha.get(f) else "ok")
         dias.append({"fecha": f, "dia": nombre_dia(f), "tipo_dia": c.tipo(f),
                      "energia_mwh": _r(cv.sum()) if cv is not None else None,
                      "pico_mw": _r(cv.max()) if cv is not None else None,
@@ -959,14 +977,17 @@ def resumen(c: Corrida, d: Datos, recs: Optional[Dict[str, Any]] = None) -> Dict
     niveles = [i["nivel"] for i in ins]
     n_crit, n_warn = niveles.count("critico"), niveles.count("warning")
     n_recs = len(recs["recomendaciones"])
+    n_sistema = sum(1 for r in recs["recomendaciones"] if r["respaldo"] == RESPALDO_ALERTA)
     n_alta = sum(1 for r in recs["recomendaciones"] if r["prioridad"] == "alta")
-    if c.estado == "aprobada":
-        paso = {"accion": "ya_aprobada", "texto": "Esta semana ya está aprobada."}
+    if c.estado != "borrador":  # aprobada, reemplazada...: ya no hay nada que revisar en esta corrida
+        paso = {"accion": "ya_aprobada",
+                "texto": "Esta semana ya está aprobada." if c.estado == "aprobada"
+                else "Esta corrida ya no está en borrador; no requiere revisión."}
     elif n_crit:
         paso = {"accion": "revisar_alertas", "texto": f"Hay {n_crit} problema(s) que impiden aprobar: revísalos primero."}
-    elif n_recs:
+    elif n_sistema:  # las tendencias recientes (baja prioridad, sin respaldo) no empujan este paso por sí solas
         paso = {"accion": "revisar_recomendaciones",
-                "texto": f"Revisa {'la recomendación' if n_recs == 1 else f'las {n_recs} recomendaciones'} y aprueba la semana."}
+                "texto": f"Revisa {'la recomendación' if n_sistema == 1 else f'las {n_sistema} recomendaciones'} y aprueba la semana."}
     elif n_warn:
         paso = {"accion": "revisar_alertas", "texto": "Revisa las alertas y aprueba la semana."}
     else:
@@ -983,7 +1004,8 @@ def resumen(c: Corrida, d: Datos, recs: Optional[Dict[str, Any]] = None) -> Dict
             "pico_mw": _r(pico[0]), "pico_fecha": pico[1], "pico_hora": pico[2],
             "error_reciente_pct": wape_r, "error_reciente_tendencia": rp["tendencia"],
             "alertas": {"total": len(ins), "warning": n_warn, "info": niveles.count("info"), "critico": n_crit},
-            "recomendaciones": {"total": n_recs, "alta": n_alta},
+            "recomendaciones": {"total": n_recs, "alta": n_alta, "del_sistema": n_sistema,
+                                "tendencia_reciente": n_recs - n_sistema},
         },
         "dias": dias,
         "insights": [{k: i[k] for k in ("id", "nivel", "titulo", "texto", "fechas")} for i in ins],
@@ -1025,9 +1047,11 @@ def series(c: Corrida, d: Datos, tablas: Optional[Dict[str, Dict[str, Any]]] = N
 
     ref = None
     ref_fechas: List[str] = []
+    ref_reales: Dict[str, np.ndarray] = {}
     if c.ref_inicio is not None:
-        ref_fechas = [(c.ref_inicio + timedelta(days=i)).isoformat() for i in range(7)]
-        ref = _serie({f: d.reales[f] for f in ref_fechas if f in d.reales}, ref_fechas)
+        ref_fechas = [data.iso(x) for x in data.dias_semana(c.ref_inicio)]
+        ref_reales = {f: d.reales[f] for f in ref_fechas if f in d.reales}
+        ref = _serie(ref_reales, ref_fechas)
         if all(v is None for v in ref):
             ref = None
 
@@ -1056,7 +1080,7 @@ def series(c: Corrida, d: Datos, tablas: Optional[Dict[str, Dict[str, Any]]] = N
         },
         "energia_diaria": {
             "fechas": fechas, "base": energias(c.base, fechas), "ajustado": energias(c.final, fechas),
-            "referencia": energias({f: d.reales[f] for f in ref_fechas if f in d.reales}, ref_fechas) if ref_fechas else [None] * 7,
+            "referencia": energias(ref_reales, ref_fechas) if ref_fechas else [None] * 7,
             "real": energias(real_dict, fechas),
         },
         "dias": dias,

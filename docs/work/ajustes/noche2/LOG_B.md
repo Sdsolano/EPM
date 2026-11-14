@@ -1,10 +1,9 @@
 # LOG_B — Pista B
 
 ## Estado actual
-- Hecho: contrato v1.2; B1 API insights; B2 investigacion (ninguna candidata activada); B3 banda calibrada. Commits b00a20a, f9352e2. Ronda 1 de revision COMPLETA (8 angulos + regresion + medicion de cobertura): regresion limpia (755 passed, 12 skipped, 1 christmas).
-- Hallazgos ronda 1: ALTO A1 (recomendaciones de sesgo prometen mejora que el backtest rolling NO confirma: Antioquia 2.63->2.58, Atlantico 5.22->5.54 peor); MEDIOS: nivel recomendado contradice el sesgo cuando final!=base, cobertura declarada inflada (medida real: Antioquia 87.6 %, Atlantico 80.2 % prueba, escala 1.2; sin escala 81.3/73.2), cache/event-loop del historico, list_runs 500; BAJOS: fuga banda con run_id (corte = semana-1), n_semanas_historial ignora filtros, ELECCIONES_IA sin texto, version null, duplicacion de helpers, codigo redundante, A3 historial CSV estatico (documentar).
-- En curso: agente de correccion B4. Al terminar: por el ALTO, repetir ronda COMPLETA (8 angulos + regresion) contra el diff actual.
-- Falta: ronda 2, REPORTE_B.md, commit final.
+- Hecho: contrato v1.3; B1 API insights; B2 (ninguna candidata activada); B3 banda; B4 correcciones de ronda 1 (commit 27afbd3; suite 770 passed, 12 skipped, 1 christmas).
+- En curso: ronda 2 COMPLETA (por el ALTO A1 de la ronda 1): 8 angulos separados + regresion, sonnet, contra `git diff main...HEAD -- src tests scripts`. Lanzados en 2 tandas de 4 + regresion.
+- Falta: leer resultados; si sin critico/alto -> corregir medios/bajos y UNA verificacion estandar; REPORTE_B.md; commit final.
 
 ## Decisiones tomadas sin el usuario
 - Prefijo `/adjustments/insights/*` con router propio (sin conflicto con `/{run_id}`); endpoints dependientes de semana usan `run_id` (el demo persiste con Postgres).

@@ -113,7 +113,7 @@ def test_resumen_forma_del_contrato(api, emitidos):
     assert {"energia_semana_mwh", "energia_semana_anterior_mwh", "variacion_vs_anterior_pct", "pico_mw",
             "pico_fecha", "pico_hora", "error_reciente_pct", "error_reciente_tendencia", "alertas",
             "recomendaciones"} <= set(k)
-    assert {"total", "warning", "info"} <= set(k["alertas"]) and {"total", "alta"} == set(k["recomendaciones"])
+    assert {"total", "warning", "info"} <= set(k["alertas"]) and {"total", "alta", "del_sistema", "tendencia_reciente"} == set(k["recomendaciones"])
     assert k["energia_semana_mwh"] == pytest.approx(
         sum(sum(v) for v in run["final_curves"].values() if True) - sum(
             sum(v) for f, v in run["final_curves"].items() if f not in _semana_iso()), rel=1e-4)
@@ -227,7 +227,10 @@ def test_recomendaciones_y_aplicar_con_un_clic(api, emitidos):
     sab = (SEMANA + timedelta(days=5)).isoformat()
     rec = next(x for x in j["recomendaciones"] if x["id"] == f"sesgo-{sab}")
     assert {"id", "fecha", "dia", "tipo_dia", "prioridad", "categoria", "titulo", "explicacion", "evidencia",
-            "impacto_esperado", "aplicable", "ajuste"} == set(rec)
+            "impacto_esperado", "aplicable", "ajuste", "respaldo", "validado_fuera_de_muestra"} == set(rec)
+    assert rec["respaldo"] == "tendencia_reciente" and rec["prioridad"] == "baja"
+    assert rec["validado_fuera_de_muestra"] is False and "ventana_seleccion" in rec["evidencia"]
+    assert "no confirmaron" in rec["explicacion"]
     assert rec["dia"] == "sábado" and rec["categoria"] in ("nivel", "forma") and rec["aplicable"] is True
     assert rec["evidencia"]["n"] >= 6 and rec["evidencia"]["fuente"] == "historial"
     aj = rec["ajuste"]
@@ -401,8 +404,12 @@ def test_banda_con_run_corta_la_muestra_sin_fuga(api, emitidos):
     assert j["muestra"]["fecha_fin"] <= corte_semana  # min(semana − 1, fecha_corte)
     sin_run = _get(api, "banda", ucp=UCP).json()
     assert sin_run["muestra"] == {"fecha_inicio": None, "fecha_fin": None}
-    # fecha_fin explícita se respeta
+    # fecha_fin explícita anterior al corte se respeta; una posterior se recorta al corte sin fuga
     assert _get(api, "banda", run_id=run["id"], fecha_fin="2026-04-30").json()["muestra"]["fecha_fin"] == "2026-04-30"
+    futura = (SEMANA + timedelta(days=30)).isoformat()
+    assert _get(api, "banda", run_id=run["id"], fecha_fin=futura).json()["muestra"]["fecha_fin"] == j["muestra"]["fecha_fin"]
+    # por ucp (sin run_id) no hay recorte
+    assert _get(api, "banda", ucp=UCP, fecha_fin=futura).json()["muestra"]["fecha_fin"] == futura
 
 
 def test_banda_n_semanas_historial_respeta_filtros(api, emitidos):
@@ -442,11 +449,20 @@ def test_aprobadas_acota_con_desde_y_limite():
         def list_runs(self, ucp, desde, hasta, limite):
             visto.update(ucp=ucp, desde=desde, hasta=hasta, limite=limite)
             return []
-    assert router_insights._aprobadas_ventana(_Store(), UCP, date(2026, 11, 9), 8) == {}
+    assert router_insights._aprobadas(_Store(), UCP, date(2026, 11, 9), 8) == {}
     assert visto["desde"] == date(2026, 11, 9) - timedelta(weeks=8) and visto["hasta"] == date(2026, 11, 9)
     assert 0 < visto["limite"] <= 500  # ya no pide 500 siempre
-    router_insights._aprobadas(_Store(), UCP)
-    assert visto["limite"] == 60 and visto["desde"] is None
+
+    class _StoreRepetido:  # más reciente primero: prevalece la primera aprobada de cada semana
+        def list_runs(self, ucp, desde, hasta, limite):
+            mk = lambda v, est: {"meta": {"estado": est, "semana_inicio": "2026-11-02"}, "records": v}
+            return [mk("nueva", "borrador"), mk("nueva_aprob", "aprobada"), mk("vieja_aprob", "aprobada")]
+    original = router_insights.pl.final_curves
+    router_insights.pl.final_curves = lambda recs: recs
+    try:
+        assert router_insights._aprobadas(_StoreRepetido(), UCP, date(2026, 11, 9), 8) == {"2026-11-02": "nueva_aprob"}
+    finally:
+        router_insights.pl.final_curves = original
 
 
 def test_history_con_cargador_inyectado_no_se_cachea(api, emitidos):

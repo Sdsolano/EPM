@@ -80,11 +80,11 @@ Recomendaciones por día con explicación en lenguaje de negocio y un ajuste sug
   "recomendaciones": [
     {
       "id": "sesgo-2026-07-04", "fecha": "2026-07-04", "dia": "sábado", "tipo_dia": "sabado",
-      "prioridad": "media", "categoria": "nivel",
+      "prioridad": "baja", "categoria": "nivel", "respaldo": "tendencia_reciente", "validado_fuera_de_muestra": false,
       "titulo": "Tendencia reciente: el sábado quedó corto",
-      "explicacion": "Tendencia reciente observada, no una predicción: en los últimos 8 sábados el pronóstico se quedó 1.9 % por debajo de lo real. Sugerencia: subir el sábado 1.9 % (+95 MWh) sobre lo que muestra hoy. En una prueba con semanas anteriores esta regla redujo el error en 6 de 8 días.",
+      "explicacion": "Tendencia reciente observada; las pruebas del sistema no confirmaron que corregirla mejore el pronóstico. Úsala como referencia, tú decides. Observado: en los últimos 8 sábados el pronóstico se quedó 1.9 % por debajo de lo real. Sugerencia: subir el sábado 1.9 % (+95 MWh) sobre lo que muestra hoy. En las últimas semanas (ventana con la que se eligió la regla) habría reducido el error en 8 de 8 días.",
       "evidencia": {"n": 8, "sesgo_pct": -1.9, "fuente": "historial",
-                    "validacion": {"dias_evaluados": 8, "dias_mejora": 6, "pct_dias_mejora": 75}},
+                    "ventana_seleccion": {"dias_evaluados": 8, "dias_mejora": 8, "pct_dias_mejora": 100, "wape_antes_pct": 2.1, "wape_despues_pct": 1.2}},
       "impacto_esperado": "Basado en lo ocurrido en los últimos 8 sábados; no garantiza mejora.",
       "aplicable": true,
       "ajuste": {
@@ -212,3 +212,28 @@ Series continuas de la semana (168 puntos = 7 días × 24 h, lunes 00:00 → dom
       `scripts/generar_historial_pronosticos.py` (o, pendiente, persistir los pronósticos de las corridas aprobadas).
     - Rendimiento (M3): el histórico real se cachea por (ruta, mtime) con el cargador por defecto (lru de 8) y se normaliza en
       threadpool; `list_runs` de aprobadas se acota con `desde`/`limite` según el endpoint.
+- v1.4 (2026-11-14, B5; corrección honestidad tras la ronda 2; compatible hacia atrás salvo textos/prioridad/`validacion`):
+    - **Las recomendaciones de sesgo/nivel/forma ya no se presentan como respaldadas.** Un backtest rolling sin fuga (script
+      `scripts/noche2_b5_backtest.py`) mostró que no mejoran fuera de muestra (ver B5/LOG.md). Cambios en cada recomendación:
+        - `prioridad` = `"baja"` siempre en las de sesgo. Nuevo campo `respaldo` ∈ `"tendencia_reciente"` (sesgo/nivel/forma) |
+          `"alerta_del_sistema"` (las que vienen de alertas del pipeline; solo estas son accionables en el resumen).
+        - Nuevo campo `validado_fuera_de_muestra`: `false` en las de sesgo (honesto: nunca está validada fuera de muestra), `null` en las
+          de alertas.
+        - `explicacion` empieza por: "Tendencia reciente observada; las pruebas del sistema no confirmaron que corregirla mejore el
+          pronóstico. Úsala como referencia, tú decides." Se eliminó la frase "En una prueba con semanas anteriores…"; la cifra pasa a
+          "En las últimas semanas (ventana con la que se eligió la regla) habría reducido el error en X de Y días."
+        - `evidencia.validacion` se renombra `evidencia.ventana_seleccion` `{dias_evaluados, dias_mejora, pct_dias_mejora,
+          wape_antes_pct, wape_despues_pct}`: es una simulación sobre las MISMAS ~8 semanas que originan la regla (selección sobre una
+          ventana corta), NO una validación independiente; el front no debe mostrarla como evidencia de mejora futura.
+        - `ajuste` (curva_sugerida y patch) se sigue entregando para previsualizar/aplicar a mano. `aplicable` = hay `ajuste` y la
+          corrida es borrador (la corrida no borrador, p. ej. aprobada o reemplazada, nunca es aplicable).
+    - **Filtro de emisión más estricto** (constantes en `insights.py`): `ROLLING_MIN_DIAS = 8`, `ROLLING_MIN_MEJORA = 0.75` de los días
+      y mejora del WAPE del segmento ≥ `ROLLING_MIN_MEJORA_WAPE_PP = 0.3` pp. Con datos reales se emite muy poco (B5/LOG.md).
+    - **Resumen:** las recomendaciones `tendencia_reciente` NO cuentan como `alta`, NO marcan el día como `revisar` y NO empujan
+      `siguiente_paso` a `revisar_recomendaciones` (solo las alertas del sistema accionables lo hacen). `kpis.recomendaciones` agrega
+      `del_sistema` y `tendencia_reciente` (`total` = suma de ambas). `n_recomendaciones` por día cuenta todas.
+    - Alertas `info` de clima (`clima-semana`) ya no son recomendaciones accionables (siguen en `insights`). Corrida con `estado !=
+      borrador` (aprobada, reemplazada) → `siguiente_paso.accion = "ya_aprobada"`.
+    - `banda` con `run_id`: `fecha_fin` explícito se recorta a `min(fecha_fin, min(semana − 1, fecha_corte))` (nunca hay fuga).
+    - Textos de negocio: `FESTIVOS_FUENTE_ALTERNA` (info, visible), bloqueos por curva inválida y `RECONCILIACION_ROTA` incluyen los días;
+      `SIN_FORMA` (warning) ya no se oculta. `COBERTURA_MEDIDA.nota` indica la fecha de la medición (2026-11-14).

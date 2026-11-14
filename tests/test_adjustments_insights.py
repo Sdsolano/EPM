@@ -210,14 +210,16 @@ def test_recomendacion_sabado_con_parche_valido():
     r = recs[0]
     assert r["id"] == f"sesgo-{r['fecha']}" and r["categoria"] == "nivel" and r["tipo_dia"] == "sabado"
     assert r["titulo"] == "Tendencia reciente: el sábado quedó corto" and "por debajo" in r["explicacion"]
-    assert "no una predicción" in r["explicacion"] and "sobre lo que muestra hoy" in r["explicacion"]
+    assert insights.AVISO_TENDENCIA in r["explicacion"] and "sobre lo que muestra hoy" in r["explicacion"]
+    assert "prueba con semanas anteriores" not in r["explicacion"] and "ventana con la que se eligió" in r["explicacion"]
+    assert r["respaldo"] == "tendencia_reciente" and r["validado_fuera_de_muestra"] is False
+    assert "validacion" not in r["evidencia"] and r["evidencia"]["ventana_seleccion"]["dias_evaluados"] >= 8
     assert "α" not in r["explicacion"] and "ratio" not in r["explicacion"]
     assert {k: r["evidencia"][k] for k in ("n", "sesgo_pct", "fuente")} == {
         "n": 8, "sesgo_pct": pytest.approx(-3.0, abs=0.05), "fuente": "historial"}
-    assert r["aplicable"] is True and r["prioridad"] == "media"  # tendencia observada: nunca "alta"
+    assert r["aplicable"] is True and r["prioridad"] == "baja"  # tendencia observada: siempre "baja"
     assert "Reduce" not in r["impacto_esperado"] and "%" not in r["impacto_esperado"]
     assert "no garantiza mejora" in r["impacto_esperado"]
-    assert r["evidencia"]["validacion"]["dias_evaluados"] >= insights.ROLLING_MIN_DIAS
     aj = r["ajuste"]
     assert aj["delta_energia_pct"] == pytest.approx(3.0, abs=0.2) and aj["delta_energia_mwh"] > 0
     assert aj["patch"]["paso"] == "forma" and aj["patch"]["body"]["estado"] == "editado"
@@ -327,8 +329,91 @@ def test_nivel_se_aplica_sobre_el_final_actual_y_el_delta_es_el_real():
     assert insights.recomendaciones(c, d)["recomendaciones"] == []
 
 
-def test_prioridad_de_sesgo_nunca_alta():
-    assert insights._prioridad_sesgo(-9.0) == "media" and insights._prioridad_sesgo(-0.8) == "baja"
+def test_sin_dias_suficientes_en_la_ventana_no_se_emite_ajuste():
+    """Con 13 semanas hay evidencia simple (>= 6 sábados) pero la regla solo actúa en 7 de los 8 días de la ventana."""
+    d = _datos(n_semanas=13)
+    semana = LUNES0 + timedelta(weeks=13)
+    hasta = (semana - timedelta(days=1)).isoformat()
+    assert insights._hay_evidencia(insights.sesgo_por_segmento(d, hasta=hasta)["sábado"])
+    val = insights.validar_rolling(d, "sábado", hasta)
+    assert val["dias_evaluados"] < insights.ROLLING_MIN_DIAS and val["pasa"] is False
+    assert insights.recomendaciones(_corrida(semana), d)["recomendaciones"] == []
+
+
+def test_filtro_exige_mejora_minima_de_wape_y_pct_de_dias(monkeypatch):
+    d = _datos()
+    hasta = (LUNES0 + timedelta(weeks=N_SEMANAS, days=-1)).isoformat()
+    assert insights.validar_rolling(d, "sábado", hasta)["pasa"] is True
+    monkeypatch.setattr(insights, "ROLLING_MIN_MEJORA_WAPE_PP", 50.0)
+    assert insights.validar_rolling(d, "sábado", hasta)["pasa"] is False
+    monkeypatch.undo()
+    assert insights.ROLLING_MIN_DIAS >= 8 and insights.ROLLING_MIN_MEJORA >= 0.75
+    assert insights.ROLLING_MIN_MEJORA_WAPE_PP == pytest.approx(0.3)
+
+
+def test_tendencia_no_empuja_el_siguiente_paso_ni_cuenta_como_alta():
+    d = _datos()
+    semana = LUNES0 + timedelta(weeks=N_SEMANAS)
+    r = insights.resumen(_corrida(semana), d)
+    k = r["kpis"]["recomendaciones"]
+    assert k == {"total": 1, "alta": 0, "del_sistema": 0, "tendencia_reciente": 1}
+    assert r["siguiente_paso"]["accion"] == "aprobar"
+    assert r["dias"][5]["n_recomendaciones"] == 1 and r["dias"][5]["estado"] == "ok"
+
+
+def test_clima_info_no_es_recomendacion_accionable():
+    semana = date(2026, 6, 29)
+    a = Alert("info", "CLIMA_OBSERVADO", "x", [], {"temp_media": 24.0})
+    c = _corrida(semana, alertas=[("control", a)])
+    assert [i["id"] for i in insights.insights_de_alertas(c)] == ["clima-semana"]
+    assert insights.recomendaciones(c, insights.Datos())["recomendaciones"] == []
+    r = insights.resumen(c, insights.Datos())
+    assert r["siguiente_paso"]["accion"] == "aprobar" and all(x["estado"] == "ok" for x in r["dias"])
+    # el clima extremo (warning) sí es accionable
+    w = _corrida(semana, alertas=[("control", Alert("warning", "CLIMA_OBSERVADO", "x", [], {"temp_media": 35.0}))])
+    assert insights.resumen(w, insights.Datos())["siguiente_paso"]["accion"] == "revisar_recomendaciones"
+
+
+def test_corrida_reemplazada_responde_ya_aprobada():
+    c = _corrida(date(2026, 6, 29), estado="reemplazada",
+                 alertas=[("control", Alert("warning", "SIN_EVIDENCIA_NIVEL", "x", ["2026-07-01"]))])
+    r = insights.resumen(c, insights.Datos())
+    assert r["siguiente_paso"]["accion"] == "ya_aprobada" and "aprobada" in r["siguiente_paso"]["accion"]
+
+
+def test_textos_festivos_fuente_alterna_y_bloqueos_por_curva():
+    a = Alert("info", "FESTIVOS_FUENTE_ALTERNA", "técnico", [], {"fuente_festivos": "x"})
+    ins = insights._expandir_alerta(a)
+    assert len(ins) == 1 and "calendario" in ins[0]["texto"].lower() and ins[0]["titulo"] != "Aviso del sistema"
+    b = Alert("bloqueo", "VALORES_NEGATIVOS", "x", ["2026-07-01"])
+    t = insights._expandir_alerta(b)[0]
+    assert t["nivel"] == "critico" and "miércoles 1" in t["texto"] and "{" not in t["texto"]
+    sf = Alert("warning", "SIN_FORMA", "técnico", ["2026-07-01"])
+    assert len(insights._expandir_alerta(sf)) == 1  # ya no se oculta
+    assert "{dias}" not in insights._expandir_alerta(Alert("bloqueo", "RECONCILIACION_ROTA", "x", []))[0]["texto"]
+
+
+def test_loo_forma_conserva_la_energia_como_corregir_curva():
+    rng = np.random.default_rng(1)
+    R = 400 * FORMA * (1 + 0.02 * rng.standard_normal((6, 24)))
+    F = R * 0.9 * (1 + 0.01 * rng.standard_normal((6, 24)))
+    esperado = []
+    for i in range(6):
+        m = np.arange(6) != i
+        sg = {"factores_hora": np.mean(R[m] / F[m], axis=0)}
+        esperado.append(insights.wape(insights._corregir_curva(sg, F[i], "forma"), R[i]))
+    assert insights._loo_error(F, R, True) == pytest.approx(float(np.mean(esperado)))
+
+
+def test_corte_semana_y_helpers():
+    from src.adjustments import data
+    assert data.corte_semana(date(2026, 7, 3)) == date(2026, 6, 27)  # sábado antes del lunes 29 jun
+    assert data.corte_semana(date(2026, 6, 29)) == date(2026, 6, 27)
+    assert insights.festivos_por_defecto(["2026-06-29"]) and insights.TIPOS_DIA == data.TIPOS_DIA
+
+
+def test_cobertura_medida_con_fecha():
+    assert "2026-11-14" in insights.COBERTURA_MEDIDA["nota"]
 
 
 def test_banda_json_n_semanas_respeta_filtros():
@@ -418,9 +503,9 @@ def test_resumen_forma_y_valores():
     assert k["energia_semana_anterior_mwh"] is not None and k["variacion_vs_anterior_pct"] == pytest.approx(0.0, abs=1.0)
     assert 0 <= k["pico_hora"] <= 23 and k["pico_fecha"] in c.fechas
     assert k["error_reciente_tendencia"] in ("mejorando", "estable", "empeorando", "sin_datos")
-    assert len(r["dias"]) == 7 and r["dias"][5]["estado"] == "revisar" and r["dias"][5]["n_recomendaciones"] == 1
+    assert len(r["dias"]) == 7 and r["dias"][5]["estado"] == "ok" and r["dias"][5]["n_recomendaciones"] == 1
     assert r["dias"][0]["estado"] == "ok" and r["dias"][0]["ajuste_pct"] == 0.0
-    assert r["siguiente_paso"]["accion"] == "revisar_recomendaciones"
+    assert r["siguiente_paso"]["accion"] == "aprobar"  # solo una tendencia reciente: no empuja la revisión
     assert k["recomendaciones"]["total"] == 1
     assert insights.resumen(_corrida(semana, estado="aprobada"), d)["siguiente_paso"]["accion"] == "ya_aprobada"
     sin = insights.resumen(_corrida(semana), _datos(sesgo_sabado=0.0))

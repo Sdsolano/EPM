@@ -64,40 +64,35 @@ async def _reales(ucp: str) -> Dict[str, Any]:
     return {}
 
 
-def _aprobadas(store: Optional[Store], ucp: str, desde: Optional[date] = None, hasta: Optional[date] = None,
-               limite: int = 60) -> Dict[str, Dict[str, Any]]:
+def _aprobadas(store: Optional[Store], ucp: str, hasta: date, semanas: int) -> Dict[str, Dict[str, Any]]:
     """
-    {semana_inicio: curvas finales} de las corridas aprobadas en [desde, hasta] (tolerante: sin store o con error → {}).
-    El store devuelve las más recientes primero y acota `limite` a 500.
+    {semana_inicio: curvas finales} de las corridas aprobadas de las `semanas` semanas que terminan en el lunes `hasta`
+    (tolerante: sin store o con error → {}). El store devuelve las más recientes primero (y acota `limite` a 500): ante
+    varias aprobadas de la misma semana prevalece la más reciente.
     """
     if store is None or not hasattr(store, "list_runs"):
         return {}
     try:
         out: Dict[str, Dict[str, Any]] = {}
-        for run in store.list_runs(ucp, desde, hasta, limite):
+        for run in store.list_runs(ucp, hasta - timedelta(weeks=semanas), hasta, min(500, (semanas + 2) * 6)):
             meta = run["meta"]
-            if meta.get("estado") != ESTADO_APROBADA:
-                continue
-            out[str(meta["semana_inicio"])[:10]] = pl.final_curves(run["records"])
+            if meta.get("estado") == ESTADO_APROBADA:
+                out.setdefault(str(meta["semana_inicio"])[:10], pl.final_curves(run["records"]))
         return out
     except Exception as e:  # noqa: BLE001 — opcional: la precisión sigue con el CSV
         logger.warning("[insights] no se pudieron leer corridas aprobadas de %s: %s", ucp, e)
         return {}
 
 
-def _aprobadas_ventana(store: Optional[Store], ucp: str, hasta: date, semanas: int) -> Dict[str, Dict[str, Any]]:
-    """Aprobadas de las `semanas` semanas que terminan en el lunes `hasta` (con margen por borradores repetidos)."""
-    return _aprobadas(store, ucp, hasta - timedelta(weeks=semanas), hasta, limite=min(500, (semanas + 2) * 6))
-
-
-def _datos(ucp: str, reales: Dict[str, Any], store: Optional[Store], aprobadas: bool = True,
-           semanas: int = 12, hasta: Optional[date] = None) -> insights.Datos:
+def _datos(ucp: str, reales: Dict[str, Any], store: Optional[Store] = None, semanas: int = 12,
+           hasta: Optional[date] = None) -> insights.Datos:
+    """Datos de cálculo; con `store` incluye las corridas aprobadas de las `semanas` semanas hasta `hasta`."""
     emitidos, semana_de = insights.cargar_emitidos(ucp)
     fechas = list(reales)[-1:] + list(emitidos)[:1] + list(emitidos)[-1:]
     apr: Dict[str, Dict[str, Any]] = {}
-    if aprobadas:
+    if store is not None:
         ref = hasta or (date.fromisoformat(max(reales)) if reales else date.today())
-        apr = _aprobadas_ventana(store, ucp, ref - timedelta(days=ref.weekday()), semanas)
+        apr = _aprobadas(store, ucp, data.lunes_de(ref), semanas)
     return insights.Datos(
         emitidos=emitidos, semana_de=semana_de, reales=reales,
         festivos=insights.festivos_por_defecto(fechas), aprobadas=apr,
@@ -110,7 +105,7 @@ async def _cargar_corrida(run_id: str, store: Optional[Store]) -> Tuple[insights
     records = pl.migrar_records(saved["records"])
     corrida = insights.corrida_desde(saved["meta"], records, pl.final_curves(records))
     reales = await _reales(corrida.ucp)
-    datos = await run_in_threadpool(_datos, corrida.ucp, reales, store, False)
+    datos = await run_in_threadpool(_datos, corrida.ucp, reales)
     datos.festivos = set(datos.festivos) | set(corrida.festivos)  # los festivos de la corrida también cuentan
     return corrida, datos
 
@@ -122,8 +117,8 @@ async def get_resumen(run_id: str = Query(...), store: Optional[Store] = Depends
 
     def _calc() -> Dict[str, Any]:
         # la confianza usa las SEMANAS_CONFIANZA semanas anteriores a la corrida
-        datos.aprobadas = _aprobadas_ventana(store, corrida.ucp, corrida.semana_inicio - timedelta(days=7),
-                                             insights.SEMANAS_CONFIANZA + 1)
+        datos.aprobadas = _aprobadas(store, corrida.ucp, corrida.semana_inicio - timedelta(days=7),
+                                     insights.SEMANAS_CONFIANZA + 1)
         return {"run_id": run_id, **insights.resumen(corrida, datos)}
     return await run_in_threadpool(_calc)
 
@@ -141,7 +136,7 @@ async def get_precision(
     reales = await _reales(ucp)
 
     def _calc() -> Dict[str, Any]:
-        out = insights.precision(_datos(ucp, reales, store, True, semanas, hasta), semanas=semanas, hasta=hasta)
+        out = insights.precision(_datos(ucp, reales, store, semanas, hasta), semanas=semanas, hasta=hasta)
         out["ucp"] = ucp
         return out
     return await run_in_threadpool(_calc)
@@ -151,9 +146,9 @@ async def get_precision(
 async def get_recomendaciones(run_id: str = Query(...), store: Optional[Store] = Depends(ajustes_router.get_store_dep)
                               ) -> Dict[str, Any]:
     """
-    Recomendaciones por día. Las de sesgo son SUGERENCIAS DEL ANALISTA sobre una tendencia reciente (no una predicción ni una
-    corrección automática): B2 midió que las correcciones de sesgo no mejoran de forma consistente fuera de muestra, así que solo
-    se emiten si la misma regla, simulada sin fuga en las últimas semanas, habría reducido el error. Sin promesa de mejora.
+    Recomendaciones por día. Las alertas del sistema (`respaldo: "alerta_del_sistema"`) son las accionables. Las de sesgo son
+    TENDENCIAS RECIENTES de referencia (`respaldo: "tendencia_reciente"`, prioridad baja, `validado_fuera_de_muestra: false`): B2 y
+    B5 midieron que corregir el sesgo no mejora fuera de muestra, así que se emiten solo con evidencia estricta y sin promesa.
     """
     corrida, datos = await _cargar_corrida(run_id, store)
 
@@ -184,10 +179,13 @@ async def get_banda(
         ucp = corrida.ucp
     else:
         ucp = ajustes_router._validar_ucp(ucp)
-        datos = await run_in_threadpool(_datos, ucp, await _reales(ucp), store, False)
+        datos = await run_in_threadpool(_datos, ucp, await _reales(ucp))
 
     # con run_id la muestra termina por defecto en min(semana − 1 día, fecha_corte): sin fuga hacia la semana evaluada
-    fin = fecha_fin.isoformat() if fecha_fin else (corrida.fecha_fin_sin_fuga if corrida is not None else None)
+    # y un `fecha_fin` explícito no puede pasar de ese corte (min): con run_id nunca hay fuga hacia la semana evaluada
+    fin = fecha_fin.isoformat() if fecha_fin else None
+    if corrida is not None:
+        fin = min(fin, corrida.fecha_fin_sin_fuga) if fin else corrida.fecha_fin_sin_fuga
     ini = fecha_inicio.isoformat() if fecha_inicio else None
 
     def _calc() -> Dict[str, Any]:

@@ -177,9 +177,8 @@ def _ventana(pares: Dict[date, Any], fecha_corte: date, semanas: int) -> List[da
 # ---------------------------------------------------------------------------
 
 def _log_errores(pares: Dict[date, Tuple[np.ndarray, np.ndarray]], fechas: Iterable[date]) -> np.ndarray:
-    """Matriz [n, 24] de log(real/pronóstico)."""
-    filas = [np.log(pares[d][1] / pares[d][0]) for d in fechas]
-    return np.vstack(filas) if filas else np.empty((0, 24))
+    """Matriz [n, 24] de log(real/pronóstico); el llamador garantiza al menos un día."""
+    return np.vstack([np.log(pares[d][1] / pares[d][0]) for d in fechas])
 
 
 def _cuantiles_horarios(E: np.ndarray, q_bajo: float, q_alto: float, pool: int) -> Tuple[np.ndarray, np.ndarray]:
@@ -344,11 +343,6 @@ def _factor(pares: Dict[date, Tuple[np.ndarray, np.ndarray]], fechas: List[date]
 # Clima (opt-in, experimental)
 # ---------------------------------------------------------------------------
 
-def _corte_semana(d: date) -> date:
-    """Sábado anterior al lunes de la semana de `d` (corte del analista)."""
-    return data.lunes_de(d) - timedelta(days=2)
-
-
 def anomalia_temperatura(clima_dia: Mapping[str, float], d: date, dias_previos: int = 28) -> Optional[float]:
     """
     T media del día `d` − T media de los `dias_previos` días hasta el corte de su semana (sábado anterior).
@@ -357,7 +351,7 @@ def anomalia_temperatura(clima_dia: Mapping[str, float], d: date, dias_previos: 
     T = {str(k)[:10]: float(v) for k, v in clima_dia.items() if v is not None and math.isfinite(float(v))}
     if d.isoformat() not in T:
         return None
-    corte = _corte_semana(d)
+    corte = data.corte_semana(d)
     previos = [T[(corte - timedelta(days=i)).isoformat()] for i in range(dias_previos)
                if (corte - timedelta(days=i)).isoformat() in T]
     if len(previos) < max(1, dias_previos // 2):
