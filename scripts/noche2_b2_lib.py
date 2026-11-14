@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Dict, List, Optional
 
 import numpy as np
 
@@ -123,7 +123,6 @@ def corregir(pred: np.ndarray, ds: DS, seg: str = "tipo", N: int = 8, k0: float 
     flat_r = ds.real.reshape(-1, 24)
     flat_o = ds.ordn.reshape(-1)
     flat_s = S.reshape(-1)
-    flat_t = ds.tipo.reshape(-1)
     out = pred.copy()
     for w in range(W):
         c = ds.corte[w]

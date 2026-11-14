@@ -1,10 +1,10 @@
 # LOG_B — Pista B
 
 ## Estado actual
-- Hecho: contrato v1 (+v1.1, v1.2 en Cambios); B1 API insights (5 endpoints, tests); B2 investigacion de mejoras (ninguna candidata cumple la regla; bandas empiricas escala 1.2 medidas; correccion.py opt-in); B3 banda calibrada integrada. Suite: 755 passed, 12 skipped, 1 failed (christmas).
-- En curso: ronda 1 de revision (8 angulos + regresion, sonnet) contra `git diff main...HEAD` (solo archivos de la pista B; commits de docs de la Pista A tambien estan en la rama).
-- Falta: corregir hallazgos, verificacion estandar, REPORTE_B.md, commit final.
-- Verificar: pytest suite (ver arriba).
+- Hecho: contrato v1.2; B1 API insights; B2 investigacion (ninguna candidata activada); B3 banda calibrada. Commits b00a20a, f9352e2. Ronda 1 de revision COMPLETA (8 angulos + regresion + medicion de cobertura): regresion limpia (755 passed, 12 skipped, 1 christmas).
+- Hallazgos ronda 1: ALTO A1 (recomendaciones de sesgo prometen mejora que el backtest rolling NO confirma: Antioquia 2.63->2.58, Atlantico 5.22->5.54 peor); MEDIOS: nivel recomendado contradice el sesgo cuando final!=base, cobertura declarada inflada (medida real: Antioquia 87.6 %, Atlantico 80.2 % prueba, escala 1.2; sin escala 81.3/73.2), cache/event-loop del historico, list_runs 500; BAJOS: fuga banda con run_id (corte = semana-1), n_semanas_historial ignora filtros, ELECCIONES_IA sin texto, version null, duplicacion de helpers, codigo redundante, A3 historial CSV estatico (documentar).
+- En curso: agente de correccion B4. Al terminar: por el ALTO, repetir ronda COMPLETA (8 angulos + regresion) contra el diff actual.
+- Falta: ronda 2, REPORTE_B.md, commit final.
 
 ## Decisiones tomadas sin el usuario
 - Prefijo `/adjustments/insights/*` con router propio (sin conflicto con `/{run_id}`); endpoints dependientes de semana usan `run_id` (el demo persiste con Postgres).

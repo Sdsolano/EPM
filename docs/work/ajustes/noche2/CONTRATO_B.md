@@ -80,11 +80,12 @@ Recomendaciones por día con explicación en lenguaje de negocio y un ajuste sug
   "recomendaciones": [
     {
       "id": "sesgo-2026-07-04", "fecha": "2026-07-04", "dia": "sábado", "tipo_dia": "sabado",
-      "prioridad": "alta", "categoria": "nivel",
-      "titulo": "El sábado suele quedar corto",
-      "explicacion": "En los últimos 8 sábados el pronóstico se quedó 1.9 % por debajo de lo real. Sube el sábado en esa proporción.",
-      "evidencia": {"n": 8, "sesgo_pct": -1.9, "fuente": "historial"},
-      "impacto_esperado": "Reduce el error esperado de ~2.6 % a ~2.1 %" ,
+      "prioridad": "media", "categoria": "nivel",
+      "titulo": "Tendencia reciente: el sábado quedó corto",
+      "explicacion": "Tendencia reciente observada, no una predicción: en los últimos 8 sábados el pronóstico se quedó 1.9 % por debajo de lo real. Sugerencia: subir el sábado 1.9 % (+95 MWh) sobre lo que muestra hoy. En una prueba con semanas anteriores esta regla redujo el error en 6 de 8 días.",
+      "evidencia": {"n": 8, "sesgo_pct": -1.9, "fuente": "historial",
+                    "validacion": {"dias_evaluados": 8, "dias_mejora": 6, "pct_dias_mejora": 75}},
+      "impacto_esperado": "Basado en lo ocurrido en los últimos 8 sábados; no garantiza mejora.",
       "aplicable": true,
       "ajuste": {
         "resumen": "Subir el sábado 1.9 % (+95 MWh)", "delta_energia_pct": 1.9, "delta_energia_mwh": 95.0,
@@ -101,7 +102,10 @@ Recomendaciones por día con explicación en lenguaje de negocio y un ajuste sug
 informativa (p. ej. una alerta que requiere criterio humano). **Aplicar con 1 clic** = `PATCH /adjustments/{run_id}/steps/{patch.paso}`
 con `patch.body` + `version_esperada` (el front pone su `version` actual y su `usuario`). Las curvas editadas conservan el flujo
 estándar de ediciones (`curvas_calculadas`). Solo se emiten recomendaciones respaldadas por evidencia medida (sesgo/forma históricos
-con n ≥ 6 y efecto ≥ 0.5 %, o alertas reales del pipeline); nada inventado. `ya_resueltas` = ids de recomendaciones ya aplicadas
+con n ≥ 6 y efecto ≥ 0.5 %, validadas fuera de muestra, o alertas reales del pipeline); nada inventado. **Las de sesgo son
+sugerencias del analista sobre una tendencia reciente, no correcciones automáticas ni una predicción**: la prueba de B2/B4 midió que
+las correcciones de sesgo no mejoran de forma consistente fuera de muestra (Antioquia WAPE 2.63→2.58 empeorando 44 % de los días;
+Atlántico 5.22→5.54), por eso la UI no debe prometer mejora. `ya_resueltas` = ids de recomendaciones ya aplicadas
 (día ya editado en el paso correspondiente).
 
 ## 4. `GET /adjustments/insights/banda?ucp=&run_id=`  (o `&fecha_inicio=&fecha_fin=` + `tipo_dia`)
@@ -176,3 +180,35 @@ Series continuas de la semana (168 puntos = 7 días × 24 h, lunes 00:00 → dom
       prueba 81.9 %; ancho medio ≈ 9-10 % (Antioquia) y 18-21 % (Atlántico). El front puede mostrarlo como "cubre ~8 de cada 10 días
       (medido en backtest)".
   `resumen` no usa la banda (la `confianza` sale del WAPE reciente), no cambia.
+- v1.3 (2026-11-14, B4; corrección tras la ronda 1 de revisión; compatible hacia atrás salvo textos/prioridades):
+    - **Recomendaciones de sesgo honestas (A1).** `impacto_esperado` ya no promete una cifra de mejora: texto "Basado en lo ocurrido en
+      los últimos N <días>; no garantiza mejora." `prioridad` máxima `media` (`baja` si |sesgo| < 1 %). `titulo` empieza por
+      "Tendencia reciente: ..." y la `explicacion` aclara que es una tendencia observada, no una predicción, e indica el delta real
+      (% y MWh) y el resultado de la prueba fuera de muestra. `evidencia` agrega `validacion` `{dias_evaluados, dias_mejora, pct_dias_mejora}`.
+      `categoria` sigue siendo `nivel|forma`. B2 midió que las correcciones de sesgo no mejoran de forma consistente: son sugerencias
+      del analista, no automáticas.
+    - **Validación rolling fuera de muestra en el gating.** Además de n ≥ 6, |sesgo| ≥ 0.5 %, consistencia ≥ 65 % y mejora leave-one-out,
+      el segmento debe pasar `insights.validar_rolling`: para cada día del segmento en las últimas 8 semanas (52 para festivos) se estima
+      el sesgo solo con días hasta el sábado previo a su semana, se aplica la misma regla (nivel o forma) y se compara el error; pasa si
+      actuó en ≥ 4 días, redujo el error en ≥ 60 % y mejoró el WAPE agregado. Si no pasa **no se emite la recomendación** (ni cuenta en
+      `ya_resueltas`). Con los datos reales (24 semanas): Antioquia 1 de 26 casos con evidencia simple pasa (4 %); Atlántico 8 de 50 (16 %,
+      todos jueves/miércoles con 4-6 días de prueba): se suprime ~90 % de lo que antes se recomendaba.
+    - **Nivel sobre lo que muestra `final` (M1).** `curva_sugerida = final × factor_nivel`; el delta (`delta_energia_pct/mwh`) y el
+      `resumen` son el cambio real sobre `final`. Si el pipeline o el analista ya movieron el día (final vs base) en la dirección del sesgo
+      al menos la mitad de lo necesario, no se sugiere; tampoco si el signo del delta contradice el sesgo.
+    - **Cobertura de banda medida con esta implementación (M2).** `cobertura_medida` pasa a: Antioquia prueba 0.876, Atlántico 0.802
+      (sin escala 0.813 / 0.732; ancho medio relativo 9.9 % / 20.1 %; mínimos por segmento: festivo Antioquia 71 % con 7 días, sábado Antioquia
+      82 %). Nuevas claves `antioquia_sin_escala`, `atlantico_sin_escala`, `ancho_medio_relativo_pct`. `ESCALA_BANDA = 1.2` se define en
+      `insights.py` sin importar `correccion`; `correccion.py` es opt-in y no está cableado al pipeline (su `tablas_banda` es el
+      estimador experimental de B2: log-error, pool de horas, ventana móvil; distinto del de insights).
+    - **Sin fuga con `run_id` (B-1).** `banda` (y las bandas de `series`) con `run_id` cortan la muestra en
+      `min(semana_inicio − 1 día, fecha_corte de la corrida)` por defecto; un `fecha_fin` explícito se respeta. La respuesta de `banda`
+      agrega `muestra: {fecha_inicio, fecha_fin}` (la muestra realmente usada). La evidencia de sesgo usa el mismo corte.
+    - `banda.n_semanas_historial` respeta `fecha_inicio`/`fecha_fin`/`tipo_dia` (B-2). `version` de las respuestas nunca es `null`:
+      si la corrida no la trae, 1 (B-5). Alerta `ELECCIONES_IA` con texto de negocio "Posibles elecciones o votación" (B-4).
+    - **Historial estático (A3).** `src/adjustments/precision_data/*_k1.csv` es una foto: Antioquia termina el 2026-06-28, Atlántico el
+      2026-05-03. La recomendación por sesgo caduca con `MAX_ANTIGUEDAD_DIAS` (140 días antes de la semana objetivo): para semanas
+      posteriores no se emite y `precision`/`banda` no ven datos nuevos. Para refrescarlo: regenerar las curvas k1 y correr
+      `scripts/generar_historial_pronosticos.py` (o, pendiente, persistir los pronósticos de las corridas aprobadas).
+    - Rendimiento (M3): el histórico real se cachea por (ruta, mtime) con el cargador por defecto (lru de 8) y se normaliza en
+      threadpool; `list_runs` de aprobadas se acota con `desde`/`limite` según el endpoint.

@@ -14,12 +14,16 @@ None / [] / "sin_datos".
 
 Umbrales (documentados aquí, no son parámetros del modelo):
 - Confianza: WAPE reciente ≤ 3 % alta, ≤ 6 % media, > 6 % baja (`UMBRAL_CONFIANZA_ALTA/MEDIA`).
-- Recomendaciones de sesgo: n ≥ 6 días, |sesgo| ≥ 0.5 %, mismo signo en ≥ 65 % de los días, y que la corrección
-  reduzca el error medido sin mirar el día evaluado (leave-one-out).
-- Banda: cuantiles empíricos p10/p50/p90 con ≥ 5 casos por tipo de día; festivo con < 10 casos usa domingo.
-
-Punto de extensión para otro generador de correcciones medidas: `sesgo_por_segmento` (mismo formato de
-retorno) se puede reemplazar pasando `proveedor_sesgo=` a `recomendaciones`.
+- Recomendaciones de sesgo (tendencia reciente, NO una predicción): n ≥ 6 días, |sesgo| ≥ 0.5 %, mismo signo en ≥ 65 % de
+  los días, la corrección reduce el error medido sin mirar el día evaluado (leave-one-out) Y la misma regla, simulada sin
+  fuga con corte creciente en las últimas ~8 semanas (52 para festivos), reduce el error en ≥ 60 % de los días y mejora el
+  WAPE agregado (`validar_rolling`). Si falla la validación fuera de muestra, no se emite recomendación. Prioridad máxima
+  "media"; ninguna promesa numérica de mejora (backtest B2/B4: las correcciones de sesgo no mejoran de forma consistente).
+- Banda: cuantiles empíricos p10/p50/p90 con ≥ 5 casos por tipo de día; festivo con < 10 casos usa domingo. Con run_id, la
+  muestra de errores termina en min(semana − 1 día, fecha_corte de la corrida): sin fuga.
+- Historial estático: `precision_data/*_k1.csv` es una foto (Antioquia termina 2026-06-28, Atlántico 2026-05-03). La evidencia
+  de sesgo caduca con `MAX_ANTIGUEDAD_DIAS`; para refrescarla, correr `scripts/generar_historial_pronosticos.py` tras regenerar
+  las curvas k1 (o persistir los pronósticos de las corridas aprobadas: pendiente).
 """
 
 from __future__ import annotations
@@ -30,13 +34,12 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 import numpy as np
 import pandas as pd
 
 from src.adjustments import data
-from src.adjustments.correccion import DEFAULTS_BANDA
 from src.adjustments.types import Alert, StepRecord, parse_date, validar_curva
 
 logger = logging.getLogger(__name__)
@@ -56,16 +59,24 @@ MAX_ANTIGUEDAD_DIAS = 140      # la evidencia de sesgo no puede terminar más de
 MIN_N_BANDA = 5
 MIN_FESTIVOS_BANDA = 10
 NIVEL_CONFIANZA_BANDA = 0.8
-# Factor de calibración de la banda (misma constante que B2, `correccion.DEFAULTS_BANDA["escala"]`). Los cuantiles p10/p90
-# del error relativo se multiplican por este factor: sin él la banda subcubre (backtest sin fuga de 21 semanas: cobertura
-# 71-76 % frente a 80 % nominal); con 1.2 (elegido en calibración) cubre 79-91 %. p50 no se escala.
-ESCALA_BANDA = float(DEFAULTS_BANDA["escala"])
+ROLLING_SEMANAS = 8            # ventana de la validación fuera de muestra (días de semana)
+ROLLING_SEMANAS_FESTIVO = 52   # los festivos son pocos: ventana más larga
+ROLLING_MIN_DIAS = 4           # días mínimos en los que la regla habría actuado para poder validarla
+ROLLING_MIN_MEJORA = 0.60      # fracción mínima de días en que la corrección redujo el error
+# Factor de calibración de la banda: los cuantiles p10/p90 del error relativo se multiplican por este factor (p50 no). Sin
+# él la banda de 80 % subcubre; con 1.2 (elegido en la calibración de B2) cubre más. Constante propia de este módulo: no se
+# importa de `correccion` (opt-in, otro estimador).
+ESCALA_BANDA = 1.2
 COBERTURA_MEDIDA = {
     "nominal": 0.8,
-    "antioquia_prueba": 0.913,
-    "atlantico_prueba": 0.819,
-    "nota": "Medida en backtest sin fuga de 21 semanas con escala 1.2 (Antioquia: calibración 79.1 %, prueba 91.3 %; "
-            "Atlántico: calibración 83.5 %, prueba 81.9 %). Sin escala la cobertura era 71-76 %.",
+    "antioquia_prueba": 0.876,
+    "atlantico_prueba": 0.802,
+    "antioquia_sin_escala": 0.813,
+    "atlantico_sin_escala": 0.732,
+    "ancho_medio_relativo_pct": {"antioquia": 9.9, "atlantico": 20.1},
+    "nota": "Medida con esta implementación (error relativo simple, escala 1.2 sobre p10/p90, banda con todo el historial "
+            "previo a cada semana) en backtest sin fuga de 21 semanas: Antioquia 87.6 %, Atlántico 80.2 % (sin escala "
+            "81.3 % / 73.2 %). Mínimos por segmento: festivo Antioquia 71 % (7 días), sábado Antioquia 82 %. No es una garantía.",
 }
 SEMANAS_CONFIANZA = 8
 TENDENCIA_UMBRAL_PP = 0.3
@@ -358,7 +369,9 @@ def tablas_banda(d: Datos, fecha_inicio: Optional[str] = None, fecha_fin: Option
     return out
 
 
-def banda_json(tablas: Dict[str, Dict[str, Any]], d: Datos, tipo: Optional[str] = None) -> Dict[str, Any]:
+def banda_json(tablas: Dict[str, Dict[str, Any]], d: Datos, tipo: Optional[str] = None,
+               fecha_inicio: Optional[str] = None, fecha_fin: Optional[str] = None) -> Dict[str, Any]:
+    """JSON de la banda; `n_semanas_historial` cuenta las semanas de la muestra realmente usada (filtros y tipo)."""
     por_tipo = {}
     for t in TIPOS_DIA:
         if tipo is not None and t != tipo:
@@ -370,7 +383,8 @@ def banda_json(tablas: Dict[str, Dict[str, Any]], d: Datos, tipo: Optional[str] 
         if "nota" in x:
             item["nota"] = x["nota"]
         por_tipo[t] = item
-    semanas = {d.semana_de[f] for f in _pares(d) if f in d.semana_de}
+    semanas = {d.semana_de[f] for f in _pares(d, fecha_inicio, fecha_fin)
+               if f in d.semana_de and (tipo is None or d.tipo(f) == tipo)}
     return {"nivel_confianza": NIVEL_CONFIANZA_BANDA, "metodo": "cuantiles_empiricos_error_relativo",
             "escala_calibracion": ESCALA_BANDA, "cobertura_medida": dict(COBERTURA_MEDIDA),
             "n_semanas_historial": len(semanas), "por_tipo_dia": por_tipo}
@@ -387,12 +401,12 @@ def aplicar_banda(curva: Any, tipo: str, tablas: Dict[str, Dict[str, Any]]
 
 
 # ---------------------------------------------------------------------------
-# Sesgo por segmento (punto de extensión para B2)
+# Sesgo por segmento
 # ---------------------------------------------------------------------------
 
-def _segmento(d: Datos, fecha: str) -> str:
-    t = d.tipo(fecha)
-    return data.TIPO_FESTIVO if t == data.TIPO_FESTIVO else nombre_dia(fecha)
+def _segmento(tipo: str, fecha: Any) -> str:
+    """Segmento de sesgo: "festivo" o el día de semana (no festivo). Único lugar donde se define."""
+    return data.TIPO_FESTIVO if tipo == data.TIPO_FESTIVO else nombre_dia(fecha)
 
 
 def _loo_error(F: np.ndarray, R: np.ndarray, forma: bool) -> float:
@@ -419,29 +433,39 @@ def sesgo_por_segmento(d: Datos, hasta: Optional[str] = None) -> Dict[str, Dict[
     """
     seg_fechas: Dict[str, List[str]] = {}
     for f in _pares(d, hasta=hasta):
-        seg_fechas.setdefault(_segmento(d, f), []).append(f)
+        seg_fechas.setdefault(_segmento(d.tipo(f), f), []).append(f)
     out: Dict[str, Dict[str, Any]] = {}
     for seg, fechas in seg_fechas.items():
-        fechas = fechas[-(OCURRENCIAS_FESTIVO if seg == data.TIPO_FESTIVO else OCURRENCIAS_DIA_SEMANA):]
-        n = len(fechas)
-        if n < 3:
-            continue
-        F = np.vstack([d.emitidos[f] for f in fechas])
-        R = np.vstack([d.reales[f] for f in fechas])
-        en = (F.sum(axis=1) - R.sum(axis=1)) / R.sum(axis=1)
-        s = float(np.mean(en))
-        signo = np.sign(s)
-        consistencia = float(np.mean(np.sign(en) == signo)) if signo != 0 else 0.0
-        antes = float(np.mean([wape(F[i], R[i]) for i in range(n)]))
-        out[seg] = {
-            "n": n, "sesgo_pct": s * 100, "consistencia": consistencia, "fechas": fechas,
-            "error_antes_pct": antes,
-            "error_nivel_pct": _loo_error(F, R, False) if n >= 4 else None,
-            "error_forma_pct": _loo_error(F, R, True) if n >= 4 else None,
-            "factor_nivel": 1.0 / (1.0 + s),
-            "factores_hora": np.mean(R / F, axis=0),
-        }
+        sg = _stats_segmento(d, fechas[-_ocurrencias(seg):])
+        if sg is not None:
+            out[seg] = sg
     return out
+
+
+def _ocurrencias(seg: str) -> int:
+    return OCURRENCIAS_FESTIVO if seg == data.TIPO_FESTIVO else OCURRENCIAS_DIA_SEMANA
+
+
+def _stats_segmento(d: Datos, fechas: List[str]) -> Optional[Dict[str, Any]]:
+    """Estadísticas de sesgo de un conjunto de días emitidos con real (None si hay < 3)."""
+    n = len(fechas)
+    if n < 3:
+        return None
+    F = np.vstack([d.emitidos[f] for f in fechas])
+    R = np.vstack([d.reales[f] for f in fechas])
+    en = (F.sum(axis=1) - R.sum(axis=1)) / R.sum(axis=1)
+    s = float(np.mean(en))
+    signo = np.sign(s)
+    consistencia = float(np.mean(np.sign(en) == signo)) if signo != 0 else 0.0
+    antes = float(np.mean([wape(F[i], R[i]) for i in range(n)]))
+    return {
+        "n": n, "sesgo_pct": s * 100, "consistencia": consistencia, "fechas": fechas,
+        "error_antes_pct": antes,
+        "error_nivel_pct": _loo_error(F, R, False) if n >= 4 else None,
+        "error_forma_pct": _loo_error(F, R, True) if n >= 4 else None,
+        "factor_nivel": 1.0 / (1.0 + s),
+        "factores_hora": np.mean(R / F, axis=0),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -453,7 +477,7 @@ class Corrida:
     ucp: str
     semana_inicio: date
     estado: str
-    version: Optional[int]
+    version: int
     base: Dict[str, List[Optional[float]]]
     final: Dict[str, List[Optional[float]]]
     alertas: List[Tuple[str, Alert]]            # (paso, alerta)
@@ -461,10 +485,23 @@ class Corrida:
     estados_paso: Dict[str, str]
     ref_inicio: Optional[date]
     festivos: Set[str]
+    fecha_corte: Optional[date] = None          # último dato real con el que se emitió la corrida
 
     @property
     def fechas(self) -> List[str]:
         return [(self.semana_inicio + timedelta(days=i)).isoformat() for i in range(7)]
+
+    def tipo(self, fecha: str) -> str:
+        """laboral / sabado / domingo / festivo de una fecha según los festivos de la corrida."""
+        return data.tipo_dia(fecha, self.festivos)
+
+    @property
+    def fecha_fin_sin_fuga(self) -> str:
+        """Último día con real que se puede usar como evidencia sin fuga: min(semana − 1, fecha_corte)."""
+        corte = self.semana_inicio - timedelta(days=1)
+        if self.fecha_corte is not None:
+            corte = min(corte, self.fecha_corte)
+        return corte.isoformat()
 
 
 def corrida_desde(meta: Dict[str, Any], records: List[StepRecord], final: Dict[str, Any]) -> Corrida:
@@ -486,16 +523,20 @@ def corrida_desde(meta: Dict[str, Any], records: List[StepRecord], final: Dict[s
     festivos = {str(f)[:10] for f in (extras.get("festivos") or [])}
     if not festivos:  # corridas sin festivos guardados: calendario oficial (sin red)
         festivos = festivos_por_defecto([(semana + timedelta(days=i)).isoformat() for i in range(7)])
+    try:
+        corte = parse_date(meta.get("fecha_corte"))
+    except (TypeError, ValueError):
+        corte = None
+    try:
+        version = int(meta.get("version") or 1)
+    except (TypeError, ValueError):
+        version = 1
     return Corrida(
-        ucp=meta["ucp"], semana_inicio=parse_date(meta["semana_inicio"]), estado=str(meta.get("estado") or "borrador"),
-        version=meta.get("version"), base=dict(base), final=dict(final), alertas=alertas, editadas=editadas,
+        ucp=meta["ucp"], semana_inicio=semana, estado=str(meta.get("estado") or "borrador"),
+        version=version, base=dict(base), final=dict(final), alertas=alertas, editadas=editadas,
         estados_paso={r.paso: str(getattr(r.estado, "value", r.estado)) for r in records},
-        ref_inicio=ref, festivos=festivos,
+        ref_inicio=ref, festivos=festivos, fecha_corte=corte,
     )
-
-
-def _energia(curva: Any) -> Optional[float]:
-    return float(np.sum(np.asarray(curva, dtype=float))) if validar_curva(curva) is None else None
 
 
 def _curva_valida(curvas: Dict[str, Any], f: str) -> Optional[np.ndarray]:
@@ -541,6 +582,10 @@ _TEXTOS_ALERTA: Dict[str, Tuple[str, str]] = {
         "Sin semana de comparación", "No hay datos de una semana comparable; el ajuste se apoya solo en el modelo."),
     "REFERENCIA_SIN_HOMOLOGO": (
         "Festivo sin día equivalente en años anteriores", "No se encontró un festivo equivalente en años pasados; se comparó con la misma semana del año anterior."),
+    "ELECCIONES_IA": (
+        "Posibles elecciones o votación",
+        "Se detectaron días con posibles elecciones ({dias}); no están verificados y no se ajustó ninguna curva. "
+        "Confírmalos antes de tocar el pronóstico."),
 }
 _INFO_OCULTAS = {"PARAMS_ANALOGOS_IGNORADOS", "NIVEL_ANCLA_ALTERNA", "FORMA_FUENTE_ALTERNA",
                  "REFERENCIA_AJUSTADA_A_LUNES", "ESPECIALES_EDICION_PRESERVADA", "ANALOGOS_NO_OBSERVADOS",
@@ -556,8 +601,8 @@ def _lista_dias(fechas: List[str]) -> str:
 
 def _nombre_festivo(fecha: str) -> Optional[str]:
     try:
-        from src.prediction.holiday_homology import colombia_holiday_map
-        nombre = colombia_holiday_map(int(fecha[:4])).get(fecha)
+        from src.prediction.holiday_homology import holiday_name_for_date
+        nombre = holiday_name_for_date(fecha)
     except Exception:  # noqa: BLE001 — el nombre es solo decorativo
         return None
     return nombre.replace(" (observado)", "") if nombre else None
@@ -567,7 +612,7 @@ def _nivel_insight(a: Alert) -> str:
     return "critico" if a.nivel == "bloqueo" else a.nivel
 
 
-def _expandir_alerta(a: Alert, c: Corrida) -> List[Dict[str, Any]]:
+def _expandir_alerta(a: Alert) -> List[Dict[str, Any]]:
     """Alerta del pipeline → insights (uno o varios) con texto de negocio."""
     fechas = [str(f)[:10] for f in a.fechas]
     if a.codigo == "FESTIVO_EN_SEMANA":
@@ -614,7 +659,7 @@ def insights_de_alertas(c: Corrida) -> List[Dict[str, Any]]:
     vistos: Set[str] = set()
     out: List[Dict[str, Any]] = []
     for _paso, a in c.alertas:
-        for i in _expandir_alerta(a, c):
+        for i in _expandir_alerta(a):
             if i["id"] not in vistos:
                 vistos.add(i["id"])
                 out.append(i)
@@ -634,12 +679,9 @@ def _articulo(seg: str) -> str:
     return "Los" if seg == "festivo" else "El"
 
 
-def _prioridad_sesgo(s: float, mejora: float) -> str:
-    if abs(s) >= 2.0 and mejora >= 0.5:
-        return "alta"
-    if abs(s) >= 1.0:
-        return "media"
-    return "baja"
+def _prioridad_sesgo(s: float) -> str:
+    """Tendencia reciente observada: nunca "alta" (no es una predicción ni una mejora garantizada)."""
+    return "media" if abs(s) >= 1.0 else "baja"
 
 
 def _paso_parche(c: Corrida) -> Optional[str]:
@@ -656,70 +698,135 @@ def _hay_evidencia(sg: Dict[str, Any]) -> bool:
                 or sg["error_nivel_pct"] is None or sg["error_nivel_pct"] >= sg["error_antes_pct"])
 
 
-def _rec_sesgo(c: Corrida, f: str, seg: str, sg: Dict[str, Any], paso: Optional[str]) -> Optional[Dict[str, Any]]:
-    """Recomendación de nivel/forma para el día `f` a partir del sesgo medido, o None si no hay evidencia."""
+def _categoria_regla(sg: Dict[str, Any]) -> str:
+    """"forma" si el reparto por horas mejora ≥ MEJORA_FORMA_PP frente a solo nivel; si no "nivel"."""
+    d_forma, d_nivel, antes = sg["error_forma_pct"], sg["error_nivel_pct"], sg["error_antes_pct"]
+    return "forma" if d_forma is not None and d_forma <= d_nivel - MEJORA_FORMA_PP and d_forma < antes else "nivel"
+
+
+def _corregir_curva(sg: Dict[str, Any], curva: np.ndarray, cat: str) -> np.ndarray:
+    """Aplica la regla de corrección sobre una curva: forma = factores por hora con la misma energía; nivel = factor único."""
+    if cat == "forma":
+        sug = curva * np.asarray(sg["factores_hora"], dtype=float)
+        return sug * (float(curva.sum()) / float(sug.sum()))
+    return curva * sg["factor_nivel"]
+
+
+def validar_rolling(d: Datos, seg: str, hasta: str) -> Dict[str, Any]:
+    """
+    Validación fuera de muestra de la regla de sesgo para un segmento. Para cada día del segmento en las últimas
+    `ROLLING_SEMANAS` semanas (52 para festivos) hasta `hasta`, estima el sesgo SOLO con días del segmento hasta el sábado
+    previo a su semana (corte de emisión del modelo), aplica la regla si habría tenido evidencia, y compara el error del día.
+    `pasa` = actuó en ≥ ROLLING_MIN_DIAS días, redujo el error en ≥ 60 % y mejoró el WAPE agregado.
+    """
+    semanas = ROLLING_SEMANAS_FESTIVO if seg == data.TIPO_FESTIVO else ROLLING_SEMANAS
+    fechas_seg = [f for f in _pares(d, hasta=hasta) if _segmento(d.tipo(f), f) == seg]
+    limite = (parse_date(hasta) - timedelta(weeks=semanas)).isoformat()
+    F_antes: List[np.ndarray] = []
+    F_desp: List[np.ndarray] = []
+    R_ok: List[np.ndarray] = []
+    mejoras = 0
+    for i, f in enumerate(fechas_seg):
+        if f <= limite:
+            continue
+        dia = parse_date(f)
+        corte = (dia - timedelta(days=dia.weekday() + 2)).isoformat()  # sábado anterior al lunes de su semana
+        previas = [g for g in fechas_seg[:i] if g <= corte][-_ocurrencias(seg):]
+        sg = _stats_segmento(d, previas)
+        if sg is None or not _hay_evidencia(sg):
+            continue
+        F, R = np.asarray(d.emitidos[f], dtype=float), np.asarray(d.reales[f], dtype=float)
+        corr = _corregir_curva(sg, F, _categoria_regla(sg))
+        e0, e1 = wape(F, R), wape(corr, R)
+        if e0 is None or e1 is None:
+            continue
+        mejoras += int(e1 < e0)
+        F_antes.append(F)
+        F_desp.append(corr)
+        R_ok.append(R)
+    n = len(R_ok)
+    out: Dict[str, Any] = {"dias_evaluados": n, "dias_mejora": mejoras, "pct_dias_mejora": None,
+                           "wape_antes_pct": None, "wape_despues_pct": None, "pasa": False}
+    if n == 0:
+        return out
+    R_all = np.vstack(R_ok)
+    w0, w1 = wape(np.vstack(F_antes), R_all), wape(np.vstack(F_desp), R_all)
+    out.update(pct_dias_mejora=mejoras / n, wape_antes_pct=_r(w0, 2), wape_despues_pct=_r(w1, 2))
+    out["pasa"] = bool(n >= ROLLING_MIN_DIAS and mejoras / n >= ROLLING_MIN_MEJORA
+                       and w0 is not None and w1 is not None and w1 < w0)
+    return out
+
+
+def _rec_sesgo(c: Corrida, f: str, seg: str, sg: Dict[str, Any], paso: Optional[str],
+               val: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    Sugerencia del analista a partir de la tendencia reciente del segmento (ya con evidencia y validación rolling).
+    La corrección se aplica sobre lo que hoy muestra `final`; el delta explicado es el real. Sin promesa de mejora.
+    """
     n, s = sg["n"], sg["sesgo_pct"]
-    if not _hay_evidencia(sg):
-        return None
     final = _curva_valida(c.final, f)
     base = _curva_valida(c.base, f)
     if final is None:
         return None
     e_final = float(final.sum())
-    antes, d_nivel, d_forma = sg["error_antes_pct"], sg["error_nivel_pct"], sg["error_forma_pct"]
-    usar_forma = d_forma is not None and d_forma <= d_nivel - MEJORA_FORMA_PP and d_forma < antes
+    cat = _categoria_regla(sg)
     dia = nombre_dia(f)
     ref_dia = "festivo" if seg == data.TIPO_FESTIVO else dia
-    if usar_forma:
+    festivo = seg == data.TIPO_FESTIVO
+    pl = _plural(ref_dia)
+    sug = _corregir_curva(sg, final, cat)
+    if cat == "forma":
         g = np.asarray(sg["factores_hora"], dtype=float)
-        sug = final * g
-        sug = sug * (e_final / float(sug.sum()))  # conserva la energía del día; cambia solo el reparto por hora
-        despues, cat = d_forma, "forma"
         desv = g / (np.sum(g * final) / e_final) - 1.0
         h = int(np.argmax(np.abs(desv)))
-        titulo = f"La forma del {ref_dia} suele desviarse" if seg != data.TIPO_FESTIVO else "La forma de los festivos suele desviarse"
-        explicacion = (f"En los últimos {n} {_plural(ref_dia)} el reparto por horas del pronóstico no coincidió con lo real, "
-                       f"sobre todo a las {h:02d}:00 (el pronóstico quedó {abs(desv[h]) * 100:.1f} % "
-                       f"{'corto' if desv[h] > 0 else 'alto'}). Se redistribuye el día sin cambiar su energía.")
+        titulo = ("Tendencia reciente: el reparto por horas de los festivos se desvió" if festivo
+                  else f"Tendencia reciente: el reparto por horas del {ref_dia} se desvió")
+        observado = (f"en los últimos {n} {pl} el reparto por horas del pronóstico no coincidió con lo real, "
+                     f"sobre todo a las {h:02d}:00 (el pronóstico quedó {abs(desv[h]) * 100:.1f} % "
+                     f"{'corto' if desv[h] > 0 else 'alto'})")
     else:
-        e_obj = (float(base.sum()) if base is not None else e_final) * sg["factor_nivel"]
-        if abs(e_obj / e_final - 1.0) * 100 < MIN_EFECTO_PCT:
-            return None  # el ajuste actual ya recoge el sesgo
-        sug = final * (e_obj / e_final)
-        despues, cat = d_nivel, "nivel"
+        if base is not None and base.sum() > 0:
+            movido = e_final / float(base.sum()) - 1.0
+            necesario = sg["factor_nivel"] - 1.0
+            if movido * necesario > 0 and abs(movido) >= 0.5 * abs(necesario):
+                return None  # el pipeline o el analista ya movieron el día en esa dirección
         corto = s < 0
-        titulo = (f"{_articulo(ref_dia)} {ref_dia} suele quedar {'corto' if corto else 'alto'}" if seg != data.TIPO_FESTIVO
-                  else f"Los festivos suelen quedar {'cortos' if corto else 'altos'}")
-        explicacion = (f"En los últimos {n} {_plural(ref_dia)} el pronóstico se quedó {abs(s):.1f} % por "
-                       f"{'debajo' if corto else 'encima'} de lo real. "
-                       f"{'Sube' if corto else 'Baja'} el día en esa proporción.")
+        titulo = (f"Tendencia reciente: los festivos quedaron {'cortos' if corto else 'altos'}" if festivo
+                  else f"Tendencia reciente: {_articulo(ref_dia).lower()} {ref_dia} quedó {'corto' if corto else 'alto'}")
+        observado = (f"en los últimos {n} {pl} el pronóstico se quedó {abs(s):.1f} % por "
+                     f"{'debajo' if corto else 'encima'} de lo real")
     sug = np.round(sug, 2)
     if not np.all(np.isfinite(sug)) or np.any(sug <= 0):
         return None
     delta_mwh = float(sug.sum()) - e_final
     delta_pct = delta_mwh / e_final * 100
-    if cat == "forma":
-        resumen = f"Redistribuir el {ref_dia} por horas (misma energía)"
-    else:
+    if cat == "nivel":
+        if abs(delta_pct) < MIN_EFECTO_PCT or delta_mwh * s > 0:  # sin efecto, o el signo contradice el sesgo medido
+            return None
         resumen = f"{'Subir' if delta_mwh > 0 else 'Bajar'} el {ref_dia} {abs(delta_pct):.1f} % ({delta_mwh:+.0f} MWh)"
+        accion = f"Sugerencia: {resumen[0].lower() + resumen[1:]} sobre lo que muestra hoy."
+    else:
+        resumen = f"Redistribuir el {ref_dia} por horas (misma energía)"
+        accion = "Sugerencia: redistribuir el día por horas sin cambiar su energía."
+    explicacion = (f"Tendencia reciente observada, no una predicción: {observado}. {accion} "
+                   f"En una prueba con semanas anteriores esta regla redujo el error en {val['dias_mejora']} de "
+                   f"{val['dias_evaluados']} días.")
     ajuste = None
     if paso is not None:
         ajuste = {"resumen": resumen, "delta_energia_pct": _r(delta_pct), "delta_energia_mwh": _r(delta_mwh, 0),
                   "curva_sugerida": [float(x) for x in sug],
                   "patch": {"paso": paso,
                             "body": {"estado": "editado", "curvas": {f: [float(x) for x in sug]},
-                                     "motivo": f"Recomendación del sistema: sesgo reciente del {ref_dia}", "usuario": None}}}
+                                     "motivo": f"Sugerencia del analista (tendencia reciente del {ref_dia})", "usuario": None}}}
     return {
-        "id": f"sesgo-{f}", "fecha": f, "dia": dia, "tipo_dia": c_tipo(c, f), "prioridad": _prioridad_sesgo(s, antes - despues),
+        "id": f"sesgo-{f}", "fecha": f, "dia": dia, "tipo_dia": c.tipo(f), "prioridad": _prioridad_sesgo(s),
         "categoria": cat, "titulo": titulo, "explicacion": explicacion,
-        "evidencia": {"n": n, "sesgo_pct": _r(s), "fuente": "historial"},
-        "impacto_esperado": f"Reduce el error esperado de ~{antes:.1f} % a ~{despues:.1f} %",
+        "evidencia": {"n": n, "sesgo_pct": _r(s), "fuente": "historial",
+                      "validacion": {"dias_evaluados": val["dias_evaluados"], "dias_mejora": val["dias_mejora"],
+                                     "pct_dias_mejora": _r(val["pct_dias_mejora"] * 100, 0)}},
+        "impacto_esperado": f"Basado en lo ocurrido en los últimos {n} {pl}; no garantiza mejora.",
         "aplicable": ajuste is not None and c.estado == "borrador", "ajuste": ajuste,
     }
-
-
-def c_tipo(c: Corrida, f: str) -> str:
-    return data.tipo_dia(f, c.festivos)
 
 
 def _recs_alertas(c: Corrida) -> List[Dict[str, Any]]:
@@ -731,7 +838,7 @@ def _recs_alertas(c: Corrida) -> List[Dict[str, Any]]:
         f = i["fechas"][0] if i["fechas"] else c.semana_inicio.isoformat()
         prioridad = "alta" if i["nivel"] == "critico" else ("media" if i["nivel"] == "warning" else "baja")
         out.append({
-            "id": i["id"], "fecha": f, "dia": nombre_dia(f), "tipo_dia": c_tipo(c, f), "prioridad": prioridad,
+            "id": i["id"], "fecha": f, "dia": nombre_dia(f), "tipo_dia": c.tipo(f), "prioridad": prioridad,
             "categoria": i["categoria"], "titulo": i["titulo"], "explicacion": i["texto"],
             "evidencia": {"n": None, "sesgo_pct": None, "fuente": "alerta_del_sistema"},
             "impacto_esperado": None, "aplicable": False, "ajuste": None,
@@ -739,40 +846,39 @@ def _recs_alertas(c: Corrida) -> List[Dict[str, Any]]:
     return out
 
 
-def recomendaciones(c: Corrida, d: Datos,
-                    proveedor_sesgo: Callable[..., Dict[str, Dict[str, Any]]] = sesgo_por_segmento
-                    ) -> Dict[str, Any]:
-    """Recomendaciones por día (contrato §3). Solo con evidencia medida o alertas reales del pipeline."""
+def recomendaciones(c: Corrida, d: Datos) -> Dict[str, Any]:
+    """
+    Recomendaciones por día (contrato §3). Solo con evidencia medida (validada fuera de muestra) o alertas reales del
+    pipeline. Las de sesgo son sugerencias del analista sobre una tendencia reciente, no correcciones automáticas.
+    """
     paso = _paso_parche(c)
     ultimo_real = max(d.reales) if d.reales else None
-    corte = (c.semana_inicio - timedelta(days=1)).isoformat()
+    corte = c.fecha_fin_sin_fuga
     hasta = min(corte, ultimo_real) if ultimo_real else corte
-    sesgos = proveedor_sesgo(d, hasta=hasta) if d.emitidos and d.reales else {}
+    sesgos = sesgo_por_segmento(d, hasta=hasta) if d.emitidos and d.reales else {}
+    validaciones: Dict[str, Dict[str, Any]] = {}
     recs, resueltas = [], []
     for f in c.fechas:
-        sg = sesgos.get(_segmento_corrida(c, f))
-        if not sg:
+        seg = _segmento(c.tipo(f), f)
+        sg = sesgos.get(seg)
+        if not sg or not _hay_evidencia(sg):
             continue
         if parse_date(sg["fechas"][-1]) < c.semana_inicio - timedelta(days=MAX_ANTIGUEDAD_DIAS):
             continue  # evidencia vieja: no se recomienda
+        if seg not in validaciones:
+            validaciones[seg] = validar_rolling(d, seg, hasta)
+        val = validaciones[seg]
+        if not val["pasa"]:
+            continue  # la regla no se sostiene fuera de muestra: no se vende mejora
         if f in c.editadas:  # el día ya se editó: con evidencia, la recomendación cuenta como resuelta
-            if _hay_evidencia(sg):
-                resueltas.append(f"sesgo-{f}")
+            resueltas.append(f"sesgo-{f}")
             continue
-        rec = _rec_sesgo(c, f, _segmento_corrida(c, f), sg, paso)
-        if rec is None:
-            continue
-        if c.estado != "borrador":
-            rec["aplicable"] = False
-        recs.append(rec)
-    for rec in _recs_alertas(c):
-        recs.append(rec)
+        rec = _rec_sesgo(c, f, seg, sg, paso, val)
+        if rec is not None:
+            recs.append(rec)
+    recs.extend(_recs_alertas(c))
     recs.sort(key=lambda r: (_PRIORIDAD_ORD[r["prioridad"]], r["fecha"], r["id"]))
     return {"recomendaciones": recs, "ya_resueltas": resueltas}
-
-
-def _segmento_corrida(c: Corrida, f: str) -> str:
-    return data.TIPO_FESTIVO if c_tipo(c, f) == data.TIPO_FESTIVO else nombre_dia(f)
 
 
 # ---------------------------------------------------------------------------
@@ -785,9 +891,9 @@ def _energia_semana(c: Corrida, d: Datos, lunes: date, usar_final: bool) -> Opti
     for i in range(7):
         f = (lunes + timedelta(days=i)).isoformat()
         if usar_final:
-            e = _energia(c.final.get(f))
+            e = data.energia_curva(c.final.get(f))
         else:
-            e = float(d.reales[f].sum()) if f in d.reales else _energia(c.final.get(f)) or _energia(c.base.get(f))
+            e = float(d.reales[f].sum()) if f in d.reales else data.energia_curva(c.final.get(f)) or data.energia_curva(c.base.get(f))
         if e is None:
             return None
         total += e
@@ -844,7 +950,7 @@ def resumen(c: Corrida, d: Datos, recs: Optional[Dict[str, Any]] = None) -> Dict
         cv, bv = _curva_valida(c.final, f), _curva_valida(c.base, f)
         ajuste = _r((cv.sum() / bv.sum() - 1) * 100) if cv is not None and bv is not None and bv.sum() > 0 else None
         estado = nivel_dia.get(f) or ("revisar" if n_por_fecha.get(f) else "ok")
-        dias.append({"fecha": f, "dia": nombre_dia(f), "tipo_dia": c_tipo(c, f),
+        dias.append({"fecha": f, "dia": nombre_dia(f), "tipo_dia": c.tipo(f),
                      "energia_mwh": _r(cv.sum()) if cv is not None else None,
                      "pico_mw": _r(cv.max()) if cv is not None else None,
                      "pico_hora": int(cv.argmax()) if cv is not None else None,
@@ -901,7 +1007,7 @@ def banda_corrida(c: Corrida, tablas: Dict[str, Dict[str, Any]]) -> Dict[str, Di
     """Banda por día de la semana sobre las curvas finales (omite días sin curva válida o sin banda)."""
     out = {}
     for f in c.fechas:
-        tipo = c_tipo(c, f)
+        tipo = c.tipo(f)
         b = aplicar_banda(c.final.get(f), tipo, tablas)
         if b is not None:
             out[f] = {"tipo_dia": tipo, "inferior": b[0], "superior": b[1]}
@@ -911,7 +1017,7 @@ def banda_corrida(c: Corrida, tablas: Dict[str, Dict[str, Any]]) -> Dict[str, Di
 def series(c: Corrida, d: Datos, tablas: Optional[Dict[str, Dict[str, Any]]] = None) -> Dict[str, Any]:
     """Series continuas de la semana (contrato §5)."""
     fechas = c.fechas
-    tablas = tablas if tablas is not None else tablas_banda(d)
+    tablas = tablas if tablas is not None else tablas_banda(d, fecha_fin=c.fecha_fin_sin_fuga)
     banda = banda_corrida(c, tablas)
     inf = [v for f in fechas for v in (banda[f]["inferior"] if f in banda else [None] * 24)]
     sup = [v for f in fechas for v in (banda[f]["superior"] if f in banda else [None] * 24)]
@@ -926,7 +1032,7 @@ def series(c: Corrida, d: Datos, tablas: Optional[Dict[str, Dict[str, Any]]] = N
             ref = None
 
     def energias(curvas: Dict[str, Any], fs: List[str]) -> List[Optional[float]]:
-        return [_r(_energia(curvas[f])) if f in curvas else None for f in fs]
+        return [_r(data.energia_curva(curvas[f])) if f in curvas else None for f in fs]
 
     etiquetas = []
     for i, f in enumerate(fechas):
@@ -934,7 +1040,7 @@ def series(c: Corrida, d: Datos, tablas: Optional[Dict[str, Dict[str, Any]]] = N
         etiquetas.append({"i": i * 24, "texto": f"{DIAS_ABREV[dt.weekday()]} {dt.day}"})
     dias = []
     for f in fechas:
-        tipo = c_tipo(c, f)
+        tipo = c.tipo(f)
         nombre = _nombre_festivo(f) if tipo == data.TIPO_FESTIVO else None
         dias.append({"fecha": f, "tipo_dia": tipo, "editado": f in c.editadas,
                      "etiqueta": f"Festivo: {nombre}" if nombre else ETIQUETA_TIPO[tipo]})

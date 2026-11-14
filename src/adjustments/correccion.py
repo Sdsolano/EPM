@@ -1,6 +1,10 @@
 """
 Correcciones y bandas empíricas sobre pronósticos, medidas por backtest sin fuga (noche 2, parte B2).
 
+OPT-IN, NO CABLEADO AL PIPELINE POR DISEÑO. Su `tablas_banda` es el estimador experimental de B2 (log-error, pool de horas,
+ventana móvil), distinto del que sirve la API en `insights.tablas_banda` (error relativo simple con todo el historial previo,
+escala 1.2); las coberturas de abajo corresponden a ESTE estimador, no al de insights (ver `insights.COBERTURA_MEDIDA`).
+
 Funciones puras (sin I/O, sin estado) que solo usan errores de días con fecha <= `fecha_corte`:
 
 - `tablas_banda` / `bandas_empiricas` / `aplicar_bandas`: bandas p10-p90 empíricas por tipo de día x hora.

@@ -7,7 +7,7 @@ from datetime import date, timedelta
 import numpy as np
 import pytest
 
-from src.adjustments import data, insights as I
+from src.adjustments import insights
 from src.adjustments.types import Alert
 
 LUNES0 = date(2026, 1, 5)  # lunes
@@ -21,7 +21,7 @@ def _real(d: date) -> np.ndarray:
     return 400.0 * FORMA * DOW[d.weekday()]
 
 
-def _datos(sesgo_sabado: float = -0.03, n_semanas: int = N_SEMANAS, festivos=()) -> I.Datos:
+def _datos(sesgo_sabado=-0.03, n_semanas: int = N_SEMANAS, festivos=()) -> insights.Datos:
     """Pronóstico = real × (1+error): el sábado queda `sesgo_sabado` corto; el resto, ±0.2 % alterno."""
     emitidos, semana_de, reales = {}, {}, {}
     for w in range(n_semanas):
@@ -30,18 +30,19 @@ def _datos(sesgo_sabado: float = -0.03, n_semanas: int = N_SEMANAS, festivos=())
             d = lunes + timedelta(days=i)
             f = d.isoformat()
             r = _real(d)
-            err = sesgo_sabado if d.weekday() == 5 else (0.002 if (w + i) % 2 else -0.002)
+            sab = sesgo_sabado(w) if callable(sesgo_sabado) else sesgo_sabado
+            err = sab if d.weekday() == 5 else (0.002 if (w + i) % 2 else -0.002)
             reales[f] = r
             emitidos[f] = r * (1 + err)
             semana_de[f] = lunes.isoformat()
-    return I.Datos(emitidos=emitidos, semana_de=semana_de, reales=reales, festivos=set(festivos))
+    return insights.Datos(emitidos=emitidos, semana_de=semana_de, reales=reales, festivos=set(festivos))
 
 
 def _corrida(semana: date, estado: str = "borrador", estados_paso=None, editadas=(), alertas=(),
-             escala: float = 1.0, festivos=()) -> I.Corrida:
+             escala: float = 1.0, festivos=()) -> insights.Corrida:
     fechas = [(semana + timedelta(days=i)).isoformat() for i in range(7)]
     base = {f: [float(v) for v in _real(date.fromisoformat(f)) * escala] for f in fechas}
-    return I.Corrida(
+    return insights.Corrida(
         ucp="Antioquia", semana_inicio=semana, estado=estado, version=2, base=base, final={f: list(v) for f, v in base.items()},
         alertas=list(alertas), editadas=set(editadas),
         estados_paso=estados_paso or {"base": "aplicado", "referencia": "aplicado", "nivel": "aplicado",
@@ -54,7 +55,7 @@ def _corrida(semana: date, estado: str = "borrador", estados_paso=None, editadas
 # ---------------------------------------------------------------------------
 
 def test_precision_sin_datos_degrada():
-    p = I.precision(I.Datos())
+    p = insights.precision(insights.Datos())
     assert p["semanas"] == [] and p["por_tipo_dia"] == []
     assert p["resumen"]["semanas"] == 0 and p["resumen"]["wape_pct"] is None
     assert p["resumen"]["tendencia"] == "sin_datos"
@@ -63,7 +64,7 @@ def test_precision_sin_datos_degrada():
 
 def test_precision_forma_y_signo():
     d = _datos()
-    p = I.precision(d, semanas=5)
+    p = insights.precision(d, semanas=5)
     assert [s["semana_inicio"] for s in p["semanas"]] == sorted(s["semana_inicio"] for s in p["semanas"])
     assert len(p["semanas"]) == 5 and p["hasta"] == p["semanas"][-1]["semana_inicio"]
     sem = p["semanas"][-1]
@@ -81,9 +82,9 @@ def test_precision_hasta_y_semanas_incompletas():
     d = _datos()
     ultimo = LUNES0 + timedelta(weeks=N_SEMANAS - 1)
     d.reales.pop((ultimo + timedelta(days=3)).isoformat())  # la última semana queda sin un día real
-    p = I.precision(d, semanas=52)
+    p = insights.precision(d, semanas=52)
     assert p["hasta"] == (ultimo - timedelta(weeks=1)).isoformat() and len(p["semanas"]) == N_SEMANAS - 1
-    p2 = I.precision(d, semanas=52, hasta=LUNES0 + timedelta(weeks=3))
+    p2 = insights.precision(d, semanas=52, hasta=LUNES0 + timedelta(weeks=3))
     assert len(p2["semanas"]) == 4 and p2["hasta"] == (LUNES0 + timedelta(weeks=3)).isoformat()
 
 
@@ -92,7 +93,7 @@ def test_precision_aprobada_prevalece_y_marca_fuente():
     lunes = LUNES0 + timedelta(weeks=4)
     d.aprobadas = {lunes.isoformat(): {(lunes + timedelta(days=i)).isoformat(): list(_real(lunes + timedelta(days=i)))
                                        for i in range(7)}}
-    p = I.precision(d, semanas=52)
+    p = insights.precision(d, semanas=52)
     s = {x["semana_inicio"]: x for x in p["semanas"]}
     assert s[lunes.isoformat()]["fuente"] == "corrida_aprobada"
     assert s[lunes.isoformat()]["wape_pct"] == 0.0  # la aprobada era exacta
@@ -100,14 +101,14 @@ def test_precision_aprobada_prevalece_y_marca_fuente():
 
 
 def test_tendencia():
-    assert I._tendencia([5, 5, 4.9]) == "sin_datos"
-    assert I._tendencia([5.0, 5.0, 3.0, 3.0]) == "mejorando"
-    assert I._tendencia([3.0, 3.0, 5.0, 5.0]) == "empeorando"
-    assert I._tendencia([3.0, 3.1, 3.0, 3.1]) == "estable"
+    assert insights._tendencia([5, 5, 4.9]) == "sin_datos"
+    assert insights._tendencia([5.0, 5.0, 3.0, 3.0]) == "mejorando"
+    assert insights._tendencia([3.0, 3.0, 5.0, 5.0]) == "empeorando"
+    assert insights._tendencia([3.0, 3.1, 3.0, 3.1]) == "estable"
 
 
 def test_nivel_confianza_umbrales():
-    assert [I.nivel_confianza(x) for x in (None, 2.9, 3.0, 4.0, 6.0, 6.1)] == [
+    assert [insights.nivel_confianza(x) for x in (None, 2.9, 3.0, 4.0, 6.0, 6.1)] == [
         "sin_datos", "alta", "alta", "media", "media", "baja"]
 
 
@@ -117,50 +118,50 @@ def test_nivel_confianza_umbrales():
 
 def test_banda_cuantiles_y_festivo_usa_domingo():
     d = _datos()
-    t = I.tablas_banda(d)
+    t = insights.tablas_banda(d)
     sab = t["sabado"]
     assert sab["n_dias"] == N_SEMANAS
     # real/pronóstico − 1 con pronóstico 3 % corto = +3.09 %
     assert sab["p50"][10] == pytest.approx(1 / 0.97 - 1, abs=1e-9)
     assert np.all(sab["p10"] <= sab["p50"]) and np.all(sab["p50"] <= sab["p90"])
     assert t["festivo"]["n_dias"] == 0 and "nota" in t["festivo"]  # sin festivos: banda de domingo con nota
-    j = I.banda_json(t, d)
-    assert set(j["por_tipo_dia"]) == set(I.TIPOS_DIA) and j["n_semanas_historial"] == N_SEMANAS
+    j = insights.banda_json(t, d)
+    assert set(j["por_tipo_dia"]) == set(insights.TIPOS_DIA) and j["n_semanas_historial"] == N_SEMANAS
     assert len(j["por_tipo_dia"]["laboral"]["p10_pct"]) == 24 and j["nivel_confianza"] == 0.8
     assert "nota" in j["por_tipo_dia"]["festivo"]
 
 
 def test_banda_sin_datos_arrays_null():
-    j = I.banda_json(I.tablas_banda(I.Datos()), I.Datos())
-    for t in I.TIPOS_DIA:
+    j = insights.banda_json(insights.tablas_banda(insights.Datos()), insights.Datos())
+    for t in insights.TIPOS_DIA:
         assert j["por_tipo_dia"][t]["n_dias"] == 0 and j["por_tipo_dia"][t]["p10_pct"] is None
     assert j["n_semanas_historial"] == 0
-    assert I.aplicar_banda([1.0] * 24, "laboral", I.tablas_banda(I.Datos())) is None
+    assert insights.aplicar_banda([1.0] * 24, "laboral", insights.tablas_banda(insights.Datos())) is None
 
 
 def test_banda_filtros_fecha_y_tipo():
     d = _datos()
-    t = I.tablas_banda(d, fecha_inicio=LUNES0.isoformat(), fecha_fin=(LUNES0 + timedelta(days=13)).isoformat())
+    t = insights.tablas_banda(d, fecha_inicio=LUNES0.isoformat(), fecha_fin=(LUNES0 + timedelta(days=13)).isoformat())
     assert t["sabado"]["n_dias"] == 2
-    j = I.banda_json(I.tablas_banda(d), d, tipo="sabado")
+    j = insights.banda_json(insights.tablas_banda(d), d, tipo="sabado")
     assert list(j["por_tipo_dia"]) == ["sabado"]
 
 
 def test_aplicar_banda_envuelve_la_curva():
     d = _datos()
-    t = I.tablas_banda(d)
+    t = insights.tablas_banda(d)
     curva = [float(v) for v in _real(date(2026, 6, 1))]
-    inf, sup = I.aplicar_banda(curva, "laboral", t)
+    inf, sup = insights.aplicar_banda(curva, "laboral", t)
     assert len(inf) == 24 and all(a < c < b for a, c, b in zip(inf, curva, sup))
-    assert I.aplicar_banda([1.0] * 5, "laboral", t) is None  # curva inválida
+    assert insights.aplicar_banda([1.0] * 5, "laboral", t) is None  # curva inválida
 
 
 def test_banda_calibrada_escala_los_cuantiles(monkeypatch):
     d = _datos()
-    monkeypatch.setattr(I, "ESCALA_BANDA", 1.0)
-    t1 = I.tablas_banda(d)
-    monkeypatch.setattr(I, "ESCALA_BANDA", 1.2)
-    t2 = I.tablas_banda(d)
+    monkeypatch.setattr(insights, "ESCALA_BANDA", 1.0)
+    t1 = insights.tablas_banda(d)
+    monkeypatch.setattr(insights, "ESCALA_BANDA", 1.2)
+    t2 = insights.tablas_banda(d)
     for tipo in ("laboral", "sabado"):
         a, b = t1[tipo], t2[tipo]
         assert np.all(b["p10"] <= a["p10"] + 1e-12) and np.all(b["p90"] >= a["p90"] - 1e-12)
@@ -176,12 +177,13 @@ def test_banda_calibrada_escala_los_cuantiles(monkeypatch):
 
 def test_banda_json_incluye_escala_y_cobertura_medida():
     d = _datos()
-    j = I.banda_json(I.tablas_banda(d), d)
-    assert j["escala_calibracion"] == 1.2 == I.ESCALA_BANDA
+    j = insights.banda_json(insights.tablas_banda(d), d)
+    assert j["escala_calibracion"] == 1.2 == insights.ESCALA_BANDA
     cob = j["cobertura_medida"]
-    assert cob["nominal"] == 0.8 and cob["antioquia_prueba"] == 0.913 and cob["atlantico_prueba"] == 0.819
-    assert "21 semanas" in cob["nota"]
-    jv = I.banda_json(I.tablas_banda(I.Datos()), I.Datos())  # sin datos: los campos siguen presentes
+    assert cob["nominal"] == 0.8 and cob["antioquia_prueba"] == 0.876 and cob["atlantico_prueba"] == 0.802
+    assert cob["antioquia_sin_escala"] == 0.813 and cob["atlantico_sin_escala"] == 0.732
+    assert "esta implementación" in cob["nota"] and "21 semanas" in cob["nota"]
+    jv = insights.banda_json(insights.tablas_banda(insights.Datos()), insights.Datos())  # sin datos: los campos siguen presentes
     assert jv["escala_calibracion"] == 1.2 and jv["cobertura_medida"]["nominal"] == 0.8
 
 
@@ -190,8 +192,8 @@ def test_banda_json_incluye_escala_y_cobertura_medida():
 # ---------------------------------------------------------------------------
 
 def test_sesgo_por_segmento_mide_el_sabado():
-    sg = I.sesgo_por_segmento(_datos())
-    assert sg["sábado"]["n"] == I.OCURRENCIAS_DIA_SEMANA
+    sg = insights.sesgo_por_segmento(_datos())
+    assert sg["sábado"]["n"] == insights.OCURRENCIAS_DIA_SEMANA
     assert sg["sábado"]["sesgo_pct"] == pytest.approx(-3.0, abs=0.05)
     assert sg["sábado"]["consistencia"] == 1.0 and sg["sábado"]["factor_nivel"] == pytest.approx(1 / 0.97)
     assert sg["sábado"]["error_nivel_pct"] < sg["sábado"]["error_antes_pct"]
@@ -202,15 +204,20 @@ def test_recomendacion_sabado_con_parche_valido():
     d = _datos()
     semana = LUNES0 + timedelta(weeks=N_SEMANAS)  # la semana siguiente al historial
     c = _corrida(semana)
-    out = I.recomendaciones(c, d)
+    out = insights.recomendaciones(c, d)
     recs = out["recomendaciones"]
     assert [r["fecha"] for r in recs] == [(semana + timedelta(days=5)).isoformat()]  # solo el sábado
     r = recs[0]
     assert r["id"] == f"sesgo-{r['fecha']}" and r["categoria"] == "nivel" and r["tipo_dia"] == "sabado"
-    assert r["titulo"] == "El sábado suele quedar corto" and "por debajo" in r["explicacion"]
+    assert r["titulo"] == "Tendencia reciente: el sábado quedó corto" and "por debajo" in r["explicacion"]
+    assert "no una predicción" in r["explicacion"] and "sobre lo que muestra hoy" in r["explicacion"]
     assert "α" not in r["explicacion"] and "ratio" not in r["explicacion"]
-    assert r["evidencia"] == {"n": 8, "sesgo_pct": pytest.approx(-3.0, abs=0.05), "fuente": "historial"}
-    assert r["aplicable"] is True and r["prioridad"] in ("alta", "media")
+    assert {k: r["evidencia"][k] for k in ("n", "sesgo_pct", "fuente")} == {
+        "n": 8, "sesgo_pct": pytest.approx(-3.0, abs=0.05), "fuente": "historial"}
+    assert r["aplicable"] is True and r["prioridad"] == "media"  # tendencia observada: nunca "alta"
+    assert "Reduce" not in r["impacto_esperado"] and "%" not in r["impacto_esperado"]
+    assert "no garantiza mejora" in r["impacto_esperado"]
+    assert r["evidencia"]["validacion"]["dias_evaluados"] >= insights.ROLLING_MIN_DIAS
     aj = r["ajuste"]
     assert aj["delta_energia_pct"] == pytest.approx(3.0, abs=0.2) and aj["delta_energia_mwh"] > 0
     assert aj["patch"]["paso"] == "forma" and aj["patch"]["body"]["estado"] == "editado"
@@ -223,17 +230,17 @@ def test_recomendacion_sabado_con_parche_valido():
 
 def test_sin_evidencia_no_recomienda():
     d = _datos(sesgo_sabado=0.0)  # sin sesgo sistemático
-    assert I.recomendaciones(_corrida(LUNES0 + timedelta(weeks=N_SEMANAS)), d)["recomendaciones"] == []
+    assert insights.recomendaciones(_corrida(LUNES0 + timedelta(weeks=N_SEMANAS)), d)["recomendaciones"] == []
     d2 = _datos(n_semanas=5)  # menos de 6 ocurrencias
-    assert I.recomendaciones(_corrida(LUNES0 + timedelta(weeks=5)), d2)["recomendaciones"] == []
+    assert insights.recomendaciones(_corrida(LUNES0 + timedelta(weeks=5)), d2)["recomendaciones"] == []
     # efecto menor a 0.5 %
     d3 = _datos(sesgo_sabado=-0.004)
-    assert I.recomendaciones(_corrida(LUNES0 + timedelta(weeks=N_SEMANAS)), d3)["recomendaciones"] == []
+    assert insights.recomendaciones(_corrida(LUNES0 + timedelta(weeks=N_SEMANAS)), d3)["recomendaciones"] == []
     # evidencia vieja (más de 20 semanas antes)
     d4 = _datos()
-    assert I.recomendaciones(_corrida(LUNES0 + timedelta(weeks=N_SEMANAS + 30)), d4)["recomendaciones"] == []
+    assert insights.recomendaciones(_corrida(LUNES0 + timedelta(weeks=N_SEMANAS + 30)), d4)["recomendaciones"] == []
     # sin historial en absoluto
-    assert I.recomendaciones(_corrida(LUNES0), I.Datos()) == {"recomendaciones": [], "ya_resueltas": []}
+    assert insights.recomendaciones(_corrida(LUNES0), insights.Datos()) == {"recomendaciones": [], "ya_resueltas": []}
 
 
 def test_ajuste_ya_incorporado_no_se_recomienda():
@@ -242,16 +249,16 @@ def test_ajuste_ya_incorporado_no_se_recomienda():
     c = _corrida(semana)
     for f in c.final:  # el analista/el pipeline ya subió todo 3 %: el sesgo quedó cubierto
         c.final[f] = [v * 1.03 for v in c.final[f]]
-    assert I.recomendaciones(c, d)["recomendaciones"] == []
+    assert insights.recomendaciones(c, d)["recomendaciones"] == []
 
 
 def test_aprobada_informativa_y_editadas_resueltas():
     d = _datos()
     semana = LUNES0 + timedelta(weeks=N_SEMANAS)
     sab = (semana + timedelta(days=5)).isoformat()
-    r = I.recomendaciones(_corrida(semana, estado="aprobada"), d)["recomendaciones"][0]
+    r = insights.recomendaciones(_corrida(semana, estado="aprobada"), d)["recomendaciones"][0]
     assert r["aplicable"] is False and r["ajuste"] is not None
-    out = I.recomendaciones(_corrida(semana, editadas=[sab]), d)
+    out = insights.recomendaciones(_corrida(semana, editadas=[sab]), d)
     assert out["recomendaciones"] == [] and out["ya_resueltas"] == [f"sesgo-{sab}"]
 
 
@@ -259,17 +266,101 @@ def test_paso_parche_segun_estado_de_pasos():
     d = _datos()
     semana = LUNES0 + timedelta(weeks=N_SEMANAS)
     base = {"base": "aplicado", "forma": "omitido", "especiales": "aplicado"}
-    r = I.recomendaciones(_corrida(semana, estados_paso=base), d)["recomendaciones"][0]
+    r = insights.recomendaciones(_corrida(semana, estados_paso=base), d)["recomendaciones"][0]
     assert r["ajuste"]["patch"]["paso"] == "especiales"
     base["especiales"] = "omitido"
-    r = I.recomendaciones(_corrida(semana, estados_paso=base), d)["recomendaciones"][0]
+    r = insights.recomendaciones(_corrida(semana, estados_paso=base), d)["recomendaciones"][0]
     assert r["ajuste"] is None and r["aplicable"] is False  # editar un paso omitido cambiaría otros días
 
 
-def test_proveedor_de_sesgo_reemplazable():
+def test_sin_validacion_rolling_no_se_recomienda():
+    """Cambio de régimen: el sesgo de las últimas 8 semanas es consistente, pero la regla no habría funcionado antes."""
+    d = _datos(sesgo_sabado=lambda w: 0.03 if w < 12 else -0.03)
+    semana = LUNES0 + timedelta(weeks=N_SEMANAS)
+    hasta = (semana - timedelta(days=1)).isoformat()
+    sg = insights.sesgo_por_segmento(d, hasta=hasta)["sábado"]
+    assert insights._hay_evidencia(sg)  # pasa el gating simple
+    assert insights.validar_rolling(d, "sábado", hasta)["pasa"] is False
+    assert insights.recomendaciones(_corrida(semana), d)["recomendaciones"] == []
+
+
+def test_validar_rolling_sesgo_estable_pasa():
     d = _datos()
-    out = I.recomendaciones(_corrida(LUNES0 + timedelta(weeks=N_SEMANAS)), d, proveedor_sesgo=lambda *_a, **_k: {})
-    assert out["recomendaciones"] == []
+    val = insights.validar_rolling(d, "sábado", (LUNES0 + timedelta(weeks=N_SEMANAS, days=-1)).isoformat())
+    assert val["pasa"] is True and val["pct_dias_mejora"] == 1.0
+    assert val["wape_despues_pct"] < val["wape_antes_pct"] and val["dias_evaluados"] == insights.ROLLING_SEMANAS
+    vacio = insights.validar_rolling(insights.Datos(), "sábado", "2026-06-01")
+    assert vacio["pasa"] is False and vacio["dias_evaluados"] == 0
+
+
+def test_rolling_no_mira_el_dia_evaluado():
+    """Un único sábado atípico al final: la regla no puede 'adivinarlo', no mejora ese día."""
+    d = _datos(sesgo_sabado=lambda w: -0.03 if w < N_SEMANAS - 1 else 0.03)
+    val = insights.validar_rolling(d, "sábado", (LUNES0 + timedelta(weeks=N_SEMANAS, days=-1)).isoformat())
+    assert val["dias_mejora"] < val["dias_evaluados"]
+
+
+def test_corte_de_la_corrida_acota_la_evidencia():
+    d = _datos()
+    semana = LUNES0 + timedelta(weeks=N_SEMANAS)
+    c = _corrida(semana)
+    assert c.fecha_fin_sin_fuga == (semana - timedelta(days=1)).isoformat()
+    c.fecha_corte = LUNES0 + timedelta(weeks=3)  # la corrida se emitió con solo 3 semanas de real
+    assert c.fecha_fin_sin_fuga == c.fecha_corte.isoformat()
+    assert insights.recomendaciones(c, d)["recomendaciones"] == []
+
+
+def test_nivel_se_aplica_sobre_el_final_actual_y_el_delta_es_el_real():
+    d = _datos()
+    semana = LUNES0 + timedelta(weeks=N_SEMANAS)
+    c = _corrida(semana)
+    sab = (semana + timedelta(days=5)).isoformat()
+    c.final = {f: ([v * 1.01 for v in cv] if f == sab else cv) for f, cv in c.final.items()}  # el pipeline ya subió 1 %
+    r = insights.recomendaciones(c, d)["recomendaciones"][0]
+    e_final = sum(c.final[sab])
+    cs = np.asarray(r["ajuste"]["curva_sugerida"])
+    assert cs.sum() == pytest.approx(e_final / 0.97, rel=2e-3)  # factor sobre lo que muestra final
+    assert r["ajuste"]["delta_energia_pct"] == pytest.approx((cs.sum() / e_final - 1) * 100, abs=0.06)
+    assert f"{r['ajuste']['delta_energia_mwh']:+.0f} MWh" in r["explicacion"]
+    # si el pipeline ya recogió el sesgo, no se sugiere
+    c.final = {f: ([v * 1.03 for v in cv] if f == sab else cv) for f, cv in c.final.items()}
+    assert insights.recomendaciones(c, d)["recomendaciones"] == []
+
+
+def test_prioridad_de_sesgo_nunca_alta():
+    assert insights._prioridad_sesgo(-9.0) == "media" and insights._prioridad_sesgo(-0.8) == "baja"
+
+
+def test_banda_json_n_semanas_respeta_filtros():
+    d = _datos()
+    t = insights.tablas_banda(d)
+    assert insights.banda_json(t, d)["n_semanas_historial"] == N_SEMANAS
+    fi, ff = LUNES0.isoformat(), (LUNES0 + timedelta(days=13)).isoformat()
+    j = insights.banda_json(insights.tablas_banda(d, fi, ff), d, None, fi, ff)
+    assert j["n_semanas_historial"] == 2
+    js = insights.banda_json(t, d, "sabado", fi, ff)
+    assert js["n_semanas_historial"] == 2 and list(js["por_tipo_dia"]) == ["sabado"]
+
+
+def test_corrida_desde_version_y_fecha_corte():
+    c = insights.corrida_desde({"ucp": "X", "semana_inicio": "2026-06-29"}, [], {})
+    assert c.version == 1 and c.fecha_corte is None and c.estado == "borrador"
+    c2 = insights.corrida_desde({"ucp": "X", "semana_inicio": "2026-06-29", "version": 4, "fecha_corte": "2026-06-27"}, [], {})
+    assert c2.version == 4 and c2.fecha_corte == date(2026, 6, 27) and c2.fecha_fin_sin_fuga == "2026-06-27"
+
+
+def test_elecciones_ia_tiene_texto_de_negocio():
+    a = Alert("info", "ELECCIONES_IA", "técnico", ["2026-06-28"], {"eventos": {"2026-06-28": "consulta"}})
+    ins = insights._expandir_alerta(a)
+    assert len(ins) == 1 and ins[0]["titulo"] == "Posibles elecciones o votación"
+    assert "no están verificados" in ins[0]["texto"] and "domingo 28" in ins[0]["texto"]
+
+
+def test_segmento_unificado():
+    assert insights._segmento("festivo", "2026-06-29") == "festivo"
+    assert insights._segmento("laboral", "2026-06-29") == "lunes"
+    c = _corrida(date(2026, 6, 29), festivos=["2026-06-29"])
+    assert c.tipo("2026-06-29") == "festivo" and c.tipo("2026-06-30") == "laboral"
 
 
 def test_alertas_a_recomendaciones_y_textos():
@@ -283,8 +374,8 @@ def test_alertas_a_recomendaciones_y_textos():
         ("control", Alert("bloqueo", "RECONCILIACION_ROTA", "x", [])),
     ]
     c = _corrida(semana, alertas=alertas, festivos=[fest])
-    ins = I.insights_de_alertas(c)
-    assert [i["nivel"] for i in ins] == sorted([i["nivel"] for i in ins], key=lambda n: I._NIVEL_ORD[n])
+    ins = insights.insights_de_alertas(c)
+    assert [i["nivel"] for i in ins] == sorted([i["nivel"] for i in ins], key=lambda n: insights._NIVEL_ORD[n])
     ids = {i["id"] for i in ins}
     assert f"festivo-{fest}" in ids and "nivel_ancla_alterna-2026-07-03" not in ids  # técnico oculto
     fes = next(i for i in ins if i["id"] == f"festivo-{fest}")
@@ -293,7 +384,7 @@ def test_alertas_a_recomendaciones_y_textos():
     for jerga in ("α", "ratio", "ancla", "alpha"):
         assert jerga not in todos
     assert "+2.3" in next(i for i in ins if i["codigo"] == "TENDENCIA_FUERA_BANDA")["texto"]
-    recs = I.recomendaciones(c, I.Datos())["recomendaciones"]
+    recs = insights.recomendaciones(c, insights.Datos())["recomendaciones"]
     assert {r["categoria"] for r in recs} == {"festivo", "alerta"}
     assert all(r["ajuste"] is None and r["aplicable"] is False for r in recs)
     assert recs[0]["prioridad"] == "alta"  # el bloqueo primero
@@ -305,19 +396,19 @@ def test_alertas_a_recomendaciones_y_textos():
 
 def test_titulo_semana():
     c = _corrida(date(2026, 6, 29))
-    assert I._titulo_semana(c, 28412.3, 1.84) == (
+    assert insights._titulo_semana(c, 28412.3, 1.84) == (
         "Semana del 29 jun al 5 jul: demanda prevista 28.4 GWh, un 1.8 % más que la semana pasada")
-    assert "menos que la semana pasada" in I._titulo_semana(c, 28000.0, -2.0)
-    assert I._titulo_semana(c, 28000.0, None).endswith("28.0 GWh")
-    assert I._titulo_semana(_corrida(date(2026, 11, 9)), 1.0, None).startswith("Semana del 9 al 15 nov")
-    assert "sin pronóstico" in I._titulo_semana(c, None, None)
+    assert "menos que la semana pasada" in insights._titulo_semana(c, 28000.0, -2.0)
+    assert insights._titulo_semana(c, 28000.0, None).endswith("28.0 GWh")
+    assert insights._titulo_semana(_corrida(date(2026, 11, 9)), 1.0, None).startswith("Semana del 9 al 15 nov")
+    assert "sin pronóstico" in insights._titulo_semana(c, None, None)
 
 
 def test_resumen_forma_y_valores():
     d = _datos()
     semana = LUNES0 + timedelta(weeks=N_SEMANAS)
     c = _corrida(semana)
-    r = I.resumen(c, d)
+    r = insights.resumen(c, d)
     assert r["semana_inicio"] == semana.isoformat() and r["semana_fin"] == (semana + timedelta(days=6)).isoformat()
     assert r["confianza"]["nivel"] == "alta" and r["confianza"]["semanas_evaluadas"] == 8
     assert "últimas 8 semanas" in r["confianza"]["texto"]
@@ -331,13 +422,13 @@ def test_resumen_forma_y_valores():
     assert r["dias"][0]["estado"] == "ok" and r["dias"][0]["ajuste_pct"] == 0.0
     assert r["siguiente_paso"]["accion"] == "revisar_recomendaciones"
     assert k["recomendaciones"]["total"] == 1
-    assert I.resumen(_corrida(semana, estado="aprobada"), d)["siguiente_paso"]["accion"] == "ya_aprobada"
-    sin = I.resumen(_corrida(semana), _datos(sesgo_sabado=0.0))
+    assert insights.resumen(_corrida(semana, estado="aprobada"), d)["siguiente_paso"]["accion"] == "ya_aprobada"
+    sin = insights.resumen(_corrida(semana), _datos(sesgo_sabado=0.0))
     assert sin["siguiente_paso"]["accion"] == "aprobar"
 
 
 def test_resumen_sin_historial():
-    r = I.resumen(_corrida(date(2026, 6, 29)), I.Datos())
+    r = insights.resumen(_corrida(date(2026, 6, 29)), insights.Datos())
     assert r["confianza"]["nivel"] == "sin_datos" and r["kpis"]["error_reciente_pct"] is None
     assert r["kpis"]["energia_semana_anterior_mwh"] is None and r["kpis"]["variacion_vs_anterior_pct"] is None
     assert r["kpis"]["energia_semana_mwh"] is not None
@@ -346,14 +437,14 @@ def test_resumen_sin_historial():
 def test_series_168_puntos():
     d = _datos()
     semana = LUNES0 + timedelta(weeks=N_SEMANAS)  # futura: sin real
-    s = I.series(_corrida(semana), d)
+    s = insights.series(_corrida(semana), d)
     for k in ("base", "ajustado", "real", "banda_inferior", "banda_superior"):
         assert len(s["series"][k]) == 168
     assert all(v is None for v in s["series"]["real"]) and s["series"]["referencia"] is None
     assert all(v is not None for v in s["series"]["ajustado"])
     assert all(i <= u for i, u in zip(s["series"]["banda_inferior"], s["series"]["banda_superior"]))
     # coherente con la banda calibrada de banda_corrida (misma tabla, mismas curvas finales)
-    bc = I.banda_corrida(_corrida(semana), I.tablas_banda(d))
+    bc = insights.banda_corrida(_corrida(semana), insights.tablas_banda(d))
     assert s["series"]["banda_inferior"] == [v for f in s["fechas"] for v in bc[f]["inferior"]]
     assert s["series"]["banda_superior"] == [v for f in s["fechas"] for v in bc[f]["superior"]]
     assert s["etiquetas_eje"][0] == {"i": 0, "texto": f"lun {semana.day}"} and len(s["etiquetas_eje"]) == 7
@@ -366,10 +457,10 @@ def test_series_con_real_referencia_y_sin_banda():
     semana = LUNES0 + timedelta(weeks=3)  # pasada: hay real
     c = _corrida(semana)
     c.ref_inicio = LUNES0
-    s = I.series(c, d)
+    s = insights.series(c, d)
     assert all(v is not None for v in s["series"]["real"])
     assert s["series"]["referencia_semana_inicio"] == LUNES0.isoformat() and len(s["series"]["referencia"]) == 168
-    s2 = I.series(c, I.Datos())
+    s2 = insights.series(c, insights.Datos())
     assert s2["series"]["banda_inferior"] is None and s2["series"]["real"] == [None] * 168
     assert s2["series"]["referencia"] is None and s2["series"]["referencia_semana_inicio"] is None
 
@@ -379,15 +470,15 @@ def test_cargar_emitidos_csv_real_y_cache(tmp_path):
         "fecha,semana_inicio," + ",".join(f"P{i}" for i in range(1, 25)) + "\n"
         + "2026-01-05,2026-01-05," + ",".join(["10.0"] * 24) + "\n"
         + "2026-01-06,2026-01-05," + ",".join(["10.0"] * 23 + ["nan"]) + "\n")
-    em, sd = I.cargar_emitidos("X", tmp_path)
+    em, sd = insights.cargar_emitidos("X", tmp_path)
     assert list(em) == ["2026-01-05"] and sd["2026-01-05"] == "2026-01-05"  # la fila con NaN se descarta
-    assert I.cargar_emitidos("X", tmp_path)[0] is em  # caché
-    assert I.cargar_emitidos("NoExiste", tmp_path) == ({}, {})
+    assert insights.cargar_emitidos("X", tmp_path)[0] is em  # caché
+    assert insights.cargar_emitidos("NoExiste", tmp_path) == ({}, {})
 
 
 def test_csv_reales_del_repo_son_validos():
     for ucp in ("Antioquia", "Atlantico"):
-        em, sd = I.cargar_emitidos(ucp)
+        em, sd = insights.cargar_emitidos(ucp)
         assert len(em) == 364 and len(set(sd.values())) == 52
         for f, s in sd.items():
             assert 0 <= (date.fromisoformat(f) - date.fromisoformat(s)).days <= 6

@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-import numpy as np
 import pandas as pd
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from src.adjustments import insights as I
+from src.adjustments import data
 from src.adjustments import router as router_mod
 from src.adjustments import router_insights
 from tests.test_adjustments_router import (  # noqa: F401 — fixtures reexportados
@@ -282,7 +282,7 @@ def test_banda_por_ucp(api, emitidos):
     assert j["ucp"] == UCP and j["nivel_confianza"] == 0.8 and j["metodo"] == "cuantiles_empiricos_error_relativo"
     assert j["n_semanas_historial"] == optionally(j) and "dias" not in j
     assert j["escala_calibracion"] == 1.2 and j["cobertura_medida"]["nominal"] == 0.8
-    assert j["cobertura_medida"]["antioquia_prueba"] == 0.913 and j["cobertura_medida"]["atlantico_prueba"] == 0.819
+    assert j["cobertura_medida"]["antioquia_prueba"] == 0.876 and j["cobertura_medida"]["atlantico_prueba"] == 0.802
     assert set(j["por_tipo_dia"]) == {"laboral", "sabado", "domingo", "festivo"}
     sab = j["por_tipo_dia"]["sabado"]
     assert sab["n_dias"] > 20 and len(sab["p10_pct"]) == 24
@@ -388,3 +388,69 @@ def test_rutas_registradas_en_la_api_principal():
     rutas = set(main.app.openapi()["paths"])
     for ruta in ("resumen", "precision", "recomendaciones", "banda", "series"):
         assert f"/adjustments/insights/{ruta}" in rutas
+
+
+# ---------------------------------------------------------------------------
+# B4: sin fuga con run_id, filtros en n_semanas_historial, version, cache y ventanas de aprobadas
+# ---------------------------------------------------------------------------
+
+def test_banda_con_run_corta_la_muestra_sin_fuga(api, emitidos):
+    run = _crear(api)
+    j = _get(api, "banda", run_id=run["id"]).json()
+    corte_semana = (SEMANA - timedelta(days=1)).isoformat()
+    assert j["muestra"]["fecha_fin"] <= corte_semana  # min(semana − 1, fecha_corte)
+    sin_run = _get(api, "banda", ucp=UCP).json()
+    assert sin_run["muestra"] == {"fecha_inicio": None, "fecha_fin": None}
+    # fecha_fin explícita se respeta
+    assert _get(api, "banda", run_id=run["id"], fecha_fin="2026-04-30").json()["muestra"]["fecha_fin"] == "2026-04-30"
+
+
+def test_banda_n_semanas_historial_respeta_filtros(api, emitidos):
+    todas = _get(api, "banda", ucp=UCP).json()["n_semanas_historial"]
+    acotada = _get(api, "banda", ucp=UCP, fecha_inicio="2026-03-02", fecha_fin="2026-03-29").json()
+    assert acotada["n_semanas_historial"] == 4 < todas
+    solo_sab = _get(api, "banda", ucp=UCP, tipo_dia="sabado", fecha_inicio="2026-03-02", fecha_fin="2026-03-29").json()
+    assert solo_sab["n_semanas_historial"] == 4
+
+
+def test_recomendaciones_version_nunca_null(api, emitidos):
+    run = _crear(api)
+    j = _get(api, "recomendaciones", run_id=run["id"]).json()
+    assert isinstance(j["version"], int) and j["version"] >= 1
+
+
+def test_reales_se_cachean_por_ruta_y_mtime():
+    router_insights._curvas_reales_cache.cache_clear()
+    llamadas = []
+    original = router_insights._curvas_reales
+    router_insights._curvas_reales = lambda ucp: llamadas.append(ucp) or {"2026-01-01": [1.0] * 24}
+    try:
+        a = router_insights._curvas_reales_cache("/x/datos.csv", 1.0, "U")
+        b = router_insights._curvas_reales_cache("/x/datos.csv", 1.0, "U")
+        c = router_insights._curvas_reales_cache("/x/datos.csv", 2.0, "U")  # mtime nuevo: recarga
+    finally:
+        router_insights._curvas_reales = original
+        router_insights._curvas_reales_cache.cache_clear()
+    assert a is b and len(llamadas) == 2 and c is not None
+    assert router_insights._curvas_reales_cache.cache_info().maxsize == 8
+
+
+def test_aprobadas_acota_con_desde_y_limite():
+    visto = {}
+
+    class _Store:
+        def list_runs(self, ucp, desde, hasta, limite):
+            visto.update(ucp=ucp, desde=desde, hasta=hasta, limite=limite)
+            return []
+    assert router_insights._aprobadas_ventana(_Store(), UCP, date(2026, 11, 9), 8) == {}
+    assert visto["desde"] == date(2026, 11, 9) - timedelta(weeks=8) and visto["hasta"] == date(2026, 11, 9)
+    assert 0 < visto["limite"] <= 500  # ya no pide 500 siempre
+    router_insights._aprobadas(_Store(), UCP)
+    assert visto["limite"] == 60 and visto["desde"] is None
+
+
+def test_history_con_cargador_inyectado_no_se_cachea(api, emitidos):
+    """Con un cargador distinto al default (tests/demo) cada request vuelve a leer: nada obsoleto."""
+    assert router_mod._history_loader is not data.cargar_historico
+    run = _crear(api)
+    assert _get(api, "series", run_id=run["id"]).status_code == 200
