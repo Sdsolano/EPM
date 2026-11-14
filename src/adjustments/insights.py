@@ -19,7 +19,7 @@ Umbrales (documentados aquí, no son parámetros del modelo):
   misma regla, simulada con corte creciente en las últimas ~8 semanas (52 para festivos), actuó en ≥ ROLLING_MIN_DIAS días,
   redujo el error en ≥ 75 % de ellos y mejoró el WAPE del segmento ≥ 0.3 pp (`validar_rolling`). OJO: esa simulación se
   evalúa sobre las mismas semanas que originan la regla (selección sobre ventana corta), NO es validación independiente;
-  un backtest sin fuga (B5) mostró que no mejora fuera de muestra (Antioquia 3.08→2.71 por miércoles; Atlántico 5.03→7.13).
+  no confirmado: con el filtro actual Antioquia mejora (3.05→2.60, 64 % de los días) y Atlántico empeora (4.57→6.55, 3 días); ver B5/LOG.md.
   Por eso se emiten con prioridad "baja", `respaldo: "tendencia_reciente"` y `validado_fuera_de_muestra: false`; solo las
   alertas del sistema (`respaldo: "alerta_del_sistema"`) cuentan como recomendación accionable en el resumen.
 - Banda: cuantiles empíricos p10/p50/p90 con ≥ 5 casos por tipo de día; festivo con < 10 casos usa domingo. Con run_id, la
@@ -48,7 +48,6 @@ from src.adjustments.types import MOTIVOS_CURVA, Alert, StepRecord, parse_date, 
 logger = logging.getLogger(__name__)
 
 PRECISION_DIR = Path(__file__).resolve().parent / "precision_data"
-PERIODOS = data.PERIODOS
 
 UMBRAL_CONFIANZA_ALTA = 3.0
 UMBRAL_CONFIANZA_MEDIA = 6.0
@@ -82,15 +81,16 @@ COBERTURA_MEDIDA = {
     "antioquia_sin_escala": 0.813,
     "atlantico_sin_escala": 0.732,
     "ancho_medio_relativo_pct": {"antioquia": 9.9, "atlantico": 20.1},
-    "nota": "Medida el 2026-11-14 con esta implementación (error relativo simple, escala 1.2 sobre p10/p90, banda con todo el "
+    "detalle_tecnico": "Medida el 2026-11-14 con esta implementación (error relativo simple, escala 1.2 sobre p10/p90, banda con todo el "
             "historial previo a cada semana) en backtest sin fuga de 21 semanas: Antioquia 87.6 %, Atlántico 80.2 % (sin escala "
             "81.3 % / 73.2 %). Mínimos por segmento: festivo Antioquia 71 % (7 días), sábado Antioquia 82 %. No es una garantía.",
 }
 SEMANAS_CONFIANZA = 8
+VENTANA_CONFIANZA_SEMANAS = 12  # la confianza solo cuenta semanas evaluadas dentro de las 12 anteriores a la corrida
+ANTIGUEDAD_ULTIMAS_SEMANAS = 10  # si la última semana evaluada es más vieja, el texto dice "hasta el <fecha>", no "últimas"
 TENDENCIA_UMBRAL_PP = 0.3
 PASOS_PARCHE = ("forma", "especiales")  # pasos editables donde un día editado se respeta hasta el final
 
-TIPOS_DIA = data.TIPOS_DIA
 DIAS_ES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
 DIAS_ABREV = ["lun", "mar", "mié", "jue", "vie", "sáb", "dom"]
 MESES_ABREV = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"]
@@ -159,19 +159,19 @@ def nombre_ucp(ucp: str) -> str:
 # Pronósticos emitidos (CSV compacto, caché por ruta+mtime)
 # ---------------------------------------------------------------------------
 
-Curvas = Dict[str, np.ndarray]
+CurvasNp = Dict[str, np.ndarray]
 
 
 @lru_cache(maxsize=16)
 def _leer_csv(ruta: str, mtime: float) -> Tuple[Dict[str, np.ndarray], Dict[str, str]]:
     df = pd.read_csv(ruta)
-    faltan = [c for c in ("fecha", "semana_inicio", *PERIODOS) if c not in df.columns]
+    faltan = [c for c in ("fecha", "semana_inicio", *data.PERIODOS) if c not in df.columns]
     if faltan:
         raise ValueError(f"{ruta}: faltan columnas {faltan}")
     fechas = pd.to_datetime(df["fecha"]).dt.strftime("%Y-%m-%d").tolist()
     semanas = pd.to_datetime(df["semana_inicio"]).dt.strftime("%Y-%m-%d").tolist()
-    valores = df[PERIODOS].to_numpy(dtype=float)
-    curvas: Curvas = {}
+    valores = df[data.PERIODOS].to_numpy(dtype=float)
+    curvas: CurvasNp = {}
     semana_de: Dict[str, str] = {}
     for f, s, v in zip(fechas, semanas, valores):
         if np.isfinite(v).all() and (v > 0).all():
@@ -182,7 +182,7 @@ def _leer_csv(ruta: str, mtime: float) -> Tuple[Dict[str, np.ndarray], Dict[str,
     return curvas, semana_de
 
 
-def cargar_emitidos(ucp: str, directorio: Optional[Path] = None) -> Tuple[Curvas, Dict[str, str]]:
+def cargar_emitidos(ucp: str, directorio: Optional[Path] = None) -> Tuple[CurvasNp, Dict[str, str]]:
     """({fecha: array(24)}, {fecha: semana_inicio}) del historial emitido; vacío si no hay archivo. No mutar."""
     ruta = Path(directorio or PRECISION_DIR) / f"{ucp}_k1.csv"
     try:
@@ -210,9 +210,9 @@ def festivos_por_defecto(fechas_iso: Iterable[str]) -> Set[str]:
 @dataclass
 class Datos:
     """Todo lo que necesitan los cálculos: emitidos, reales, festivos y corridas aprobadas."""
-    emitidos: Curvas = field(default_factory=dict)
+    emitidos: CurvasNp = field(default_factory=dict)
     semana_de: Dict[str, str] = field(default_factory=dict)
-    reales: Curvas = field(default_factory=dict)
+    reales: CurvasNp = field(default_factory=dict)
     festivos: Set[str] = field(default_factory=set)
     aprobadas: Dict[str, Dict[str, List[float]]] = field(default_factory=dict)  # semana → {fecha: curva}
 
@@ -220,18 +220,24 @@ class Datos:
         return data.tipo_dia(fecha, self.festivos)
 
 
+def _dia_valido(d: Datos, f: str) -> bool:
+    """Día con pronóstico y real utilizables: finitos y con energía positiva (sin esto el WAPE/sesgo no existen)."""
+    p, r = np.asarray(d.emitidos[f], dtype=float), np.asarray(d.reales[f], dtype=float)
+    return bool(np.isfinite(p).all() and np.isfinite(r).all() and p.sum() > 0 and r.sum() > 0 and (p > 0).all())
+
+
 def _pares(d: Datos, desde: Optional[str] = None, hasta: Optional[str] = None) -> List[str]:
     fs = sorted(set(d.emitidos) & set(d.reales))
-    return [f for f in fs if (desde is None or f >= desde) and (hasta is None or f <= hasta)]
+    return [f for f in fs if (desde is None or f >= desde) and (hasta is None or f <= hasta) and _dia_valido(d, f)]
 
 
 # ---------------------------------------------------------------------------
 # Precisión
 # ---------------------------------------------------------------------------
 
-def _semanas_completas(d: Datos) -> Dict[str, Tuple[Curvas, str]]:
+def _semanas_completas(d: Datos) -> Dict[str, Tuple[CurvasNp, str]]:
     """{lunes: ({fecha: pronóstico}, fuente)} solo con 7 días de pronóstico y 7 de real."""
-    por_semana: Dict[str, Curvas] = {}
+    por_semana: Dict[str, CurvasNp] = {}
     for f, s in d.semana_de.items():
         if f in d.emitidos:
             por_semana.setdefault(s, {})[f] = d.emitidos[f]
@@ -262,10 +268,11 @@ def _tendencia(wapes: List[float]) -> str:
     return "estable"
 
 
-def precision(d: Datos, semanas: int = 12, hasta: Optional[date] = None) -> Dict[str, Any]:
-    """Pronóstico emitido vs real por semana/día/tipo de día/hora (contrato §2)."""
+def precision(d: Datos, semanas: int = 12, hasta: Optional[date] = None, desde: Optional[date] = None) -> Dict[str, Any]:
+    """Pronóstico emitido vs real por semana/día/tipo de día/hora (contrato §2). `desde`/`hasta`: lunes mínimo/máximo."""
     completas = _semanas_completas(d)
-    lunes = sorted(s for s in completas if hasta is None or s <= hasta.isoformat())[-max(1, semanas):]
+    lunes = sorted(s for s in completas if (hasta is None or s <= hasta.isoformat())
+                   and (desde is None or s >= desde.isoformat()))[-max(1, semanas):]
     vacio_h = [None] * 24
     if not lunes:
         return {"ucp": None, "desde": None, "hasta": None,
@@ -312,7 +319,7 @@ def precision(d: Datos, semanas: int = 12, hasta: Optional[date] = None) -> Dict
     peor = lunes[int(np.argmax([w if w is not None else -np.inf for w in wapes]))]
     por_tipo = []
     tipos_arr = np.array(tipos)
-    for t in TIPOS_DIA:
+    for t in data.TIPOS_DIA:
         m = tipos_arr == t
         if m.any():
             por_tipo.append({"tipo_dia": t, "wape_pct": _r(wape(F[m], R[m])),
@@ -354,7 +361,7 @@ def tablas_banda(d: Datos, fecha_inicio: Optional[str] = None, fecha_fin: Option
     {tipo_dia: {"n_dias", "p10","p50","p90" (arrays de 24 en fracción, o None), "nota"?}} con cuantiles (p10/p90 × ESCALA_BANDA) del
     error relativo real/pronóstico − 1. Festivo con < 10 casos usa la banda de domingo (con nota).
     """
-    por_tipo: Dict[str, List[np.ndarray]] = {t: [] for t in TIPOS_DIA}
+    por_tipo: Dict[str, List[np.ndarray]] = {t: [] for t in data.TIPOS_DIA}
     for f in _pares(d, fecha_inicio, fecha_fin):
         por_tipo[d.tipo(f)].append(d.reales[f] / d.emitidos[f] - 1.0)
     out: Dict[str, Dict[str, Any]] = {}
@@ -381,7 +388,7 @@ def banda_json(tablas: Dict[str, Dict[str, Any]], d: Datos, tipo: Optional[str] 
                fecha_inicio: Optional[str] = None, fecha_fin: Optional[str] = None) -> Dict[str, Any]:
     """JSON de la banda; `n_semanas_historial` cuenta las semanas de la muestra realmente usada (filtros y tipo)."""
     por_tipo = {}
-    for t in TIPOS_DIA:
+    for t in data.TIPOS_DIA:
         if tipo is not None and t != tipo:
             continue
         x = tablas[t]
@@ -394,7 +401,7 @@ def banda_json(tablas: Dict[str, Dict[str, Any]], d: Datos, tipo: Optional[str] 
     semanas = {d.semana_de[f] for f in _pares(d, fecha_inicio, fecha_fin)
                if f in d.semana_de and (tipo is None or d.tipo(f) == tipo)}
     return {"nivel_confianza": NIVEL_CONFIANZA_BANDA, "metodo": "cuantiles_empiricos_error_relativo",
-            "escala_calibracion": ESCALA_BANDA, "cobertura_medida": dict(COBERTURA_MEDIDA),
+            "escala_calibracion": ESCALA_BANDA, "cobertura_medida": {**COBERTURA_MEDIDA, "nota": COBERTURA_MEDIDA["detalle_tecnico"]},
             "n_semanas_historial": len(semanas), "por_tipo_dia": por_tipo}
 
 
@@ -417,7 +424,7 @@ def _segmento(tipo: str, fecha: Any) -> str:
     return data.TIPO_FESTIVO if tipo == data.TIPO_FESTIVO else nombre_dia(fecha)
 
 
-def _loo_error(F: np.ndarray, R: np.ndarray, forma: bool) -> float:
+def _loo_error(F: np.ndarray, R: np.ndarray, forma: bool) -> Optional[float]:
     """WAPE medio por día de corregir F con factores estimados SIN el día evaluado (leave-one-out)."""
     errs = []
     n = len(F)
@@ -430,7 +437,8 @@ def _loo_error(F: np.ndarray, R: np.ndarray, forma: bool) -> float:
             en = (F[m].sum(axis=1) - R[m].sum(axis=1)) / R[m].sum(axis=1)
             g = 1.0 / (1.0 + float(np.mean(en)))
         errs.append(wape(F[i] * g, R[i]))
-    return float(np.mean([e for e in errs if e is not None]))
+    errs = [e for e in errs if e is not None]
+    return float(np.mean(errs)) if errs else None
 
 
 def sesgo_por_segmento(d: Datos, hasta: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
@@ -457,6 +465,7 @@ def _ocurrencias(seg: str) -> int:
 
 def _stats_segmento(d: Datos, fechas: List[str]) -> Optional[Dict[str, Any]]:
     """Estadísticas de sesgo de un conjunto de días emitidos con real (None si hay < 3)."""
+    fechas = [f for f in fechas if _dia_valido(d, f)]
     n = len(fechas)
     if n < 3:
         return None
@@ -466,7 +475,10 @@ def _stats_segmento(d: Datos, fechas: List[str]) -> Optional[Dict[str, Any]]:
     s = float(np.mean(en))
     signo = np.sign(s)
     consistencia = float(np.mean(np.sign(en) == signo)) if signo != 0 else 0.0
-    antes = float(np.mean([wape(F[i], R[i]) for i in range(n)]))
+    antes_dias = [w for w in (wape(F[i], R[i]) for i in range(n)) if w is not None]
+    if not antes_dias:
+        return None
+    antes = float(np.mean(antes_dias))
     return {
         "n": n, "sesgo_pct": s * 100, "consistencia": consistencia, "fechas": fechas,
         "error_antes_pct": antes,
@@ -561,7 +573,7 @@ def _curva_valida(curvas: Dict[str, Any], f: str) -> Optional[np.ndarray]:
 _TEXTOS_ALERTA: Dict[str, Tuple[str, str]] = {
     "TENDENCIA_FUERA_BANDA": (
         "La energía de la semana se aleja de lo esperado",
-        "La energía total de la semana quedó {desvio} % distinta de la que calculó el sistema. "
+        "La energía total de la semana quedó {desvio}distinta de la que calculó el sistema. "
         "Revisa los días señalados ({dias}) antes de aprobar."),
     "TENDENCIA_REFERENCIA_FUERA_BANDA": (
         "La tendencia se aleja de la del año anterior",
@@ -654,8 +666,10 @@ def _expandir_alerta(a: Alert) -> List[Dict[str, Any]]:
         partes = []
         if det.get("temp_media") is not None:
             partes.append(f"temperatura media de {det['temp_media']:.1f} °C")
-        if det.get("lluvia_mm") is not None:
-            partes.append(f"lluvia de {det['lluvia_mm']:.0f} mm")
+        # `lluvia_mm` del control es la suma de códigos de intensidad de clima_new.csv (no milímetros): no se imprime la cifra.
+        mx, p90 = det.get("lluvia_max_diaria_mm"), det.get("p90_lluvia_mm")
+        if mx is not None and p90 is not None:
+            partes.append("lluvia por encima de lo habitual" if mx > p90 else "lluvia dentro de lo habitual")
         extremo = a.nivel == "warning"
         return [{"id": "clima-semana", "nivel": a.nivel, "codigo": a.codigo, "categoria": "clima",
                  "titulo": "Clima fuera de lo habitual" if extremo else "Clima de la semana",
@@ -667,7 +681,7 @@ def _expandir_alerta(a: Alert) -> List[Dict[str, Any]]:
     titulo, texto = _TEXTOS_ALERTA.get(a.codigo, ("Aviso del sistema", a.mensaje))
     desvio = (a.detalle or {}).get("desvio_pp")
     texto = texto.replace("{dias}", _lista_dias(fechas)).replace(
-        "{desvio}", f"{desvio:+.1f}" if isinstance(desvio, (int, float)) else "")
+        "{desvio}", f"{desvio:+.1f} % " if isinstance(desvio, (int, float)) else "")
     return [{"id": f"{a.codigo.lower()}" + (f"-{fechas[0]}" if fechas else ""), "nivel": _nivel_insight(a),
              "codigo": a.codigo, "categoria": "alerta", "titulo": titulo, "texto": texto, "fechas": fechas}]
 
@@ -818,15 +832,16 @@ def _rec_sesgo(c: Corrida, f: str, seg: str, sg: Dict[str, Any], paso: Optional[
     else:
         resumen = f"Redistribuir el {ref_dia} por horas (misma energía)"
         accion = "Sugerencia: redistribuir el día por horas sin cambiar su energía."
-    explicacion = (f"{AVISO_TENDENCIA} Observado: {observado}. {accion} En las últimas semanas (ventana con la que se "
-                   f"eligió la regla) habría reducido el error en {val['dias_mejora']} de {val['dias_evaluados']} días.")
+    periodo = "en el último año" if festivo else "en las últimas semanas"
+    explicacion = (f"{AVISO_TENDENCIA} Observado: {observado}. {accion} {periodo[0].upper()}{periodo[1:]}, que es el período con el "
+                   f"que se eligió la regla, habría reducido el error en {val['dias_mejora']} de {val['dias_evaluados']} días.")
     ajuste = None
     if paso is not None:
         ajuste = {"resumen": resumen, "delta_energia_pct": _r(delta_pct), "delta_energia_mwh": _r(delta_mwh, 0),
                   "curva_sugerida": [float(x) for x in sug],
                   "patch": {"paso": paso,
                             "body": {"estado": "editado", "curvas": {f: [float(x) for x in sug]},
-                                     "motivo": f"Tendencia reciente del {ref_dia} (referencia, no validada fuera de muestra)", "usuario": None}}}
+                                     "motivo": f"Tendencia reciente del {ref_dia} (las pruebas del sistema no confirmaron que mejore)", "usuario": None}}}
     return {
         "id": f"sesgo-{f}", "fecha": f, "dia": dia, "tipo_dia": c.tipo(f), "prioridad": "baja",
         "respaldo": RESPALDO_TENDENCIA, "validado_fuera_de_muestra": False,
@@ -900,19 +915,26 @@ def recomendaciones(c: Corrida, d: Datos) -> Dict[str, Any]:
 # Resumen ejecutivo
 # ---------------------------------------------------------------------------
 
-def _energia_semana(c: Corrida, d: Datos, lunes: date, usar_final: bool) -> Optional[float]:
-    """Energía de una semana: real si existe, si no el pronóstico de la corrida (brecha); None si falta algún día."""
+def _suma_dias(lunes: date, energia_dia) -> Optional[float]:
+    """Suma la energía de los 7 días de la semana; None si falta alguno."""
     total = 0.0
     for dia in data.dias_semana(lunes):
-        f = data.iso(dia)
-        if usar_final:
-            e = data.energia_curva(c.final.get(f))
-        else:
-            e = float(d.reales[f].sum()) if f in d.reales else data.energia_curva(c.final.get(f)) or data.energia_curva(c.base.get(f))
+        e = energia_dia(data.iso(dia))
         if e is None:
             return None
         total += e
     return total
+
+
+def _energia_pronosticada(c: Corrida, lunes: date) -> Optional[float]:
+    """Energía de la semana según el pronóstico final de la corrida; None si falta algún día."""
+    return _suma_dias(lunes, lambda f: data.energia_curva(c.final.get(f)))
+
+
+def _energia_real_o_pronostico(c: Corrida, d: Datos, lunes: date) -> Optional[float]:
+    """Energía de una semana: real si existe, si no el pronóstico de la corrida (brecha); None si falta algún día."""
+    return _suma_dias(lunes, lambda f: float(d.reales[f].sum()) if f in d.reales
+                      else data.energia_curva(c.final.get(f)) or data.energia_curva(c.base.get(f)))
 
 
 def _titulo_semana(c: Corrida, energia: Optional[float], variacion: Optional[float]) -> str:
@@ -930,17 +952,23 @@ def _titulo_semana(c: Corrida, energia: Optional[float], variacion: Optional[flo
 def resumen(c: Corrida, d: Datos) -> Dict[str, Any]:
     """Resumen ejecutivo (contrato §1)."""
     recs = recomendaciones(c, d)
-    prec = precision(d, semanas=SEMANAS_CONFIANZA, hasta=c.semana_inicio - timedelta(days=7))
+    prec = precision(d, semanas=SEMANAS_CONFIANZA, hasta=c.semana_inicio - timedelta(days=7),
+                     desde=c.semana_inicio - timedelta(weeks=VENTANA_CONFIANZA_SEMANAS))
     rp = prec["resumen"]
     wape_r = rp["wape_pct"]
     nivel = nivel_confianza(wape_r)
     if nivel == "sin_datos":
         texto_conf = "Todavía no hay pronósticos anteriores comparables para medir qué tan confiable es."
     else:
-        texto_conf = (f"Los pronósticos de las últimas {rp['semanas']} semanas se equivocaron en promedio {wape_r:.1f} %.")
+        ultima = parse_date(prec["hasta"])
+        if (c.semana_inicio - ultima).days > 7 * ANTIGUEDAD_ULTIMAS_SEMANAS:
+            cuando = f"de las {rp['semanas']} semanas hasta el {fecha_larga(ultima + timedelta(days=6))}"
+        else:
+            cuando = f"de las últimas {rp['semanas']} semanas"
+        texto_conf = f"Los pronósticos {cuando} se equivocaron en promedio {wape_r:.1f} %."
 
-    e_sem = _energia_semana(c, d, c.semana_inicio, True)
-    e_ant = _energia_semana(c, d, c.semana_inicio - timedelta(days=7), False)
+    e_sem = _energia_pronosticada(c, c.semana_inicio)
+    e_ant = _energia_real_o_pronostico(c, d, c.semana_inicio - timedelta(days=7))
     variacion = _r((e_sem / e_ant - 1) * 100) if e_sem is not None and e_ant else None
 
     pico = (None, None, None)
@@ -984,7 +1012,8 @@ def resumen(c: Corrida, d: Datos) -> Dict[str, Any]:
                 "texto": "Esta semana ya está aprobada." if c.estado == "aprobada"
                 else "Esta corrida ya no está en borrador; no requiere revisión."}
     elif n_crit:
-        paso = {"accion": "revisar_alertas", "texto": f"Hay {n_crit} problema(s) que impiden aprobar: revísalos primero."}
+        paso = {"accion": "revisar_alertas", "texto": ("Hay 1 problema que impide aprobar: revísalo primero." if n_crit == 1
+                          else f"Hay {n_crit} problemas que impiden aprobar: revísalos primero.")}
     elif n_sistema:  # las tendencias recientes (baja prioridad, sin respaldo) no empujan este paso por sí solas
         paso = {"accion": "revisar_recomendaciones",
                 "texto": f"Revisa {'la recomendación' if n_sistema == 1 else f'las {n_sistema} recomendaciones'} y aprueba la semana."}
@@ -1036,10 +1065,10 @@ def banda_corrida(c: Corrida, tablas: Dict[str, Dict[str, Any]]) -> Dict[str, Di
     return out
 
 
-def series(c: Corrida, d: Datos, tablas: Optional[Dict[str, Dict[str, Any]]] = None) -> Dict[str, Any]:
+def series(c: Corrida, d: Datos) -> Dict[str, Any]:
     """Series continuas de la semana (contrato §5)."""
     fechas = c.fechas
-    tablas = tablas if tablas is not None else tablas_banda(d, fecha_fin=c.fecha_fin_sin_fuga)
+    tablas = tablas_banda(d, fecha_fin=c.fecha_fin_sin_fuga)
     banda = banda_corrida(c, tablas)
     inf = [v for f in fechas for v in (banda[f]["inferior"] if f in banda else [None] * 24)]
     sup = [v for f in fechas for v in (banda[f]["superior"] if f in banda else [None] * 24)]

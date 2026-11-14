@@ -237,3 +237,16 @@ Series continuas de la semana (168 puntos = 7 días × 24 h, lunes 00:00 → dom
     - `banda` con `run_id`: `fecha_fin` explícito se recorta a `min(fecha_fin, min(semana − 1, fecha_corte))` (nunca hay fuga).
     - Textos de negocio: `FESTIVOS_FUENTE_ALTERNA` (info, visible), bloqueos por curva inválida y `RECONCILIACION_ROTA` incluyen los días;
       `SIN_FORMA` (warning) ya no se oculta. `COBERTURA_MEDIDA.nota` indica la fecha de la medición (2026-11-14).
+- v1.5 (2026-11-14, B6; correcciones finales tras la ronda 3; compatible hacia atrás):
+    - `resumen.confianza` / `kpis.error_reciente_*` solo cuentan semanas evaluadas dentro de las 12 anteriores a la corrida
+      (`VENTANA_CONFIANZA_SEMANAS`); sin ninguna → `nivel = "sin_datos"`. Si la última semana evaluada tiene > 10 semanas de antigüedad
+      el texto dice "de las N semanas hasta el <fecha>" en vez de "de las últimas N semanas".
+    - Clima: ningún texto imprime `lluvia_mm` (es una suma de códigos de intensidad, no milímetros); se dice "lluvia por encima de lo
+      habitual" / "dentro de lo habitual" comparando `lluvia_max_diaria_mm` con `p90_lluvia_mm`.
+    - `banda.cobertura_medida.detalle_tecnico` es el nombre nuevo de la nota técnica; `nota` se mantiene con el mismo contenido (compat).
+    - Días con real/pronóstico de energía <= 0 o no finitos se descartan de banda, sesgo y recomendaciones (sin 500).
+    - Textos: `patch.body.motivo` = "...las pruebas del sistema no confirmaron que mejore"; la frase de ventana dice "en las últimas
+      semanas" (festivos: "en el último año"), "que es el período con el que se eligió la regla"; "problema/problemas" en singular/plural;
+      sin `desvio_pp` el texto de `TENDENCIA_FUERA_BANDA` no deja doble espacio.
+    - Interno: `insights.PERIODOS/TIPOS_DIA` y `correccion.TIPOS` eliminados (usar `data.*`); `Curvas` → `CurvasNp`; `series()` sin parámetro
+      `tablas`; scripts `noche2_b2_*` sin rutas absolutas (`EPM_RAW_DIR`, `EPM_K1_DIR`, `--raw-dir`, `--k1-dir`).

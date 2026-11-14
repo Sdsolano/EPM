@@ -7,7 +7,7 @@ from datetime import date, timedelta
 import numpy as np
 import pytest
 
-from src.adjustments import insights
+from src.adjustments import data, insights
 from src.adjustments.types import Alert
 
 LUNES0 = date(2026, 1, 5)  # lunes
@@ -126,14 +126,14 @@ def test_banda_cuantiles_y_festivo_usa_domingo():
     assert np.all(sab["p10"] <= sab["p50"]) and np.all(sab["p50"] <= sab["p90"])
     assert t["festivo"]["n_dias"] == 0 and "nota" in t["festivo"]  # sin festivos: banda de domingo con nota
     j = insights.banda_json(t, d)
-    assert set(j["por_tipo_dia"]) == set(insights.TIPOS_DIA) and j["n_semanas_historial"] == N_SEMANAS
+    assert set(j["por_tipo_dia"]) == set(data.TIPOS_DIA) and j["n_semanas_historial"] == N_SEMANAS
     assert len(j["por_tipo_dia"]["laboral"]["p10_pct"]) == 24 and j["nivel_confianza"] == 0.8
     assert "nota" in j["por_tipo_dia"]["festivo"]
 
 
 def test_banda_sin_datos_arrays_null():
     j = insights.banda_json(insights.tablas_banda(insights.Datos()), insights.Datos())
-    for t in insights.TIPOS_DIA:
+    for t in data.TIPOS_DIA:
         assert j["por_tipo_dia"][t]["n_dias"] == 0 and j["por_tipo_dia"][t]["p10_pct"] is None
     assert j["n_semanas_historial"] == 0
     assert insights.aplicar_banda([1.0] * 24, "laboral", insights.tablas_banda(insights.Datos())) is None
@@ -211,7 +211,7 @@ def test_recomendacion_sabado_con_parche_valido():
     assert r["id"] == f"sesgo-{r['fecha']}" and r["categoria"] == "nivel" and r["tipo_dia"] == "sabado"
     assert r["titulo"] == "Tendencia reciente: el sábado quedó corto" and "por debajo" in r["explicacion"]
     assert insights.AVISO_TENDENCIA in r["explicacion"] and "sobre lo que muestra hoy" in r["explicacion"]
-    assert "prueba con semanas anteriores" not in r["explicacion"] and "ventana con la que se eligió" in r["explicacion"]
+    assert "prueba con semanas anteriores" not in r["explicacion"] and "el período con el que se eligió la regla" in r["explicacion"]
     assert r["respaldo"] == "tendencia_reciente" and r["validado_fuera_de_muestra"] is False
     assert "validacion" not in r["evidencia"] and r["evidencia"]["ventana_seleccion"]["dias_evaluados"] >= 8
     assert "α" not in r["explicacion"] and "ratio" not in r["explicacion"]
@@ -406,14 +406,13 @@ def test_loo_forma_conserva_la_energia_como_corregir_curva():
 
 
 def test_corte_semana_y_helpers():
-    from src.adjustments import data
     assert data.corte_semana(date(2026, 7, 3)) == date(2026, 6, 27)  # sábado antes del lunes 29 jun
     assert data.corte_semana(date(2026, 6, 29)) == date(2026, 6, 27)
-    assert insights.festivos_por_defecto(["2026-06-29"]) and insights.TIPOS_DIA == data.TIPOS_DIA
+    assert insights.festivos_por_defecto(["2026-06-29"]) and True
 
 
 def test_cobertura_medida_con_fecha():
-    assert "2026-11-14" in insights.COBERTURA_MEDIDA["nota"]
+    assert "2026-11-14" in insights.COBERTURA_MEDIDA["detalle_tecnico"]
 
 
 def test_banda_json_n_semanas_respeta_filtros():
@@ -568,3 +567,56 @@ def test_csv_reales_del_repo_son_validos():
         for f, s in sd.items():
             assert 0 <= (date.fromisoformat(f) - date.fromisoformat(s)).days <= 6
             assert date.fromisoformat(s).weekday() == 0
+
+
+# ---------------------------------------------------------------------------
+# B6: confianza con tope de antigüedad, clima sin cifras crudas, guardas y textos
+# ---------------------------------------------------------------------------
+
+def test_confianza_historial_viejo_es_sin_datos():
+    d = _datos()
+    semana = LUNES0 + timedelta(weeks=N_SEMANAS + 30)  # el historial termina hace 30 semanas
+    r = insights.resumen(_corrida(semana), d)
+    assert r["confianza"]["nivel"] == "sin_datos" and r["kpis"]["error_reciente_pct"] is None
+    assert r["confianza"]["semanas_evaluadas"] == 0
+
+
+def test_confianza_texto_hasta_fecha_si_la_ultima_semana_es_vieja():
+    d = _datos()
+    cerca = insights.resumen(_corrida(LUNES0 + timedelta(weeks=N_SEMANAS)), d)
+    assert "de las últimas 8 semanas" in cerca["confianza"]["texto"]
+    lejos = insights.resumen(_corrida(LUNES0 + timedelta(weeks=N_SEMANAS + 11)), d)  # última evaluada: hace 12 semanas
+    assert lejos["confianza"]["nivel"] != "sin_datos"
+    assert "hasta el" in lejos["confianza"]["texto"] and "últimas" not in lejos["confianza"]["texto"]
+
+
+def test_clima_no_imprime_cifra_cruda_de_lluvia():
+    det = {"temp_media": 24.0, "lluvia_mm": 129507.0, "lluvia_max_diaria_mm": 30000.0, "p90_lluvia_mm": 20000.0}
+    i = insights._expandir_alerta(Alert("warning", "CLIMA_OBSERVADO", "x", [], det))[0]
+    assert "129507" not in i["texto"] and "mm" not in i["texto"] and "lluvia por encima de lo habitual" in i["texto"]
+    c = _corrida(date(2026, 6, 29), alertas=[("control", Alert("warning", "CLIMA_OBSERVADO", "x", [], det))])
+    assert "129507" not in str(insights.recomendaciones(c, insights.Datos()))
+
+
+def test_dias_con_real_cero_no_rompen():
+    d = _datos()
+    f = [x for x in d.reales if date.fromisoformat(x).weekday() == 5][-1]
+    d.reales[f] = np.zeros(24)
+    assert f not in insights._pares(d)
+    insights.sesgo_por_segmento(d)
+    insights.tablas_banda(d)
+    insights.resumen(_corrida(LUNES0 + timedelta(weeks=N_SEMANAS)), d)
+    assert insights._stats_segmento(d, [f, f, f]) is None
+
+
+def test_textos_plural_desvio_y_jerga():
+    def txt(n):
+        alertas = [("control", Alert("bloqueo", f"CURVA_BASE_NULA", "x", [f"2026-07-0{i + 1}"])) for i in range(n)]
+        return insights.resumen(_corrida(date(2026, 6, 29), alertas=alertas), insights.Datos())["siguiente_paso"]["texto"]
+    assert txt(1) == "Hay 1 problema que impide aprobar: revísalo primero."
+    assert txt(2).startswith("Hay 2 problemas que impiden aprobar")
+    sin = insights._expandir_alerta(Alert("warning", "TENDENCIA_FUERA_BANDA", "x", ["2026-07-02"]))[0]["texto"]
+    assert "  " not in sin and "quedó distinta" in sin
+    assert "quedó +2.3 % distinta" in insights._expandir_alerta(
+        Alert("warning", "TENDENCIA_FUERA_BANDA", "x", ["2026-07-02"], {"desvio_pp": 2.3}))[0]["texto"]
+    assert insights.banda_json(insights.tablas_banda(_datos()), _datos())["cobertura_medida"]["detalle_tecnico"]

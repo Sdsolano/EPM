@@ -7,7 +7,7 @@ from datetime import date, timedelta
 import numpy as np
 import pytest
 
-from src.adjustments import correccion as C
+from src.adjustments import correccion as C, data
 
 FORMA = np.array([0.8, 0.75, 0.72, 0.72, 0.75, 0.85, 0.95, 1.05, 1.1, 1.12, 1.12, 1.1,
                   1.08, 1.08, 1.1, 1.12, 1.12, 1.15, 1.2, 1.18, 1.1, 1.0, 0.92, 0.85]) * 100.0
@@ -51,7 +51,7 @@ def test_banda_contiene_la_curva_y_es_ordenada():
         c = np.asarray(_curvas([date.fromisoformat(f)])[f])
         assert len(x["inferior"]) == len(x["superior"]) == 24
         assert (np.asarray(x["inferior"]) < c).all() and (c < np.asarray(x["superior"])).all()
-        assert x["tipo_dia"] in C.TIPOS
+        assert x["tipo_dia"] in data.TIPOS_DIA
 
 
 def test_banda_sin_fuga_ignora_reales_posteriores_al_corte():

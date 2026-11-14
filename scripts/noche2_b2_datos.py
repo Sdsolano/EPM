@@ -13,6 +13,7 @@ Salida: <out>/b2_<ucp>.npz (solo lectura de data/raw y reports; no escribe nada 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from datetime import date
 from pathlib import Path
@@ -27,7 +28,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import backtest_adjustments as ba  # noqa: E402
 from src.adjustments import data, pipeline  # noqa: E402
 
-REPO_PRINCIPAL = Path("C:/Users/samue/OneDrive/Documentos/GitHub/EPM")
+REPO_PRINCIPAL = ROOT  # los datos por defecto salen del repo; se sobreescriben con EPM_RAW_DIR / EPM_K1_DIR o --raw-dir / --k1-dir
 COMPONENTES = {
     "default": {},
     "ana": {"nivel": {"ancla": "analogos", "alpha": 0.25}},
@@ -89,8 +90,8 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
     ap.add_argument("--ucp", nargs="+", default=["Antioquia", "Atlantico"])
-    ap.add_argument("--k1-dir", default=str(REPO_PRINCIPAL / "reports" / "ajustes"))
-    ap.add_argument("--raw-dir", default=str(REPO_PRINCIPAL / "data" / "raw"))
+    ap.add_argument("--k1-dir", default=os.environ.get("EPM_K1_DIR") or str(REPO_PRINCIPAL / "reports" / "ajustes"))
+    ap.add_argument("--raw-dir", default=os.environ.get("EPM_RAW_DIR") or str(REPO_PRINCIPAL / "data" / "raw"))
     a = ap.parse_args(argv)
     out_dir = Path(a.out)
     out_dir.mkdir(parents=True, exist_ok=True)

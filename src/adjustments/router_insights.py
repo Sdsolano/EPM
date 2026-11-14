@@ -70,7 +70,7 @@ def _aprobadas(store: Optional[Store], ucp: str, hasta: date, semanas: int) -> D
     (tolerante: sin store o con error → {}). El store devuelve las más recientes primero (y acota `limite` a 500): ante
     varias aprobadas de la misma semana prevalece la más reciente.
     """
-    if store is None or not hasattr(store, "list_runs"):
+    if store is None:
         return {}
     try:
         out: Dict[str, Dict[str, Any]] = {}
@@ -113,12 +113,13 @@ async def _cargar_corrida(run_id: str, store: Optional[Store]) -> Tuple[insights
 @router.get("/resumen")
 async def get_resumen(run_id: str = Query(...), store: Optional[Store] = Depends(ajustes_router.get_store_dep)
                       ) -> Dict[str, Any]:
+    """Resumen ejecutivo de la semana de la corrida: confianza, KPIs, días, alertas y siguiente paso."""
     corrida, datos = await _cargar_corrida(run_id, store)
 
     def _calc() -> Dict[str, Any]:
         # la confianza usa las SEMANAS_CONFIANZA semanas anteriores a la corrida
         datos.aprobadas = _aprobadas(store, corrida.ucp, corrida.semana_inicio - timedelta(days=7),
-                                     insights.SEMANAS_CONFIANZA + 1)
+                                     insights.VENTANA_CONFIANZA_SEMANAS + 1)
         return {"run_id": run_id, **insights.resumen(corrida, datos)}
     return await run_in_threadpool(_calc)
 
@@ -130,6 +131,7 @@ async def get_precision(
     hasta: Optional[date] = Query(None, description="Lunes máximo (default: última semana con datos completos)"),
     store: Optional[Store] = Depends(ajustes_router.get_store_dep),
 ) -> Dict[str, Any]:
+    """Pronóstico emitido vs real de las últimas semanas completas de una UCP, por semana, día, tipo de día y hora."""
     ucp = ajustes_router._validar_ucp(ucp)
     if hasta is not None and hasta.weekday() != 0:
         raise HTTPException(HTTP_422, detail="hasta debe ser lunes")
@@ -167,6 +169,7 @@ async def get_banda(
     tipo_dia: Optional[str] = Query(None, pattern="^(laboral|sabado|domingo|festivo)$"),
     store: Optional[Store] = Depends(ajustes_router.get_store_dep),
 ) -> Dict[str, Any]:
+    """Banda de incertidumbre (cuantiles empíricos p10/p50/p90 del error relativo) por tipo de día; con `run_id`, también por día."""
     if ucp is None and run_id is None:
         raise HTTPException(HTTP_422, detail="Indique ucp o run_id")
     if fecha_inicio and fecha_fin and fecha_inicio > fecha_fin:
@@ -201,6 +204,7 @@ async def get_banda(
 @router.get("/series")
 async def get_series(run_id: str = Query(...), store: Optional[Store] = Depends(ajustes_router.get_store_dep)
                      ) -> Dict[str, Any]:
+    """Series continuas de la semana (168 horas): base, ajustado, referencia, real y banda."""
     corrida, datos = await _cargar_corrida(run_id, store)
 
     def _calc() -> Dict[str, Any]:

@@ -1,9 +1,8 @@
 # LOG_B — Pista B
 
 ## Estado actual
-- Hecho: contrato v1.3; B1 API insights; B2 (ninguna candidata activada); B3 banda; B4 correcciones de ronda 1 (commit 27afbd3; suite 770 passed, 12 skipped, 1 christmas).
-- En curso: ronda 2 COMPLETA (por el ALTO A1 de la ronda 1): 8 angulos separados + regresion, sonnet, contra `git diff main...HEAD -- src tests scripts`. Lanzados en 2 tandas de 4 + regresion.
-- Falta: leer resultados; si sin critico/alto -> corregir medios/bajos y UNA verificacion estandar; REPORTE_B.md; commit final.
+- PISTA B TERMINADA. B1-B6 hechos; 3 rondas de revision (R3 sin criticos/altos); verificacion estandar: 783 passed, 12 skipped, 1 christmas; import API OK. Reporte: REPORTE_B.md. Contrato v1.5.
+- Falta: nada de la pista; el orquestador integra (rebase/merge, demo_build, redeploy).
 
 ## Decisiones tomadas sin el usuario
 - Prefijo `/adjustments/insights/*` con router propio (sin conflicto con `/{run_id}`); endpoints dependientes de semana usan `run_id` (el demo persiste con Postgres).

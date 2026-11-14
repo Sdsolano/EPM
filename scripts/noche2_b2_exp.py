@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import itertools
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -18,7 +19,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import noche2_b2_lib as L  # noqa: E402
 
-RAW = Path("C:/Users/samue/OneDrive/Documentos/GitHub/EPM/data/raw")
+RAW = Path(os.environ.get("EPM_RAW_DIR") or Path(__file__).resolve().parents[1] / "data" / "raw")  # EPM_RAW_DIR o --raw-dir
 UCPS = ["Antioquia", "Atlantico"]
 UMBRAL = 0.05  # pp: por debajo es ruido (prueba = 21 semanas)
 
@@ -85,7 +86,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--cache", required=True)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--raw-dir", default=None, help="data/raw (default: EPM_RAW_DIR o <repo>/data/raw)")
     a = ap.parse_args()
+    global RAW
+    if a.raw_dir:
+        RAW = Path(a.raw_dir)
     dss = {u: L.cargar(u, Path(a.cache)) for u in UCPS}
     res = {"candidatas": {},
            "particion": {u: {"n_semanas": ds.W, "calibracion": ds.ncal, "prueba": ds.W - ds.ncal,

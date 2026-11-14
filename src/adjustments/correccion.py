@@ -37,7 +37,6 @@ from src.adjustments import data
 from src.adjustments.steps import _params
 from src.adjustments.types import Curves, parse_date, validar_curva
 
-TIPOS = (data.TIPO_LABORAL, data.TIPO_SABADO, data.TIPO_DOMINGO, data.TIPO_FESTIVO)
 
 DEFAULTS_BANDA: Dict[str, Any] = {
     "q_bajo": 0.10,
@@ -212,7 +211,7 @@ def tablas_banda(
     pares = _pares(historico_pronosticos, historico_real, corte)
     todos = _ventana(pares, corte, p["ventana_festivo_semanas"])
     out: Dict[str, Dict[str, Any]] = {}
-    for tipo in TIPOS:
+    for tipo in data.TIPOS_DIA:
         semanas = p["ventana_festivo_semanas"] if tipo == data.TIPO_FESTIVO else p["ventana_semanas"]
         fechas = [d for d in _ventana(pares, corte, semanas) if data.tipo_dia(d, fest) == tipo]
         respaldo = False
