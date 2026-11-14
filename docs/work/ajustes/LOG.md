@@ -558,3 +558,4 @@ La ronda 3 dejÃ³ un ALTO de diseÃ±o en 4C (R2 no distinguÃ­a "no aplicar")
 - 2026-11-13 Fase 4 CERRADA e integrada en main (8f86f03, febb595, ce4b6fb). Suite en main: 678 passed, 5 skipped, 4 failed preexistentes (christmas + 3 async sin pytest-asyncio); import API OK. Resumen final en `docs/work/ajustes/RESUMEN_NOCHE.md`.
 
 - 2026-11-14 Demo (D0-D4) terminada y DESPLEGADA en Railway (proyecto epm-demo-ajustes). Estado, redespliegue y pendientes: `docs/work/ajustes/demo/ESTADO_DESPLIEGUE.md`. Commits: EPM e24428b, 322ec58, 2cd04c1; Sphere test 8a6302c.
+- 2026-11-14 SESIÓN NOCTURNA 2: plan en docs/work/ajustes/noche2/PLAN.md (UX wow + curvas, mejora de pronósticos medida, redeploy). Agente de despliegue previo ya desplegó demo en Railway (ver demo/ESTADO_DESPLIEGUE.md).
