@@ -44,3 +44,6 @@ DEMO_PASSWORD=algo docker compose up --build      # http://localhost:8000
 - Solo lectura sobre datos: la demo no refresca datos ni entrena. Para actualizar datos: re-generar snapshot y `railway up`.
 - El calculo de una semana tarda ~ver REPORTE_D3D4.md; CPU del contenedor puede ser mas lento.
 - Docker NO se probo en la maquina de desarrollo (no instalado): Dockerfile, compose y railway.json revisados a mano; la prueba E2E se hizo con uvicorn + Postgres local (ver REPORTE_D3D4.md).
+
+## 5. Aviso (aprendido en el primer despliegue)
+`railway up --no-gitignore` desde la raiz de EPM falla con 413 (sube `.venv`). Despliega un contexto minimo; ver `ESTADO_DESPLIEGUE.md`.

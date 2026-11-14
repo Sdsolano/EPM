@@ -1,6 +1,7 @@
 # LOG demo (D0 + D1)
 
 ## Estado actual
+- **2026-11-14: demo DESPLEGADA en Railway.** Ver `ESTADO_DESPLIEGUE.md` (lo primero que debe leer un agente que continue): como redesplegar, variables, pendientes.
 - D0 y D1 TERMINADOS y verificados; commit en main (ver historial). Entrega: REPORTE_D0D1.md.
 - Suite: 689 passed, 7 skipped, 4 failed; los 4 son los preexistentes permitidos (future_events, christmas, 2 de openai_analysis). `import src.api.main` OK.
 - tests/test_demo_mode.py: 13 passed con AJUSTES_DATABASE_URL local (2 de Postgres se saltan sin ella).

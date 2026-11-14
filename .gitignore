@@ -129,3 +129,4 @@ after_fixes.csv
 # Snapshot de demo (datos reales; repo publico)
 /demo_snapshot/
 /static_demo/
+.demo_password.local
