@@ -149,3 +149,19 @@ Series continuas de la semana (168 puntos = 7 días × 24 h, lunes 00:00 → dom
 
 ## Cambios
 - v1 (2026-11-14): versión inicial.
+- v1.1 (2026-11-14, B1; implementado en `src/adjustments/router_insights.py`, compatible hacia atrás):
+    - `recomendaciones[].ajuste.patch.paso` es `forma` si ese paso no está omitido; si lo está, `especiales`; si ambos están omitidos
+      `ajuste = null` y `aplicable = false` (editar un paso omitido lo activaría para los demás días). El front aplica `patch.body`
+      tal cual (+ `version_esperada`, `usuario`). Tras el PATCH, `final_curves[fecha]` == `curva_sugerida`.
+    - `recomendaciones[]` de alertas del pipeline (festivo, clima, eventos, avisos) vienen con `ajuste: null`, `aplicable: false`,
+      `evidencia.fuente = "alerta_del_sistema"` y `impacto_esperado: null`. `categoria` de sesgo: `nivel` o `forma`.
+    - `resumen.kpis.alertas` agrega la clave `critico` (bloqueos que impiden aprobar; cuentan también en `total`); `insights[].nivel`
+      ∈ `critico|warning|info`. `confianza.texto` con sin_datos: "Todavía no hay pronósticos anteriores comparables...".
+    - `resumen.kpis.energia_semana_anterior_mwh` usa real y, donde falta (brecha), el pronóstico de la corrida; si falta un día, `null`.
+    - La confianza/error reciente usa las 8 semanas anteriores a la semana de la corrida (sin fuga).
+    - `banda`: sin muestra suficiente (< 5 días) `p10_pct/p50_pct/p90_pct = null`; `fecha_inicio`/`fecha_fin`/`tipo_dia` son filtros
+      opcionales de la muestra/salida (con `ucp` o `run_id`; `run_id` implica su `ucp`; 422 si falta ambos o no coinciden).
+    - `precision`: `hasta` debe ser lunes (422); solo semanas con los 7 días de pronóstico y de real; `ucp` en la respuesta.
+    - Evidencia de sesgo: n ≥ 6 (últimas 8 ocurrencias del día de semana no festivo, 20 festivos), |sesgo| ≥ 0.5 %, mismo signo en
+      ≥ 65 % de los días, mejora del error medida sin el día evaluado, y que la última muestra no tenga > 20 semanas de antigüedad.
+    - Festivos: en endpoints por `ucp` calendario oficial (sin red); por `run_id` los festivos guardados en la corrida.
