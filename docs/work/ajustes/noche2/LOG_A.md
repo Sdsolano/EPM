@@ -17,3 +17,6 @@ Snapshot resumible. Leer PLAN_A.md primero.
 ## Fase 2 lanzada: A3 (resumen+flujo), A4 (graficas+lenguaje en vistas existentes) en paralelo
 
 ## Fase 4: ronda 1 de revision (9 angulos + regresion + better-interface, sonnet) contra `git diff 8a6302c..HEAD` en Sphere-wt-n2. Resultados en R1/.
+
+## Cierre
+- Ronda 1 completa (R1/*.md): 0 criticos/altos. Correcciones A6 inline; una verificacion estandar (tsc=base, build:demo OK, vite build ver abajo). Sin ronda 2 por instruccion. REPORTE_A.md escrito. Pista A cerrada tras el commit de correcciones.
