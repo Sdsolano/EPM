@@ -4,6 +4,7 @@ API Gateway para Sistema de Pronóstico Automatizado de Demanda Energética - EP
 
 Endpoints:
     POST /predict - Genera predicción de 30 días con granularidad horaria
+    POST /forecast-covariate - Pronóstico aditivo estilo TimesFM-3 (covariates + horizonte directo)
     GET /health - Estado del sistema
     GET /models - Información de modelos disponibles
 
@@ -17,6 +18,7 @@ from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List, Dict, Any, Tuple
 from pathlib import Path
 from datetime import datetime, timedelta
+import asyncio
 import json
 import logging
 import re
@@ -40,6 +42,11 @@ from src.prediction.hourly.adjustment_validator import HourlyAdjustmentValidator
 from src.pipeline.update_csv import full_update_csv, full_update_csv_diario
 from src.prediction.xm_ido_client import XMIdoClient, formatear_eventos_dna
 from fastapi.concurrency import run_in_threadpool
+from src.adjustments.router import (
+    router as adjustments_router, set_base_provider, set_data_refresher, set_model_checker,
+)
+from src.adjustments.router_asr import router as adjustments_asr_router
+from src.adjustments.router_insights import router as adjustments_insights_router
 
 # Cliente del portal IDO de XM (DNA) — instancia única a nivel de módulo
 # para reutilizar el token de Azure B2C (dura 1h) entre requests.
@@ -161,6 +168,74 @@ class BaseCurveResponse(BaseModel):
         ...,
         description="Curvas base por fecha (formato: {'YYYY-MM-DD': [P1, P2, ..., P24]})"
     )
+
+
+class ForecastCovariateRequest(BaseModel):
+    """
+    Request aditivo estilo TimesFM-3.
+
+    Modo matrices (como predict() del blog):
+      context (n_targets, T), past_only_covariates (n, T),
+      past_future_covariates (n, T+horizon), horizon
+
+    Modo conveniencia UCP:
+      ucp + fecha_inicio + fecha_fin (arma matrices desde raw data)
+    """
+    # Modo matrices
+    context: Optional[List[List[float]]] = Field(
+        None, description="Targets históricos shape (n_targets, T)"
+    )
+    horizon: Optional[int] = Field(
+        None, ge=1, le=60, description="Horizonte de pronóstico en pasos"
+    )
+    past_only_covariates: Optional[List[List[float]]] = Field(
+        None, description="Covariates solo históricas (n_past, T)"
+    )
+    past_future_covariates: Optional[List[List[float]]] = Field(
+        None, description="Covariates conocidas en T+horizon (n_pf, T+horizon)"
+    )
+    target_names: Optional[List[str]] = Field(
+        None, description="Nombres de las series target"
+    )
+    freq: Optional[str] = Field("D", description="Frecuencia (informativo)")
+
+    # Modo UCP
+    ucp: Optional[str] = Field(None, description="UCP para modo conveniencia")
+    fecha_inicio: Optional[str] = Field(None, description="YYYY-MM-DD (modo UCP)")
+    fecha_fin: Optional[str] = Field(None, description="YYYY-MM-DD (modo UCP)")
+
+    return_quantiles: bool = Field(True, description="Devolver cuantiles p10..p90")
+    force_retrain: bool = Field(
+        False,
+        description="Reentrenar el forecaster de covariates (no toca champion_model)",
+    )
+
+    @field_validator("fecha_inicio", "fecha_fin")
+    @classmethod
+    def validate_optional_dates(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        try:
+            datetime.strptime(v, "%Y-%m-%d")
+        except ValueError:
+            raise ValueError("Formato de fecha inválido. Usar YYYY-MM-DD")
+        return v
+
+
+class ForecastCovariateResponse(BaseModel):
+    """Respuesta estilo TimesFM-3: forecast (n_targets, H) y quantiles opcionales."""
+    forecast: List[List[float]] = Field(
+        ..., description="Pronóstico puntual shape (n_targets, horizon)"
+    )
+    quantiles: Optional[List[List[List[float]]]] = Field(
+        None, description="Cuantiles p10..p90 shape (n_targets, horizon, 9)"
+    )
+    target_names: Optional[List[str]] = None
+    dates: Optional[List[str]] = Field(
+        None, description="Fechas del horizonte (modo UCP)"
+    )
+    ucp: Optional[str] = None
+    meta: Dict[str, Any] = Field(default_factory=dict)
 
 
 class ValidateAdjustmentsRequest(BaseModel):
@@ -700,7 +775,11 @@ async def get_future_events_from_openai(
     fecha_fin: str
 ) -> Dict[str, str]:
     """
-    Obtiene eventos futuros que podrían afectar la demanda energética usando OpenAI
+    Obtiene eventos futuros que podrían afectar la demanda energética.
+
+    Delega en `src.adjustments.eventos.obtener_eventos` (cache en disco por
+    UCP/semana y saneo); la consulta a OpenAI vive en ese módulo. Nunca lanza:
+    sin API_KEY o ante cualquier fallo devuelve `{}` (o la última cache válida).
 
     Args:
         ucp: Nombre del UCP (ej: 'Atlantico', 'Oriente')
@@ -711,72 +790,13 @@ async def get_future_events_from_openai(
         Dict[str, str]: Diccionario con formato {"YYYY-MM-DD": "Nombre del evento"}
     """
     try:
-        # Obtener API key desde variables de entorno
-        api_key = os.getenv('API_KEY')
-        if not api_key:
-            logger.warning("⚠ API_KEY no encontrada en .env, saltando búsqueda de eventos")
-            return {}
+        from src.adjustments import eventos as eventos_mod
+    except Exception as e:
+        logger.error(f"No se pudo importar src.adjustments.eventos: {e}")
+        return {}
 
-        # Inicializar cliente de OpenAI
-        client = OpenAI(api_key=api_key)
-
-        prompt = f"""Busca en internet todos los eventos que podrían afectar la demanda de energía eléctrica en {ucp}, Colombia entre {fecha_inicio} y {fecha_fin}.
-
-Incluye:
-- Festivos nacionales y locales
-- Eventos masivos (conciertos, festivales, ferias)
-- Partidos de fútbol importantes
-- Eventos climáticos previstos
-- Paros o manifestaciones programadas
-- Elecciones o eventos políticos
-- Cualquier otro evento relevante
-
-IMPORTANTE: Responde ÚNICAMENTE en formato JSON así:
-{{
-  "YYYY-MM-DD": "Nombre breve del evento",
-  "YYYY-MM-DD": "Otro evento"
-}}
-
-REGLAS:
-- NO incluyas links, URLs ni referencias a fuentes
-- Solo nombres cortos y concisos (máximo 50 caracteres)
-- NO agregues explicaciones adicionales
-- Solo el JSON puro"""
-
-        logger.info(f"🔍 Buscando eventos futuros para {ucp} ({fecha_inicio} a {fecha_fin})...")
-
-        response = await run_in_threadpool(
-            lambda: client.responses.create(
-                model="gpt-5-mini",
-                input=[
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
-                tools=[
-                    {
-                        "type": "web_search"
-                    }
-                ]
-            )
-        )
-
-        events_json = response.output_text.strip()
-
-        # Limpiar respuesta (quitar markdown si existe)
-        if events_json.startswith("```json"):
-            events_json = events_json.replace("```json", "").replace("```", "").strip()
-        elif events_json.startswith("```"):
-            events_json = events_json.replace("```", "").strip()
-
-        # Parsear JSON
-        import json
-        events = json.loads(events_json)
-
-        logger.info(f"✓ Eventos encontrados: {len(events)}")
-        return events
-
+    try:
+        return await eventos_mod.obtener_eventos(ucp, fecha_inicio, fecha_fin)
     except Exception as e:
         logger.error(f"Error obteniendo eventos futuros: {e}")
         logger.error(traceback.format_exc())
@@ -3562,62 +3582,85 @@ def calculate_base_curves(
                         hourly_profile = np.full(24, avg_total / 24)
                         logger.warning(f"  {fecha_str} (temporada navideña): usando perfil plano (sin datos)")
         
-        # MÉTODO 1: Si es festivo (pero no temporada navideña), usar promedio histórico del mismo día
+        # MÉTODO 1: Si es festivo (pero no temporada navideña), usar festivos
+        # homólogos de años anteriores (no el mismo mes-día calendario).
+        # Corrige festivos móviles Ley Emiliani (p.ej. Todos los Santos
+        # 2026-11-02 ↔ 2025-11-03 ↔ 2024-11-04).
         elif is_holiday:
-            # Buscar todos los años anteriores con mismo mes-día
-            historical_same_day = df_historico[
-                (df_historico['fecha'].dt.month == fecha.month) &
-                (df_historico['fecha'].dt.day == fecha.day) &
-                (df_historico['fecha'] < fecha)  # Solo años anteriores
-            ].copy()
-            
-            if len(historical_same_day) > 0:
-                # Ordenar por fecha descendente y usar últimos años (máximo 5 años para festivos)
-                historical_same_day = historical_same_day.sort_values('fecha', ascending=False)
-                if len(historical_same_day) > 5:
-                    historical_same_day = historical_same_day.head(5)
-                    logger.debug(f"  {fecha_str} (festivo): usando últimos 5 años de {len(historical_same_day)} disponibles")
-                
-                # Promediar perfiles horarios
-                hourly_profile = historical_same_day[period_cols].mean().values
-                logger.debug(f"  {fecha_str} (festivo): {len(historical_same_day)} años históricos")
+            from src.prediction.holiday_homology import average_holiday_hourly_profile
+
+            # Precargar festivos de años previos para el matching homólogo
+            calendar_classifier.preload_years(
+                list(range(fecha.year - 5, fecha.year + 1))
+            )
+
+            holiday_profile, holiday_meta = average_holiday_hourly_profile(
+                df_historico,
+                fecha,
+                calendar_classifier.festivos_cache,
+                period_cols=period_cols,
+                date_column='fecha',
+                n_years=5,
+            )
+
+            if holiday_meta.get('n_rows', 0) > 0:
+                hourly_profile = holiday_profile
+                logger.info(
+                    f"  {fecha_str} (festivo={holiday_meta.get('holiday_name')}): "
+                    f"modo={holiday_meta.get('match_mode')}, "
+                    f"n={holiday_meta.get('n_rows')}, "
+                    f"fechas={holiday_meta.get('match_dates')}, "
+                    f"growth={holiday_meta.get('growth_factor', 1):.3f}, "
+                    f"level={holiday_meta.get('level', 0):.1f}"
+                )
             else:
-                # Fallback: usar promedio de todos los festivos del mismo mes
+                # Fallback: promedio de festivos del mismo mes
                 historical_holidays = df_historico[
-                    (df_historico['fecha'].dt.month == fecha.month) &
-                    (df_historico['fecha'].apply(lambda x: calendar_classifier.is_holiday(pd.to_datetime(x))))
+                    (df_historico['fecha'].dt.month == fecha.month)
+                    & (df_historico['fecha'] < fecha)
+                    & (df_historico['fecha'].apply(
+                        lambda x: calendar_classifier.is_holiday(pd.to_datetime(x))
+                    ))
                 ].copy()
-                
+
                 if len(historical_holidays) > 0:
-                    # Normalizar y promediar
                     totals = historical_holidays[period_cols].sum(axis=1)
                     normalized = historical_holidays[period_cols].div(totals, axis=0)
                     avg_normalized = normalized.mean().values
-                    
-                    # Escalar con total promedio
-                    avg_total = historical_holidays['TOTAL'].mean() if 'TOTAL' in historical_holidays.columns else historical_holidays[period_cols].sum(axis=1).mean()
+                    avg_total = (
+                        historical_holidays['TOTAL'].mean()
+                        if 'TOTAL' in historical_holidays.columns
+                        else historical_holidays[period_cols].sum(axis=1).mean()
+                    )
                     hourly_profile = avg_normalized * avg_total
-                    logger.debug(f"  {fecha_str} (festivo): fallback con {len(historical_holidays)} festivos del mes")
-                else:
-                    # Último fallback: usar cluster de días especiales
-                    if hourly_engine and hourly_engine.special_disaggregator.is_fitted:
-                        avg_total = df_historico['TOTAL'].mean() if 'TOTAL' in df_historico.columns else df_historico[period_cols].sum(axis=1).mean()
-                        result = hourly_engine.special_disaggregator.predict_hourly_profile(fecha, avg_total, return_normalized=False)
-                        if result is not None:
-                            if isinstance(result, tuple):
-                                hourly_profile = result[0]
-                            else:
-                                hourly_profile = result
-                            if not isinstance(hourly_profile, np.ndarray):
-                                hourly_profile = np.array(hourly_profile)
-                        else:
-                            hourly_profile = np.zeros(24)
-                        logger.debug(f"  {fecha_str} (festivo): usando cluster especial")
+                    logger.debug(
+                        f"  {fecha_str} (festivo): fallback con "
+                        f"{len(historical_holidays)} festivos del mes"
+                    )
+                elif hourly_engine and hourly_engine.special_disaggregator.is_fitted:
+                    avg_total = (
+                        df_historico['TOTAL'].mean()
+                        if 'TOTAL' in df_historico.columns
+                        else df_historico[period_cols].sum(axis=1).mean()
+                    )
+                    result = hourly_engine.special_disaggregator.predict_hourly_profile(
+                        fecha, avg_total, return_normalized=False
+                    )
+                    if result is not None:
+                        hourly_profile = result[0] if isinstance(result, tuple) else result
+                        if not isinstance(hourly_profile, np.ndarray):
+                            hourly_profile = np.array(hourly_profile)
                     else:
-                        # Fallback final: perfil plano
-                        avg_total = df_historico['TOTAL'].mean() if 'TOTAL' in df_historico.columns else df_historico[period_cols].sum(axis=1).mean()
-                        hourly_profile = np.full(24, avg_total / 24)
-                        logger.warning(f"  {fecha_str} (festivo): usando perfil plano (sin datos)")
+                        hourly_profile = np.zeros(24)
+                    logger.debug(f"  {fecha_str} (festivo): usando cluster especial")
+                else:
+                    avg_total = (
+                        df_historico['TOTAL'].mean()
+                        if 'TOTAL' in df_historico.columns
+                        else df_historico[period_cols].sum(axis=1).mean()
+                    )
+                    hourly_profile = np.full(24, avg_total / 24)
+                    logger.warning(f"  {fecha_str} (festivo): usando perfil plano (sin datos)")
         
         # MÉTODO 2: Si es día normal, usar cluster + total promedio histórico
         # ESTRATEGIA: Priorizar datos del mismo mes (captura cambios de nivel recientes),
@@ -4184,6 +4227,106 @@ async def validate_hourly_adjustments(
         )
 
 
+@app.post(
+    "/forecast-covariate",
+    response_model=ForecastCovariateResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def forecast_covariate(request: ForecastCovariateRequest):
+    """
+    Endpoint ADITIVO estilo TimesFM-3 (no modifica /predict ni Modelo Base).
+
+    Soporta:
+    - Targets multivariados (context)
+    - Past-only covariates
+    - Past-future covariates (festivo/weekend/clima conocidos en el horizonte)
+    - Horizonte en un paso (sin recursión)
+    - Cuantiles p10..p90
+
+    Modo matrices: enviar context + horizon (+ covariates).
+    Modo UCP: enviar ucp + fecha_inicio + fecha_fin.
+    """
+    try:
+        from src.prediction.covariate_forecast_service import CovariateForecastService
+
+        service = CovariateForecastService()
+
+        # Modo UCP (conveniencia)
+        if request.ucp and request.fecha_inicio and request.fecha_fin:
+            logger.info(
+                f"forecast-covariate modo UCP={request.ucp} "
+                f"{request.fecha_inicio}→{request.fecha_fin}"
+            )
+            result = await run_in_threadpool(
+                service.forecast_ucp,
+                request.ucp,
+                request.fecha_inicio,
+                request.fecha_fin,
+                request.return_quantiles,
+                request.force_retrain,
+            )
+            return ForecastCovariateResponse(
+                forecast=result["forecast"],
+                quantiles=result.get("quantiles"),
+                target_names=result.get("target_names"),
+                dates=result.get("dates"),
+                ucp=result.get("ucp"),
+                meta=result.get("meta") or {},
+            )
+
+        # Modo matrices (contrato TimesFM-like)
+        if request.context is None or request.horizon is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Indicar modo UCP (ucp+fecha_inicio+fecha_fin) "
+                    "o modo matrices (context+horizon)"
+                ),
+            )
+
+        logger.info(
+            f"forecast-covariate modo matrices "
+            f"context={len(request.context)}x{len(request.context[0]) if request.context else 0} "
+            f"horizon={request.horizon}"
+        )
+        cov_result = await run_in_threadpool(
+            service.forecast_matrices,
+            request.context,
+            request.horizon,
+            request.past_only_covariates,
+            request.past_future_covariates,
+            request.return_quantiles,
+            request.target_names,
+            request.force_retrain,
+        )
+        return ForecastCovariateResponse(
+            forecast=cov_result.forecast.tolist(),
+            quantiles=(
+                cov_result.quantiles.tolist()
+                if cov_result.quantiles is not None
+                else None
+            ),
+            target_names=cov_result.target_names,
+            dates=None,
+            ucp=None,
+            meta=cov_result.meta or {},
+        )
+
+    except HTTPException:
+        raise
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error en /forecast-covariate: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error en forecast-covariate: {str(e)}",
+        )
+
+
 @app.get("/", status_code=status.HTTP_200_OK)
 async def root():
     """
@@ -4196,6 +4339,7 @@ async def root():
         "docs": "/docs",
         "endpoints": {
             "POST /predict": "Genera predicción de demanda con granularidad horaria",
+            "POST /forecast-covariate": "Pronóstico aditivo estilo TimesFM-3 (covariates + horizonte directo + cuantiles)",
             "POST /api/v1/base-curve": "Obtiene curvas base de demanda horaria para un rango de fechas",
             "POST /validate-hourly-adjustments": "Valida y optimiza ajustes manuales a predicciones horarias",
             "POST /retrain": "Reentrenamiento manual del modelo (actualiza datos + entrena nuevo modelo)",
@@ -4203,6 +4347,42 @@ async def root():
             "GET /models": "Lista de modelos disponibles"
         }
     }
+
+
+# ============================================================================
+# AJUSTES POR PASOS (/adjustments) — ver src/adjustments/router.py
+# ============================================================================
+
+async def _adjustments_base_provider(ucp: str, end_date, n_days: int):
+    """Pronóstico raw para el pipeline de ajustes: {fecha: [P1..P24]} + modelo_version.
+
+    El router siempre pasa end_date = último dato real (tras refrescar datos). run_predict_flow
+    hace trabajo CPU/IO bloqueante dentro de la corrutina: se ejecuta en un hilo con su propio
+    event loop para no bloquear /predict ni /health.
+    """
+    request = PredictRequest(ucp=ucp, end_date=end_date.strftime('%Y-%m-%d'), n_days=n_days)
+    response = await run_in_threadpool(lambda: asyncio.run(run_predict_flow(request)))
+    curves = {p.fecha: [float(getattr(p, f'P{i}')) for i in range(1, 25)] for p in response.predictions}
+    return curves, {"modelo_version": response.metadata.get("modelo_usado")}
+
+
+def _adjustments_model_checker(ucp: str) -> bool:
+    """True si la UCP tiene modelo horario y desagregador entrenados: el pipeline de ajustes no entrena
+    dentro del request (run_predict_flow entrenaría en línea); sin modelo el router responde 409 → /retrain."""
+    return check_model_exists(ucp)[0] and check_hourly_disaggregation_trained(ucp)
+
+
+set_base_provider(_adjustments_base_provider)
+set_data_refresher(full_update_csv)  # refresca datos antes de calcular la fecha de corte
+set_model_checker(_adjustments_model_checker)
+app.include_router(adjustments_router)
+app.include_router(adjustments_asr_router)  # POST /adjustments/comparar-asr (diagnóstico del ASR)
+app.include_router(adjustments_insights_router)  # GET /adjustments/insights/* (resumen, precisión, banda, series)
+
+# Entorno demo (Railway): solo si DEMO_MODE=1; sin la variable no cambia nada. Ver src/api/demo.py.
+from src.api.demo import demo_activo, install_demo  # noqa: E402
+if demo_activo():
+    install_demo(app)
 
 
 # ============================================================================
@@ -4228,4 +4408,4 @@ async def shutdown_event():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8000")))

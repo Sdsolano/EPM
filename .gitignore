@@ -118,3 +118,15 @@ after_fixes.csv
 /docs
 /data/raw/Atlantico
 /models/Atlantico
+/reports
+/models/Atlantico
+/models
+
+# Env files (cualquier variante; .env.example se versiona)
+.env*
+!.env.example
+
+# Snapshot de demo (datos reales; repo publico)
+/demo_snapshot/
+/static_demo/
+.demo_password.local
