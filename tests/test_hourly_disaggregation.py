@@ -15,12 +15,11 @@ from datetime import datetime
 from pathlib import Path
 import sys
 
-# Agregar src al path
-sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
-
-from prediction.hourly import HourlyDisaggregationEngine, CalendarClassifier
-from prediction.hourly.hourly_disaggregator import HourlyDisaggregator
-from prediction.hourly.special_days import SpecialDaysDisaggregator
+# El código de src/ usa imports relativos (p. ej. `from ...config.settings`), que solo son válidos importándolo
+# como paquete `src.*` (igual que la API y los demás tests), no con `src` agregado al sys.path.
+from src.prediction.hourly import HourlyDisaggregationEngine, CalendarClassifier
+from src.prediction.hourly.hourly_disaggregator import HourlyDisaggregator
+from src.prediction.hourly.special_days import SpecialDaysDisaggregator
 
 
 class TestCalendarClassifier:
@@ -250,8 +249,8 @@ class TestDisaggregationEngine:
         engine = HourlyDisaggregationEngine(auto_load=False)
 
         # Cambiar paths temporalmente
-        from prediction.hourly import hourly_disaggregator, special_days
-        import prediction.hourly.disaggregation_engine as engine_module
+        from src.prediction.hourly import hourly_disaggregator, special_days
+        import src.prediction.hourly.disaggregation_engine as engine_module
 
         original_models_dir = engine_module.MODELS_DIR
         engine_module.MODELS_DIR = tmp_path
@@ -324,26 +323,17 @@ class TestIntegrationWithForecaster:
     """Tests de integración con el forecaster"""
 
     def test_placeholder_hourly_sums_to_one(self):
-        """Verifica que placeholders sumen correctamente"""
-        from prediction.forecaster import ForecastPipeline
+        """Verifica que el placeholder horario del forecaster sume exactamente el total diario"""
+        from src.prediction.forecaster import ForecastPipeline
 
-        # Crear instancia temporal
-        # Nota: Esto fallará si no hay modelo, pero podemos testear el método directamente
         test_total = 1500.0
 
-        # Simular distribución placeholder
-        hourly_distribution = [
-            0.038, 0.036, 0.034, 0.035, 0.037, 0.040,
-            0.042, 0.044, 0.045, 0.044, 0.043, 0.042,
-            0.041, 0.040, 0.041, 0.042, 0.043, 0.045,
-            0.047, 0.048, 0.046, 0.044, 0.041, 0.039
-        ]
+        # `_get_placeholder_hourly` no usa el estado de la instancia: se prueba el método real sin construir
+        # el pipeline (que requiere modelos). El método normaliza la distribución para que sume 1.0.
+        hourly = ForecastPipeline._get_placeholder_hourly(None, test_total)
 
-        assert abs(sum(hourly_distribution) - 1.0) < 0.001
-
-        # Verificar que al multiplicar por total, suma correctamente
-        hourly_values = [test_total * ratio for ratio in hourly_distribution]
-        assert abs(sum(hourly_values) - test_total) < 0.01
+        assert list(hourly.keys()) == [f'P{i}' for i in range(1, 25)]
+        assert abs(sum(hourly.values()) - test_total) < 0.01
 
 
 # ============== TESTS DE RENDIMIENTO ==============
@@ -370,6 +360,8 @@ class TestPerformance:
         engine = HourlyDisaggregationEngine(auto_load=False)
         engine.normal_disaggregator = HourlyDisaggregator(n_clusters=35)
         engine.normal_disaggregator.fit(df)
+        # Sin días especiales entrenados: el motor consulta special_disaggregator.is_fitted (False) y usa el normal
+        engine.special_disaggregator = SpecialDaysDisaggregator()
 
         # Predecir 365 días
         import time
