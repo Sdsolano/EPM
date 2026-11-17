@@ -1,0 +1,31 @@
+# Demo local: app + Postgres 16. Antes: scripts/demo_build.sh (genera static_demo/ y demo_snapshot/).
+# Uso: DEMO_PASSWORD=algo docker compose up --build   ->  http://localhost:8000
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: epm
+      POSTGRES_PASSWORD: epm
+      POSTGRES_DB: epm
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U epm -d epm"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+  app:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    environment:
+      PORT: "8000"
+      DEMO_MODE: "1"
+      DEMO_PASSWORD: ${DEMO_PASSWORD:?define DEMO_PASSWORD}
+      DATABASE_URL: postgresql://epm:epm@db:5432/epm
+      API_KEY: ${API_KEY:-}
+volumes:
+  pgdata:

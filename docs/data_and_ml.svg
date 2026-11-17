@@ -1,0 +1,209 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 420" width="920" height="420" font-family="Arial, sans-serif">
+  <defs>
+    <radialGradient id="bgDark" cx="50%" cy="50%" r="70%">
+      <stop offset="0%" style="stop-color:#0d2a4a"/>
+      <stop offset="100%" style="stop-color:#071828"/>
+    </radialGradient>
+
+    <!-- Node glows -->
+    <radialGradient id="glowBlue" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" style="stop-color:#4db8ff;stop-opacity:1"/>
+      <stop offset="100%" style="stop-color:#1B4F8A;stop-opacity:0"/>
+    </radialGradient>
+    <radialGradient id="glowTeal" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" style="stop-color:#2de0c8;stop-opacity:1"/>
+      <stop offset="100%" style="stop-color:#0D7A6E;stop-opacity:0"/>
+    </radialGradient>
+    <radialGradient id="glowWhite" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" style="stop-color:#ffffff;stop-opacity:1"/>
+      <stop offset="100%" style="stop-color:#4db8ff;stop-opacity:0"/>
+    </radialGradient>
+    <radialGradient id="centerPulse" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" style="stop-color:#64d8e8;stop-opacity:0.15"/>
+      <stop offset="100%" style="stop-color:#1B4F8A;stop-opacity:0"/>
+    </radialGradient>
+
+    <filter id="blur4">
+      <feGaussianBlur stdDeviation="4"/>
+    </filter>
+    <filter id="blur8">
+      <feGaussianBlur stdDeviation="8"/>
+    </filter>
+    <filter id="blur2">
+      <feGaussianBlur stdDeviation="2"/>
+    </filter>
+  </defs>
+
+  <!-- Dark background -->
+  <rect width="920" height="420" fill="url(#bgDark)" rx="18"/>
+
+  <!-- Ambient glow in center -->
+  <ellipse cx="460" cy="210" rx="260" ry="180" fill="url(#centerPulse)" filter="url(#blur8)"/>
+
+  <!-- =====================================================
+       CONSTELLATION EDGES (drawn first, under nodes)
+       ===================================================== -->
+
+  <!-- Faint long-range connections -->
+  <g opacity="0.12" stroke="#4db8ff" stroke-width="1">
+    <line x1="120" y1="80"  x2="460" y2="210"/>
+    <line x1="200" y1="340" x2="460" y2="210"/>
+    <line x1="780" y1="90"  x2="460" y2="210"/>
+    <line x1="820" y1="330" x2="460" y2="210"/>
+    <line x1="460" y1="40"  x2="460" y2="210"/>
+    <line x1="120" y1="80"  x2="200" y2="340"/>
+    <line x1="780" y1="90"  x2="820" y2="330"/>
+    <line x1="120" y1="80"  x2="310" y2="150"/>
+    <line x1="820" y1="330" x2="650" y2="310"/>
+  </g>
+
+  <!-- Medium connections - inner ring to center -->
+  <g opacity="0.3" stroke="#2196A6" stroke-width="1.2">
+    <line x1="310" y1="150" x2="460" y2="210"/>
+    <line x1="340" y1="300" x2="460" y2="210"/>
+    <line x1="580" y1="140" x2="460" y2="210"/>
+    <line x1="610" y1="300" x2="460" y2="210"/>
+    <line x1="460" y1="90"  x2="460" y2="210"/>
+    <line x1="380" y1="210" x2="460" y2="210"/>
+    <line x1="545" y1="210" x2="460" y2="210"/>
+  </g>
+
+  <!-- Close cluster connections -->
+  <g opacity="0.45" stroke="#2de0c8" stroke-width="1.5">
+    <line x1="310" y1="150" x2="340" y2="300"/>
+    <line x1="580" y1="140" x2="610" y2="300"/>
+    <line x1="310" y1="150" x2="460" y2="90"/>
+    <line x1="580" y1="140" x2="460" y2="90"/>
+    <line x1="380" y1="210" x2="310" y2="150"/>
+    <line x1="380" y1="210" x2="340" y2="300"/>
+    <line x1="545" y1="210" x2="580" y2="140"/>
+    <line x1="545" y1="210" x2="610" y2="300"/>
+  </g>
+
+  <!-- Bright short connections near center -->
+  <g opacity="0.6" stroke="#64d8e8" stroke-width="1.8">
+    <line x1="380" y1="210" x2="460" y2="90"/>
+    <line x1="545" y1="210" x2="460" y2="90"/>
+    <line x1="380" y1="210" x2="545" y2="210"/>
+  </g>
+
+  <!-- =====================================================
+       OUTER RING — far nodes with labels
+       ===================================================== -->
+
+  <!-- Node: Datos tabulares  (120, 80) -->
+  <circle cx="120" cy="80" r="18" fill="#1B4F8A" opacity="0.3" filter="url(#blur4)"/>
+  <circle cx="120" cy="80" r="7" fill="#4db8ff" opacity="0.9"/>
+  <circle cx="120" cy="80" r="3.5" fill="white"/>
+  <text x="120" y="62" text-anchor="middle" font-size="10" fill="#a8d8ea" opacity="0.85">Datos tabulares</text>
+
+  <!-- Node: Series temporales  (780, 90) -->
+  <circle cx="780" cy="90" r="18" fill="#1B4F8A" opacity="0.3" filter="url(#blur4)"/>
+  <circle cx="780" cy="90" r="7" fill="#4db8ff" opacity="0.9"/>
+  <circle cx="780" cy="90" r="3.5" fill="white"/>
+  <text x="780" y="72" text-anchor="middle" font-size="10" fill="#a8d8ea" opacity="0.85">Series temporales</text>
+
+  <!-- Node: Texto / NLP  (200, 340) -->
+  <circle cx="200" cy="340" r="18" fill="#0D7A6E" opacity="0.3" filter="url(#blur4)"/>
+  <circle cx="200" cy="340" r="7" fill="#2de0c8" opacity="0.9"/>
+  <circle cx="200" cy="340" r="3.5" fill="white"/>
+  <text x="200" y="362" text-anchor="middle" font-size="10" fill="#a8d8ea" opacity="0.85">Texto / NLP</text>
+
+  <!-- Node: Imágenes  (820, 330) -->
+  <circle cx="820" cy="330" r="18" fill="#0D7A6E" opacity="0.3" filter="url(#blur4)"/>
+  <circle cx="820" cy="330" r="7" fill="#2de0c8" opacity="0.9"/>
+  <circle cx="820" cy="330" r="3.5" fill="white"/>
+  <text x="820" y="352" text-anchor="middle" font-size="10" fill="#a8d8ea" opacity="0.85">Imágenes</text>
+
+  <!-- Node: Sensores / IoT  (460, 40) -->
+  <circle cx="460" cy="40" r="14" fill="#1B4F8A" opacity="0.3" filter="url(#blur4)"/>
+  <circle cx="460" cy="40" r="6" fill="#4db8ff" opacity="0.85"/>
+  <circle cx="460" cy="40" r="3" fill="white"/>
+  <text x="460" y="26" text-anchor="middle" font-size="10" fill="#a8d8ea" opacity="0.85">Sensores / IoT</text>
+
+  <!-- =====================================================
+       MIDDLE RING — inner satellite nodes with labels
+       ===================================================== -->
+
+  <!-- Node: Features  (310, 150) -->
+  <circle cx="310" cy="150" r="22" fill="#2196A6" opacity="0.2" filter="url(#blur4)"/>
+  <circle cx="310" cy="150" r="9" fill="#2196A6" opacity="0.85"/>
+  <circle cx="310" cy="150" r="4.5" fill="white"/>
+  <text x="310" y="134" text-anchor="middle" font-size="10" fill="#cce8f4" opacity="0.9">Features</text>
+
+  <!-- Node: Etiquetas  (580, 140) -->
+  <circle cx="580" cy="140" r="22" fill="#2196A6" opacity="0.2" filter="url(#blur4)"/>
+  <circle cx="580" cy="140" r="9" fill="#2196A6" opacity="0.85"/>
+  <circle cx="580" cy="140" r="4.5" fill="white"/>
+  <text x="580" y="124" text-anchor="middle" font-size="10" fill="#cce8f4" opacity="0.9">Etiquetas</text>
+
+  <!-- Node: Métricas  (340, 300) -->
+  <circle cx="340" cy="300" r="22" fill="#2196A6" opacity="0.2" filter="url(#blur4)"/>
+  <circle cx="340" cy="300" r="9" fill="#2196A6" opacity="0.85"/>
+  <circle cx="340" cy="300" r="4.5" fill="white"/>
+  <text x="340" y="322" text-anchor="middle" font-size="10" fill="#cce8f4" opacity="0.9">Métricas</text>
+
+  <!-- Node: Metadatos  (610, 300) -->
+  <circle cx="610" cy="300" r="22" fill="#2196A6" opacity="0.2" filter="url(#blur4)"/>
+  <circle cx="610" cy="300" r="9" fill="#2196A6" opacity="0.85"/>
+  <circle cx="610" cy="300" r="4.5" fill="white"/>
+  <text x="610" y="322" text-anchor="middle" font-size="10" fill="#cce8f4" opacity="0.9">Metadatos</text>
+
+  <!-- =====================================================
+       INNER RING — closest nodes
+       ===================================================== -->
+
+  <!-- Node left  (380, 210) -->
+  <circle cx="380" cy="210" r="28" fill="#0D7A6E" opacity="0.15" filter="url(#blur4)"/>
+  <circle cx="380" cy="210" r="12" fill="#0D7A6E" opacity="0.8"/>
+  <circle cx="380" cy="210" r="5.5" fill="#2de0c8"/>
+  <text x="380" y="196" text-anchor="middle" font-size="10" fill="#7fffd4" opacity="0.9">Pipeline ML</text>
+
+  <!-- Node right  (545, 210) -->
+  <circle cx="545" cy="210" r="28" fill="#0D7A6E" opacity="0.15" filter="url(#blur4)"/>
+  <circle cx="545" cy="210" r="12" fill="#0D7A6E" opacity="0.8"/>
+  <circle cx="545" cy="210" r="5.5" fill="#2de0c8"/>
+  <text x="545" y="196" text-anchor="middle" font-size="10" fill="#7fffd4" opacity="0.9">Modelos</text>
+
+  <!-- Node top  (460, 90) -->
+  <circle cx="460" cy="90" r="28" fill="#1B4F8A" opacity="0.2" filter="url(#blur4)"/>
+  <circle cx="460" cy="90" r="12" fill="#1B4F8A" opacity="0.9"/>
+  <circle cx="460" cy="90" r="5.5" fill="#64d8e8"/>
+  <text x="460" y="75" text-anchor="middle" font-size="10" fill="#cce8f4" opacity="0.9">Ciencia de datos</text>
+
+  <!-- =====================================================
+       CENTER NODE — OCTOPUS (todos los datos confluyen aquí)
+       ===================================================== -->
+
+  <!-- Outer pulse rings -->
+  <circle cx="460" cy="210" r="70" fill="none" stroke="#2196A6" stroke-width="1" opacity="0.2"/>
+  <circle cx="460" cy="210" r="56" fill="none" stroke="#64d8e8" stroke-width="1.5" opacity="0.3"/>
+
+  <!-- Glow halo -->
+  <circle cx="460" cy="210" r="48" fill="#1B4F8A" opacity="0.25" filter="url(#blur4)"/>
+
+  <!-- Main disc (área vacía para tu logo Octopus: centro 460,210 — ancla aquí <image> o <g>) -->
+  <circle cx="460" cy="210" r="42" fill="#0d3a6e"/>
+  <circle cx="460" cy="210" r="42" fill="none" stroke="#64d8e8" stroke-width="2" opacity="0.7"/>
+
+  <!-- Label below center -->
+  <text x="460" y="272" text-anchor="middle" font-size="14" fill="white" font-weight="700" letter-spacing="4" opacity="0.95">OCTOPUS</text>
+
+  <!-- =====================================================
+       DECORATIVE WAVE — bottom, suggesting data flow
+       ===================================================== -->
+  <g opacity="0.18">
+    <polyline points="38,390 80,378 130,384 180,368 240,374 300,360 360,366 420,350 460,355 500,348 550,356 610,344 670,352 730,340 790,346 840,334 880,340" fill="none" stroke="#2de0c8" stroke-width="2" stroke-linecap="round"/>
+  </g>
+  <g opacity="0.1">
+    <polyline points="38,400 80,392 130,396 180,384 240,390 300,376 360,382 420,368 460,372 500,365 550,373 610,361 670,368 730,356 790,362 840,350 880,356" fill="none" stroke="#4db8ff" stroke-width="1.5" stroke-linecap="round"/>
+  </g>
+
+  <!-- =====================================================
+       CAPTION
+       ===================================================== -->
+  <text x="460" y="408" text-anchor="middle" font-size="11" fill="#4d8ab0" letter-spacing="0.5" opacity="0.8">Todos los datos y fuentes confluyen en un único hub: Machine Learning y Ciencia de Datos</text>
+
+  <!-- Outer border -->
+  <rect x="2" y="2" width="916" height="416" rx="18" fill="none" stroke="#2196A6" stroke-width="1.5" opacity="0.2"/>
+</svg>

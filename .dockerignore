@@ -1,0 +1,25 @@
+.git
+.venv
+venv
+__pycache__
+*.pyc
+.pytest_cache
+.env
+.env.*
+env.migracion-pc-epm-usb
+tests
+docs
+notebooks
+logs
+incident
+temp_uploads
+dashboards
+string
+/*.csv
+# data/, models/ y reports/ reales NO entran por aqui: vienen en demo_snapshot/ (se copia a /app/)
+data
+models
+reports
+# demo_snapshot/ y static_demo/ SI deben entrar al contexto (no se excluyen)
+!demo_snapshot
+!static_demo
