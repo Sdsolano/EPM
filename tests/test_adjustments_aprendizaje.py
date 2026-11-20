@@ -250,3 +250,15 @@ def test_inmemory_list_runs_no_expone_eventos_ni_estado_mutable():
     assert "eventos" not in run
     run["meta"]["ucp"] = "MUTADO"
     assert store.get_run(rid)["meta"]["ucp"] == "UCP1"
+
+
+def test_inmemory_list_runs_filtra_por_estado():
+    s1 = date(2026, 3, 2)
+    store = InMemoryStore()
+    borrador = store.create_run(_meta("UCP1", s1), _records_list_runs())
+    aprobada = store.create_run(_meta("UCP1", s1 + timedelta(days=7)), _records_list_runs())
+    store.approve(aprobada, "jefe", None, 1)
+    assert [r["meta"]["id"] for r in store.list_runs("UCP1", None, None, 200)] == [aprobada, borrador]
+    assert [r["meta"]["id"] for r in store.list_runs("UCP1", None, None, 200, estado="aprobada")] == [aprobada]
+    assert [r["meta"]["id"] for r in store.list_runs("UCP1", None, None, 200, estado="borrador")] == [borrador]
+    assert store.list_runs("UCP1", None, None, 200, estado="reemplazada") == []

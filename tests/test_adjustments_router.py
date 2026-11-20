@@ -1052,6 +1052,10 @@ def test_postgres_aprobaciones_concurrentes(pg):
     estados = [store.get_run(r)["meta"]["estado"] for r in ids]
     assert estados.count("aprobada") == 1 and estados.count("reemplazada") == 3
     assert store.get_approved(ucp, semana)["meta"]["estado"] == "aprobada"
+    # filtro por estado en la query (E5): solo la aprobada vigente de esa semana
+    aprobadas = store.list_runs(ucp, semana, semana, 500, estado="aprobada")
+    assert [c["meta"]["estado"] for c in aprobadas] == ["aprobada"]
+    assert len(store.list_runs(ucp, semana, semana, 500, estado="reemplazada")) == 3
 
     # dos PATCH concurrentes con la misma versión: uno gana, el otro 409
     rid = store.create_run({**meta, "semana_inicio": semana + timedelta(days=7)}, _records_fake())
@@ -1118,3 +1122,221 @@ def test_postgres_router_reeditar_base(pg, env):
     _registrar_ucp(ucp)
     client = _client(PostgresStore(dsn))
     _reeditar_base_flow(client, ucp)
+
+
+# ---------------------------------------------------------------------------
+# E5: perfil (jamer / jamer_modelo), aprobadas del año y GET /acumulado-anual
+# ---------------------------------------------------------------------------
+
+def _aprobar(client, **extra):
+    creada = _crear(client, **extra)
+    r = client.post(f"/adjustments/{creada['id']}/approve", json={"usuario": "jefe", "version_esperada": 1})
+    assert r.status_code == 200, r.text
+    return creada["id"]
+
+
+def test_sin_perfil_es_identico_a_hoy(client_sin_store):
+    """perfil ausente o null: mismas curvas finales (byte a byte), mismos params, sin `perfil` en extras."""
+    a = client_sin_store.post("/adjustments/preview", json=BODY).json()
+    b = client_sin_store.post("/adjustments/preview", json={**BODY, "perfil": None}).json()
+    assert json.dumps(a["final_curves"], sort_keys=True) == json.dumps(b["final_curves"], sort_keys=True)
+    assert a["meta"]["params_iniciales"] == b["meta"]["params_iniciales"] == {}
+    assert "perfil" not in a["meta"]["extras"] and "perfil" not in b["meta"]["extras"]
+    nivel = _steps(a)["nivel"]
+    assert nivel["params"] == {"alpha": 0.25} and "referencias" not in nivel["diagnostics"]
+    assert _steps(a)["forma"]["params"] == {"fuente": "promedio_n", "n": 4, "beta": 1.0}
+    assert "delta" not in _steps(a)["forma"]["diagnostics"]
+
+
+@pytest.mark.parametrize("perfil", ["JAMER", "otro", "", 1])
+def test_perfil_invalido_422(client_sin_store, perfil):
+    r = client_sin_store.post("/adjustments/preview", json={**BODY, "perfil": perfil})
+    assert r.status_code == 422
+
+
+def test_perfil_jamer_preview_devuelve_referencias_y_delta_plano(client_sin_store):
+    r = client_sin_store.post("/adjustments/preview", json={**BODY, "perfil": "jamer"})
+    assert r.status_code == 200, r.text
+    data = r.json()
+    steps = _steps(data)
+    nivel, forma, control = steps["nivel"], steps["forma"], steps["control"]
+    assert nivel["params"]["modo"] == "reciente"
+    refs = nivel["diagnostics"]["referencias"]
+    assert sorted(refs) == _semana_iso()
+    lunes = refs[_semana_iso()[0]]
+    assert len(lunes["r1"]["curva"]) == 24 and lunes["r1"]["fecha"] < SEMANA.isoformat()
+    assert set(lunes) == {"r1", "r1_extra", "r2", "r3"}
+    assert {"Y", "ventana", "n_pares", "fallback", "fuente_g"} <= set(nivel["diagnostics"]["crecimiento"])
+    dia = nivel["diagnostics"]["dias"][_semana_iso()[0]]
+    assert {"E", "E_base", "E_obj", "g_raw", "g_usado", "acotado", "lag_dias", "r1", "clase"} <= set(dia)
+    assert forma["params"]["fuente"] == "reciente_clase" and forma["params"]["delta"] == "plano"
+    assert "delta_plano_mw" in forma["diagnostics"]["dias"][_semana_iso()[0]]
+    assert control["diagnostics"]["saltos"]["banda_mw"] == 40.0
+    assert data["meta"]["extras"]["perfil"] == "jamer"
+    assert data["meta"]["params_iniciales"]["nivel"] == {"modo": "reciente", "g_fuente": "interanual",
+                                                         "peso_modelo": 0.0}
+    # Σ del día = E(d) del nivel (reconciliación intacta) y sin bloqueos
+    for f in _semana_iso():
+        assert sum(data["final_curves"][f]) == pytest.approx(nivel["diagnostics"]["dias"][f]["E"], abs=1e-6)
+    assert data["bloqueos"] == []
+
+
+def test_perfil_jamer_modelo_y_usuario_gana(client_sin_store):
+    jm = client_sin_store.post("/adjustments/preview", json={**BODY, "perfil": "jamer_modelo"}).json()
+    assert _steps(jm)["nivel"]["params"]["peso_modelo"] == 0.3
+    assert jm["meta"]["extras"]["perfil"] == "jamer_modelo"
+    r = client_sin_store.post("/adjustments/preview", json={
+        **BODY, "perfil": "jamer_modelo", "params": {"nivel": {"peso_modelo": 0.5}, "forma": {"delta": "proporcional"}}})
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert _steps(out)["nivel"]["params"]["peso_modelo"] == 0.5
+    assert _steps(out)["forma"]["params"]["delta"] == "proporcional"  # con perfil se persisten los efectivos
+    assert _steps(out)["forma"]["params"]["fuente"] == "reciente_clase"  # el resto del perfil se conserva
+    assert out["meta"]["params_iniciales"]["nivel"]["peso_modelo"] == 0.5
+    # params inválidos del usuario sobre el perfil siguen dando 422
+    r = client_sin_store.post("/adjustments/preview", json={**BODY, "perfil": "jamer", "params": {"nivel": {"g_k": -1}}})
+    assert r.status_code == 422
+
+
+def test_perfil_con_base_curvas(client_sin_store, env):
+    r = client_sin_store.post("/adjustments/preview", json={
+        **BODY, "perfil": "jamer", "fecha_emision": "2026-11-14", "base_curvas": _base_externa(CORTE, SEMANA)})
+    assert r.status_code == 200, r.text
+    assert env.calls == [] and "referencias" in _steps(r.json())["nivel"]["diagnostics"]
+
+
+def test_perfil_run_persiste_y_patch_es_determinista(client):
+    creada = _crear(client, perfil="jamer")
+    assert creada["meta"]["extras"]["perfil"] == "jamer"
+    assert creada["meta"]["params_iniciales"]["forma"]["delta"] == "plano"
+    assert creada["eventos"][0]["detalle"]["perfil"] == "jamer"
+    assert creada["eventos"][0]["detalle"]["params"]["nivel"]["modo"] == "reciente"
+    # el GET devuelve lo mismo que se guardó
+    got = client.get(f"/adjustments/{creada['id']}").json()
+    assert got["meta"]["extras"]["perfil"] == "jamer"
+    # PATCH sin cambios de params recalcula igual (los params vigentes viven en cada paso)
+    r = client.patch(f"/adjustments/{creada['id']}/steps/forma",
+                     json={"estado": "aplicado", "version_esperada": 1})
+    assert r.status_code == 200, r.text
+    assert json.dumps(r.json()["final_curves"], sort_keys=True) == json.dumps(creada["final_curves"], sort_keys=True)
+    assert "referencias" in _steps(r.json())["nivel"]["diagnostics"]
+    # omitir nivel: forma con delta plano sin energia_base sigue funcionando (alerta, no 500)
+    r = client.patch(f"/adjustments/{creada['id']}/steps/nivel",
+                     json={"estado": "omitido", "version_esperada": 2})
+    assert r.status_code == 200, r.text
+
+
+def test_acumulado_anual_503_sin_store(client_sin_store):
+    r = client_sin_store.get("/adjustments/acumulado-anual", params={"ucp": UCP, "anio": 2026})
+    assert r.status_code == 503
+
+
+@pytest.mark.parametrize("params,codigo", [
+    ({"ucp": "../x", "anio": 2026}, 422), ({"ucp": "Foo", "anio": 2026}, 404),
+    ({"ucp": UCP, "anio": 1800}, 422), ({"ucp": UCP, "anio": 2026, "banda_pct": -1}, 422),
+    ({"ucp": UCP, "anio": 2026, "cupo": -1}, 422), ({"ucp": UCP}, 422),
+])
+def test_acumulado_anual_validaciones(client, params, codigo):
+    assert client.get("/adjustments/acumulado-anual", params=params).status_code == codigo
+
+
+def test_acumulado_anual_apagado_por_defecto_y_cuenta_con_banda(client, env):
+    sin_aprobadas = client.get("/adjustments/acumulado-anual", params={"ucp": UCP, "anio": 2026}).json()
+    assert sin_aprobadas["estado"] == "apagado" and sin_aprobadas["dias_aprobados"] == 0
+    _aprobar(client)
+    nuevo = _filas(SEMANA, SEMANA + timedelta(days=6))  # llega el real de la semana aprobada
+    env.hist = pd.concat([env.hist, nuevo], ignore_index=True)
+    apagado = client.get("/adjustments/acumulado-anual", params={"ucp": UCP, "anio": 2026}).json()
+    assert apagado["estado"] == "apagado" and apagado["dias_fuera"] == 0 and apagado["dias_aprobados"] == 7
+    sin_cupo = client.get("/adjustments/acumulado-anual",
+                          params={"ucp": UCP, "anio": 2026, "banda_pct": 0.0001}).json()
+    assert sin_cupo["estado"] == "sin_cupo" and sin_cupo["dias_fuera"] == sin_cupo["dias_evaluados"] == 7
+    assert sin_cupo["alerta"] is None and sin_cupo["ucp"] == UCP
+    ancha = client.get("/adjustments/acumulado-anual", params={"ucp": UCP, "anio": 2026, "banda_pct": 50}).json()
+    assert ancha["dias_fuera"] == 0 and ancha["dias_evaluados"] == 7
+    excedido = client.get("/adjustments/acumulado-anual",
+                          params={"ucp": UCP, "anio": 2026, "banda_pct": 0.0001, "cupo": 3}).json()
+    assert excedido["estado"] == "excedido" and excedido["alerta"]["codigo"] == "ACUMULADO_ANUAL_FUERA_RANGO"
+    otro_anio = client.get("/adjustments/acumulado-anual",
+                           params={"ucp": UCP, "anio": 2025, "banda_pct": 1}).json()
+    assert otro_anio["dias_aprobados"] == 0 and otro_anio["dias_evaluados"] == 0
+    tope = client.get("/adjustments/acumulado-anual",
+                      params={"ucp": UCP, "anio": 2026, "banda_pct": 0.0001, "hasta": "2026-11-18"}).json()
+    assert tope["dias_evaluados"] == 3
+
+
+def test_control_recibe_aprobadas_del_anio_solo_con_cupo(client, env):
+    _aprobar(client)
+    env.hist = pd.concat([env.hist, _filas(SEMANA, SEMANA + timedelta(days=6))], ignore_index=True)
+    siguiente = (SEMANA + timedelta(days=7)).isoformat()
+    cuerpo = {"ucp": UCP, "semana_inicio": siguiente}
+    sin_cupo = client.post("/adjustments/preview", json=cuerpo).json()
+    assert _steps(sin_cupo)["control"]["diagnostics"]["acumulado_anual"] is None
+    con_cupo = client.post("/adjustments/preview", json={
+        **cuerpo, "params": {"control": {"cupo_dias_anuales": 2, "banda_error_pct": 0.0001}}})
+    assert con_cupo.status_code == 200, con_cupo.text
+    control = _steps(con_cupo.json())["control"]
+    assert control["diagnostics"]["acumulado_anual"]["estado"] == "excedido"
+    assert any(a["codigo"] == "ACUMULADO_ANUAL_FUERA_RANGO" and a["nivel"] == "info" for a in control["alerts"])
+    assert con_cupo.json()["bloqueos"] == []
+
+
+def test_control_con_cupo_sin_store_no_rompe(client_sin_store):
+    r = client_sin_store.post("/adjustments/preview", json={
+        **BODY, "params": {"control": {"cupo_dias_anuales": 2}}})
+    assert r.status_code == 200, r.text
+    assert _steps(r.json())["control"]["diagnostics"]["acumulado_anual"] == {
+        "estado": "sin_datos", "motivo": "sin energías aprobadas del año"}
+
+
+# ---------------------------------------------------------------------------
+# Correcciones E5 / E10 (ronda 1 de la réplica de Jamer)
+# ---------------------------------------------------------------------------
+
+def test_aprobadas_anio_filtra_por_estado_y_no_se_corta_con_borradores(client, env, store, monkeypatch):
+    """E5: pide solo aprobadas al store; muchos borradores más recientes no desplazan a la aprobada."""
+    _aprobar(client)
+    for _ in range(3):  # borradores de la misma semana, más recientes que la aprobada
+        _crear(client)
+    monkeypatch.setattr(router_mod, "MAX_APROBADAS_ANIO", 2)  # con el corte viejo (sin filtro) se perdería la aprobada
+    out = router_mod._aprobadas_anio(store, UCP, SEMANA.year)
+    assert len(out) == 7 and all(f.startswith(f"{SEMANA.year:04d}-") for f in out)
+
+    llamadas = []
+    original = store.list_runs
+    store.list_runs = lambda *a, **k: llamadas.append((a, k)) or original(*a, **k)
+    router_mod._aprobadas_anio(store, UCP, SEMANA.year)
+    assert llamadas and llamadas[0][1].get("estado") == "aprobada"
+
+
+def test_aprobadas_anio_avisa_si_alcanza_el_tope(client, env, store, monkeypatch, caplog):
+    _aprobar(client)
+    monkeypatch.setattr(router_mod, "MAX_APROBADAS_ANIO", 1)
+    with caplog.at_level("WARNING"):
+        router_mod._aprobadas_anio(store, UCP, SEMANA.year)
+    assert any("tope de lectura" in r.getMessage() for r in caplog.records)
+
+
+class _StoreSinEsquema:
+    """Store cuyo list_runs falla como Postgres sin migrar (tabla inexistente)."""
+
+    def list_runs(self, *args, **kwargs):
+        import psycopg2.errors
+
+        raise psycopg2.errors.UndefinedTable('relation "ajustes.corrida" does not exist')
+
+
+def test_acumulado_anual_store_sin_esquema_migrado_503(env):
+    """E10: tabla/esquema inexistente -> 503 claro, no 500."""
+    r = _client(_StoreSinEsquema()).get("/adjustments/acumulado-anual", params={"ucp": UCP, "anio": 2026})
+    assert r.status_code == 503, r.text
+    assert "no disponible" in r.json()["detail"]
+
+
+def test_acumulado_anual_error_no_de_bd_no_se_traduce_a_503(env):
+    class _Roto:
+        def list_runs(self, *a, **k):
+            raise RuntimeError("bug")
+
+    with pytest.raises(RuntimeError, match="bug"):  # no se traduce: solo los errores del driver son 503
+        _client(_Roto()).get("/adjustments/acumulado-anual", params={"ucp": UCP, "anio": 2026})

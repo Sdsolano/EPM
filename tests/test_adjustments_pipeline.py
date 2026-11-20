@@ -706,3 +706,47 @@ def test_referencia_forzada_posterior_value_error_en_run_pipeline():
     with pytest.raises(ValueError):
         run_pipeline(_ctx(), ProveedorPlano(),
                      params={"referencia": {"semana_ref_inicio": iso(SEMANA + timedelta(days=14))}})
+
+
+# ---------------------------------------------------------------- R1_SIN_MISMA_CLASE una sola vez (nivel y forma)
+
+def test_alerta_r1_sin_misma_clase_se_emite_una_vez_entre_nivel_y_forma():
+    from src.adjustments import perfiles
+
+    semana = date(2025, 12, 22)  # 26/12 es post-festivo (25/12 es festivo) y no hay otro post-festivo reciente
+    ctx = build_context("Sintetica", semana, fecha_emision=semana - timedelta(days=4), historico=HIST)
+    records = run_pipeline(ctx, ProveedorPlano(), perfiles.expandir("jamer", None))
+    por_paso = {r.paso: r for r in records}
+    cod = "R1_SIN_MISMA_CLASE"
+    en_nivel = [a for a in por_paso["nivel"].result.alerts if a.codigo == cod]
+    en_forma = [a for a in por_paso["forma"].result.alerts if a.codigo == cod]
+    assert len(en_nivel) == 1 and en_nivel[0].fechas == ["2025-12-26"]
+    assert en_forma == []  # forma no repite lo que nivel ya reportó para el mismo día
+
+    # sin nivel reciente (nivel estándar) forma sí la emite: nadie más la reportó
+    solo_forma = run_pipeline(ctx, ProveedorPlano(), {"forma": {"fuente": "reciente_clase"}})
+    por_paso = {r.paso: r for r in solo_forma}
+    assert [a.fechas for a in por_paso["forma"].result.alerts if a.codigo == cod] == [["2025-12-26"]]
+    assert not [a for a in por_paso["nivel"].result.alerts if a.codigo == cod]
+
+
+def test_mensaje_unido_de_forma_refleja_solo_los_dias_que_quedan():
+    """Al quitar los días que nivel ya reportó, el conteo del mensaje genérico se recalcula (no queda "3 día(s)")."""
+    from src.adjustments import pipeline as pl
+    from src.adjustments.referencia_reciente import ALERTA_SIN_MISMA_CLASE as cod, unir_alertas
+
+    por_dia = [Alert("info", cod, f"sin clase {f}", [f], {"clase": "post_festivo"})
+               for f in ("2025-12-24", "2025-12-26", "2025-12-27")]
+    forma_res = StepResult(curves={}, alerts=unir_alertas(por_dia))
+    assert "3 día(s)" in forma_res.alerts[0].mensaje
+    nivel_rec = StepRecord(2, "nivel", StepState.APLICADO, {}, StepResult(
+        curves={}, alerts=[Alert("info", cod, "x", ["2025-12-26"])]))
+    pl._sin_alertas_ya_emitidas_por_nivel(forma_res, [nivel_rec])
+    (a,) = forma_res.alerts
+    assert a.fechas == ["2025-12-24", "2025-12-27"] and "2 día(s)" in a.mensaje and "3 día(s)" not in a.mensaje
+    assert sorted(a.detalle["por_fecha"]) == a.fechas
+    # un solo día restante: conserva el mensaje propio del día
+    forma_res = StepResult(curves={}, alerts=unir_alertas(por_dia))
+    nivel_rec.result.alerts = [Alert("info", cod, "x", ["2025-12-26", "2025-12-27"])]
+    pl._sin_alertas_ya_emitidas_por_nivel(forma_res, [nivel_rec])
+    assert forma_res.alerts[0].fechas == ["2025-12-24"] and forma_res.alerts[0].mensaje == "sin clase 2025-12-24"

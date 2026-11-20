@@ -121,6 +121,13 @@ def lista_enteros(
     return sorted({entero(paso, f"{clave}[]", x, minimo=minimo, maximo=maximo) for x in v})
 
 
+def booleano(paso: str, clave: str, v: Any) -> bool:
+    """bool estricto (acepta numpy.bool_); cualquier otro tipo (0/1, "true", None) es ValueError."""
+    if not isinstance(v, (bool, np.bool_)):
+        raise ValueError(f"{paso}.{clave} debe ser true o false, llegó {_corto(v)}")
+    return bool(v)
+
+
 def opcion(paso: str, clave: str, v: Any, opciones: Iterable[str]) -> str:
     opciones = tuple(opciones)
     if not isinstance(v, str) or v not in opciones:

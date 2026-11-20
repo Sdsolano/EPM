@@ -34,6 +34,7 @@ TIPO_FESTIVO = "festivo"
 # Años anómalos que nunca se usan como referencia (pandemia). Única fuente: la
 # importan referencia (DEFAULTS) y nivel (fallback si ctx no trae la lista).
 ANIOS_EXCLUIDOS_DEFAULT = (2020,)
+LAG_ANIO = 364  # 52 semanas: mismo día de la semana del año anterior (R2/R3 y crecimiento interanual)
 
 
 # ---------------------------------------------------------------------------
@@ -165,6 +166,32 @@ def tipo_dia(fecha, festivos: Iterable[str]) -> str:
     if d.weekday() == 6:
         return TIPO_DOMINGO
     return TIPO_LABORAL
+
+
+CLASE_NORMAL = "normal"
+CLASE_FESTIVO = "festivo"
+CLASE_POST_FESTIVO = "post_festivo"
+CLASE_PUENTE = "puente"
+
+
+def clase_dia(d, festivos: Iterable[str], *, puente: bool = False) -> str:
+    """
+    Clase de día para elegir la referencia reciente (R1): `festivo` (en la lista),
+    `post_festivo` (lunes a viernes no festivo cuyo día calendario anterior es
+    festivo), `puente` (solo con `puente=True`: sábado/domingo previo a un lunes
+    festivo) o `normal`. No reemplaza a `tipo_dia`.
+    """
+    d = parse_date(d)
+    festivos_set = festivos if isinstance(festivos, (set, frozenset)) else set(festivos)
+    if d.isoformat() in festivos_set:
+        return CLASE_FESTIVO
+    if d.weekday() < 5 and (d - timedelta(days=1)).isoformat() in festivos_set:
+        return CLASE_POST_FESTIVO
+    if puente and d.weekday() >= 5:
+        lunes = d + timedelta(days=7 - d.weekday())
+        if lunes.isoformat() in festivos_set:
+            return CLASE_PUENTE
+    return CLASE_NORMAL
 
 
 def dias_semana(lunes: date) -> List[date]:

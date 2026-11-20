@@ -15,6 +15,13 @@
                                               aprobada anterior de la misma (ucp, semana) pasa a `reemplazada`.
                                               `excepciones_justificadas` debe referirse a warnings vigentes (422).
 - `POST  /adjustments/analogos`               días análogos a una fecha (R3; solo lectura, sin base ni modelo).
+- `GET   /adjustments/acumulado-anual?ucp=&anio=&banda_pct=&cupo=&hasta=`
+                                              días del año con error de la aprobada vs el real fuera de banda
+                                              (solo lectura, requiere base; banda/cupo apagados por defecto).
+
+`RunRequest.perfil` (`jamer` | `jamer_modelo`, opcional) se expande en `perfiles.py` a los params de
+nivel/forma/control; los `params` explícitos ganan clave a clave. `meta.params_iniciales` guarda los params ya
+expandidos y `meta.extras.perfil` el nombre (solo si hubo perfil: sin perfil todo queda como antes).
 
 `meta.params_iniciales` = `params` del request original (/run); los params vigentes de cada paso están en
 `steps[i].params`. `meta.extras.base_ref` = `base_ref` del request (enlace al pronóstico emitido en Sphere).
@@ -70,11 +77,12 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field, field_validator
 
-from src.adjustments import analogos, aprendizaje, automatico, data, eventos
+from src.adjustments import acumulado, analogos, aprendizaje, automatico, data, eventos, perfiles
 from src.adjustments import pipeline as pl
 from src.adjustments.steps import base as base_step
 from src.adjustments.steps._params import FECHA_MAX, FECHA_MIN
 from src.adjustments.store import (
+    ESTADO_APROBADA,
     ApprovalBlockedError,
     RunApprovedError,
     RunNotFoundError,
@@ -260,6 +268,10 @@ class RunRequest(BaseModel):
         False, description="Añade a nivel/forma el estado R2 por día en diagnostics.automatico; "
                            "no cambia las curvas"
     )
+    perfil: Optional[Literal["jamer", "jamer_modelo"]] = Field(
+        None, description="Perfil de params que replica el flujo de Jamer: se expande a nivel/forma/control "
+                          "(los params explícitos ganan clave a clave). Sin perfil, comportamiento previo."
+    )
 
     @field_validator("semana_inicio")
     @classmethod
@@ -355,6 +367,15 @@ class VersionOut(VersionInfo):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _es_error_de_bd(e: BaseException) -> bool:
+    """True si `e` es un error del driver de Postgres (tabla/esquema inexistente, conexión caída...)."""
+    try:
+        import psycopg2
+    except ImportError:  # sin driver no hay PostgresStore: nada que traducir
+        return False
+    return isinstance(e, psycopg2.Error)
+
 
 def _require_store(store: Optional[Store]) -> Store:
     if store is None:
@@ -576,8 +597,62 @@ def _run_pipeline(ctx: RunContext, base_curves: Curves,
     return pl.run_pipeline(ctx, _const_provider(base_curves), params or None)
 
 
-async def _compute(req: RunRequest) -> Tuple[List[StepRecord], Dict[str, Any]]:
+def _energia_final_por_dia(records: List[StepRecord]) -> Dict[str, float]:
+    """{fecha: energía} de las curvas finales de una corrida (días no finitos se omiten)."""
+    out: Dict[str, float] = {}
+    for f, v in pl.final_curves(records).items():
+        e = data.energia_curva(v)
+        if e is not None:
+            out[str(f)[:10]] = e
+    return out
+
+
+def _semana_de(meta: Dict[str, Any]) -> Optional[set]:
+    """Los 7 días (ISO) de la semana objetivo de una corrida; None si el meta no trae fecha válida."""
+    try:
+        return {d.isoformat() for d in data.dias_semana(parse_date(meta.get("semana_inicio")))}
+    except Exception:  # noqa: BLE001
+        return None
+
+
+# Tope de corridas que lee `_aprobadas_anio`. Se piden SOLO las aprobadas (una vigente por semana: ≈ 53 al año),
+# así que el tope nunca se alcanza; si aun así se alcanzara se avisa en el log en vez de cortar en silencio.
+MAX_APROBADAS_ANIO = 500
+
+
+def _aprobadas_anio(store: Store, ucp: str, anio: int) -> Dict[str, float]:
+    """Energía diaria de las corridas aprobadas vigentes de (ucp, año), de las curvas finales de cada una."""
+    runs = store.list_runs(ucp, date(anio, 1, 1) - timedelta(days=6), date(anio, 12, 31), MAX_APROBADAS_ANIO,
+                           estado=ESTADO_APROBADA)
+    if len(runs) >= MAX_APROBADAS_ANIO:
+        logger.warning("[ajustes] %s: %d aprobadas en %d alcanzan el tope de lectura; el acumulado puede estar incompleto",
+                       ucp, len(runs), anio)
+    out: Dict[str, float] = {}
+    for run in runs:  # más reciente primero; una sola aprobada vigente por (ucp, semana)
+        semana = _semana_de(run["meta"])
+        for f, e in _energia_final_por_dia(pl.migrar_records(run["records"])).items():
+            if f.startswith(f"{anio:04d}-") and (semana is None or f in semana):  # sin días de brecha
+                out.setdefault(f, e)
+    return out
+
+
+async def _cargar_aprobadas_control(ctx: RunContext, store: Optional[Store],
+                                    params_control: Optional[Dict[str, Any]]) -> None:
+    """Pasa a `control` las aprobadas del año (`ctx.extras["acumulado_aprobada"]`) solo si hay cupo configurado
+    (si no, la alerta está apagada) y hay store; un fallo de lectura degrada a "sin datos", no rompe la corrida."""
+    if store is None or not isinstance(params_control, dict) or params_control.get("cupo_dias_anuales") is None:
+        return
+    try:
+        ctx.extras["acumulado_aprobada"] = await run_in_threadpool(
+            _aprobadas_anio, store, ctx.ucp, ctx.semana_inicio.year)
+    except Exception as e:  # noqa: BLE001 — BD: la alerta informativa no debe tumbar la corrida
+        logger.warning("[ajustes] aprobadas del año de %s no disponibles (%s); sin alerta de acumulado",
+                       ctx.ucp, _corto(e))
+
+
+async def _compute(req: RunRequest, store: Optional[Store] = None) -> Tuple[List[StepRecord], Dict[str, Any]]:
     _validar_ucp(req.ucp)  # antes de cualquier lectura, red o lock
+    params = perfiles.expandir(req.perfil, req.params)  # perfil inválido ya lo rechazó pydantic (422)
     externa = req.base_curvas is not None
     if not externa and req.fecha_emision is not None:
         raise HTTPException(HTTP_422, detail="fecha_emision solo se admite junto con base_curvas: con el "
@@ -626,7 +701,8 @@ async def _compute(req: RunRequest) -> Tuple[List[StepRecord], Dict[str, Any]]:
                        req.ucp, _corto(e))
         ctx.extras["eventos"] = {}
     try:
-        records = await run_in_threadpool(_run_pipeline, ctx, base_curves, req.params)
+        await _cargar_aprobadas_control(ctx, store, (params or {}).get("control"))
+        records = await run_in_threadpool(_run_pipeline, ctx, base_curves, params)
     except ERRORES_ENTRADA as e:
         raise HTTPException(HTTP_422, detail=str(e))
     _anotar_festivos(records, fuente_festivos)
@@ -636,7 +712,8 @@ async def _compute(req: RunRequest) -> Tuple[List[StepRecord], Dict[str, Any]]:
         "fecha_corte": ctx.fecha_corte.isoformat(),
         "fecha_emision": ctx.fecha_emision.isoformat(),
         "modelo_version": modelo_version,
-        "params_iniciales": req.params or {},  # request original; los params vigentes están en cada paso
+        # request original (con el perfil ya expandido); los params vigentes están en cada paso
+        "params_iniciales": params or {},
         "extras": {
             "fuente_base": FUENTE_BASE_EXTERNA if externa else FUENTE_BASE_MODELO,
             "fuente_festivos": fuente_festivos,
@@ -652,6 +729,8 @@ async def _compute(req: RunRequest) -> Tuple[List[StepRecord], Dict[str, Any]]:
     }
     if req.base_ref is not None:
         meta["extras"]["base_ref"] = req.base_ref
+    if req.perfil is not None:
+        meta["extras"]["perfil"] = req.perfil
     return records, meta
 
 
@@ -757,9 +836,9 @@ def _conflict(e: VersionConflictError) -> HTTPException:
 # ---------------------------------------------------------------------------
 
 @router.post("/preview", response_model=RunOut)
-async def preview(req: RunRequest) -> RunOut:
-    """Corre el pipeline completo sin persistir (no requiere base de datos)."""
-    records, meta = await _compute(req)
+async def preview(req: RunRequest, store: Optional[Store] = Depends(get_store_dep)) -> RunOut:
+    """Corre el pipeline completo sin persistir (no requiere base de datos; con base solo se leen aprobadas)."""
+    records, meta = await _compute(req, store)
     return _run_out(records, {**meta, "estado": "preview"}, None)
 
 
@@ -767,12 +846,14 @@ async def preview(req: RunRequest) -> RunOut:
 async def run(req: RunRequest, store: Optional[Store] = Depends(get_store_dep)) -> RunOut:
     """Corre el pipeline y persiste la corrida como borrador (version 1)."""
     store = _require_store(store)
-    records, meta = await _compute(req)
+    records, meta = await _compute(req, store)
     evento = {
         "usuario": req.usuario, "accion": "crear",
-        "detalle": {"params": req.params or {}, "fuente_base": meta["extras"]["fuente_base"],
+        "detalle": {"params": meta["params_iniciales"], "fuente_base": meta["extras"]["fuente_base"],
                     "modelo_version": meta["modelo_version"], "base_ref": req.base_ref},
     }
+    if req.perfil is not None:
+        evento["detalle"]["perfil"] = req.perfil
     run_id = await run_in_threadpool(store.create_run, meta, records, evento)  # misma transacción
     logger.info("[ajustes] corrida %s creada: %s semana %s corte %s (base %s, festivos %s) por %s",
                 run_id, meta["ucp"], meta["semana_inicio"], meta["fecha_corte"],
@@ -797,6 +878,38 @@ async def get_automatico(ucp: str = Query(..., pattern=UCP_PATTERN)) -> Dict[str
     """Configuración R2 (pasos automáticos por tipo de día) de una UCP; solo lectura, sin base ni modelo."""
     _validar_ucp(ucp)
     return automatico.configuracion(ucp)
+
+
+@router.get("/acumulado-anual")
+async def get_acumulado_anual(
+    ucp: str = Query(..., pattern=UCP_PATTERN),
+    anio: int = Query(..., ge=FECHA_MIN.year, le=FECHA_MAX.year, description="Año (1-ene..hasta)"),
+    banda_pct: Optional[float] = Query(None, ge=0, le=1000, description="Error % que marca un día fuera de banda; "
+                                                                        "sin valor = apagado"),
+    cupo: Optional[int] = Query(None, ge=0, le=366, description="Cupo de días fuera de banda; sin valor = solo cuenta"),
+    hasta: Optional[date] = Query(None, description="Tope inclusive (YYYY-MM-DD); default: sin tope dentro del año"),
+    store: Optional[Store] = Depends(get_store_dep),
+) -> Dict[str, Any]:
+    """Días del año con |aprobada − real|/real > banda (solo lectura; aprobadas del store, real del histórico)."""
+    store = _require_store(store)
+    _validar_ucp(ucp)
+    try:
+        aprobada = await run_in_threadpool(_aprobadas_anio, store, ucp, anio)
+    except Exception as e:  # noqa: BLE001 — esquema sin migrar / base caída: 503 claro, no 500
+        if not _es_error_de_bd(e):
+            raise
+        logger.warning("[ajustes] 503: persistencia no disponible para el acumulado anual (%s)", _corto(e))
+        raise HTTPException(HTTP_503, detail="Persistencia de ajustes no disponible "
+                                             "(esquema sin migrar o base inaccesible)")
+    hist = await _load_history(ucp)
+    real = data.energia_diaria(hist)
+    try:
+        res = acumulado.calcular_acumulado_anual(
+            aprobada, real, anio, banda_pct=banda_pct, cupo_dias=cupo,
+            hasta=hasta.isoformat() if hasta is not None else None)
+    except ERRORES_ENTRADA as e:
+        raise HTTPException(HTTP_422, detail=str(e))
+    return {"ucp": ucp, **res, "dias_aprobados": len(aprobada)}
 
 
 @router.get("/aprendizaje")
@@ -928,6 +1041,8 @@ async def patch_step(run_id: str, paso: str, body: StepPatchRequest,
         params=dict(body.params) if body.params is not None else dict(actual.params),
         result=StepResult(curves=curvas, diagnostics=diag_nuevo, alerts=[]),
     )
+    params_control = nuevo.params if paso == "control" else (by_paso["control"].params if "control" in by_paso else None)
+    await _cargar_aprobadas_control(ctx, store, params_control)
     try:
         new_records = await run_in_threadpool(pl.rerun_from, ctx, records, orden, _const_provider(base_curves), nuevo)
     except ERRORES_ENTRADA as e:
