@@ -4,6 +4,11 @@ Uso (desde la raíz del repo):
     .venv/bin/python scripts/demo_snapshot.py                # crea demo_snapshot/
     .venv/bin/python scripts/demo_snapshot.py --dest /ruta   # otro directorio
     .venv/bin/python scripts/demo_snapshot.py --verify       # solo verifica un snapshot existente contra su manifiesto
+    .venv/bin/python scripts/demo_snapshot.py --overlay reports/ajustes/jamer/demo_datos   # (o DEMO_DATA_OVERLAY=...)
+
+--overlay: directorio con el mismo layout (data/raw/<ucp>/..., data/features/<ucp>/..., models/<ucp>/...) cuyos archivos
+SOBRESCRIBEN (o agregan) los del repo dentro del snapshot; el repo no se modifica. Sin la opción nada cambia. El manifiesto
+registra qué archivos vinieron del overlay.
 
 El snapshot replica el layout del repo (data/, models/, reports/) para copiarse tal cual a /app en la imagen
 (`COPY demo_snapshot/ /app/`) o a un volumen. Incluye MANIFEST.json con ruta, bytes y sha256 de cada archivo.
@@ -18,6 +23,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import sys
 from datetime import datetime, timezone
@@ -73,23 +79,61 @@ def _archivos(src_root: Path, ucps: Tuple[str, ...]) -> Tuple[List[Path], List[s
     return rels, avisos
 
 
-def construir(dest: Path, src_root: Path = ROOT, ucps: Tuple[str, ...] = UCPS) -> Dict:
+PREFIJOS_OVERLAY = ("data/raw/", "data/features/", "models/", "reports/ajustes/curvas_modelo_k1_")
+
+
+def _archivos_overlay(overlay: Path, ucps: Tuple[str, ...]) -> List[Path]:
+    """Rutas relativas del overlay admitidas (solo data/raw|features|models de las UCP del snapshot y modelos globales)."""
+    permitidos = tuple(f"{pre}{ucp}/" for ucp in ucps for pre in ("data/raw/", "data/features/", "models/"))
+    rels = []
+    for p in sorted(overlay.rglob("*")):
+        if not p.is_file() or p.name == ".DS_Store":
+            continue
+        rel = p.relative_to(overlay)
+        r = rel.as_posix()
+        if r.startswith(permitidos) or r in MODELOS_GLOBALES or (r.startswith(PREFIJOS_OVERLAY[3]) and r.endswith(".csv")):
+            rels.append(rel)
+    return rels
+
+
+def construir(dest: Path, src_root: Path = ROOT, ucps: Tuple[str, ...] = UCPS, overlay: Optional[Path] = None) -> Dict:
     dest = dest.resolve()
+    if overlay is not None:
+        overlay = overlay.resolve()
+        if not overlay.is_dir():
+            raise FileNotFoundError(f"--overlay {overlay} no existe")
+        if overlay == src_root.resolve() or overlay in (src_root / "data").resolve().parents:
+            raise ValueError("--overlay no puede ser la raíz del repo")
     if dest == src_root.resolve() or src_root.resolve() in dest.parents and dest.name in {"data", "models"}:
         raise ValueError("--dest no puede ser la raíz del repo ni data/ o models/")
     rels, avisos = _archivos(src_root, ucps)
+    del_overlay: Dict[Path, Path] = {}
+    if overlay is not None:
+        ov = _archivos_overlay(overlay, ucps)
+        if not ov:
+            raise ValueError(f"el overlay {overlay} no trae archivos admitidos (data/raw|features|models/<ucp>/...)")
+        for rel in ov:
+            del_overlay[rel] = overlay / rel
+            if rel not in rels:
+                rels.append(rel)
+        avisos.append(f"overlay aplicado desde {overlay.name}: {len(ov)} archivos sobrescriben/agregan al repo")
     if dest.exists():
         shutil.rmtree(dest)  # el snapshot es reproducible: se reconstruye entero
     entradas = []
     for rel in rels:
         destino = dest / rel
         destino.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src_root / rel, destino)
-        entradas.append({"ruta": rel.as_posix(), "bytes": destino.stat().st_size, "sha256": sha256(destino)})
+        origen = del_overlay.get(rel, src_root / rel)
+        shutil.copy2(origen, destino)
+        e = {"ruta": rel.as_posix(), "bytes": destino.stat().st_size, "sha256": sha256(destino)}
+        if rel in del_overlay:
+            e["origen"] = "overlay"
+        entradas.append(e)
     manifiesto = {
         "creado_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "ucps": list(ucps),
         "total_bytes": sum(e["bytes"] for e in entradas),
+        "overlay": bool(del_overlay),
         "avisos": avisos,
         "archivos": entradas,
     }
@@ -116,10 +160,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--dest", default=str(ROOT / "demo_snapshot"))
     ap.add_argument("--verify", action="store_true", help="solo verificar el snapshot existente")
+    ap.add_argument("--overlay", default=os.getenv("DEMO_DATA_OVERLAY") or None,
+                    help="directorio con datos/modelos que sobrescriben los del repo en el snapshot (o env DEMO_DATA_OVERLAY)")
     args = ap.parse_args(argv)
     dest = Path(args.dest)
     if not args.verify:
-        mf = construir(dest)
+        mf = construir(dest, overlay=Path(args.overlay) if args.overlay else None)
         print(f"Snapshot en {dest}: {len(mf['archivos'])} archivos, {mf['total_bytes'] / 1e6:.1f} MB")
         for a in mf["avisos"]:
             print(f"  aviso: {a}")

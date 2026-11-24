@@ -11,6 +11,9 @@ PY="${PYTHON:-.venv/bin/python}"
 echo "Compilando Sphere en la rama: $(git -C "$SPHERE_DIR" branch --show-current) (debe ser test)"
 ( cd "$SPHERE_DIR" && npm ci && npm run build:demo )
 rm -rf static_demo && cp -R "$SPHERE_DIR/dist" static_demo
-rm -rf demo_snapshot && "$PY" scripts/demo_snapshot.py --dest demo_snapshot
+# DEMO_DATA_OVERLAY (opcional): directorio con datos/modelos extendidos que sobrescriben los del repo SOLO dentro del snapshot.
+OVERLAY_ARGS=()
+if [ -n "${DEMO_DATA_OVERLAY:-}" ]; then OVERLAY_ARGS=(--overlay "$DEMO_DATA_OVERLAY"); echo "Snapshot con overlay: $DEMO_DATA_OVERLAY"; fi
+rm -rf demo_snapshot && "$PY" scripts/demo_snapshot.py --dest demo_snapshot ${OVERLAY_ARGS[@]+"${OVERLAY_ARGS[@]}"}
 "$PY" scripts/demo_snapshot.py --verify --dest demo_snapshot
 echo "Listo: static_demo/ y demo_snapshot/ generados. Siguiente: docker compose up --build  |  railway up --no-gitignore"
