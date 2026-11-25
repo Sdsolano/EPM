@@ -349,7 +349,11 @@ def _alertas_clima(ctx: RunContext, fechas: List[str], alerts: List[Alert]) -> N
     no desde `ctx`: el clima observado no se persiste en la corrida (limitación
     aceptada; `ctx.extras` solo lleva eventos/festivos).
 
-    Warning si la lluvia diaria máxima de la semana supera el p90 histórico o
+    La lluvia se mide en periodos con lluvia (`p_i` es un código de condición del
+    tiempo, no mm; ver `clima.py`): suma semanal de periodos con lluvia y fracción
+    máxima diaria, solo de días con calidad suficiente.
+
+    Warning si la fracción diaria máxima de lluvia de la semana supera el p90 histórico o
     si la temperatura media de la semana se aleja más de 2σ de la histórica.
     """
     try:
@@ -364,7 +368,11 @@ def _alertas_clima(ctx: RunContext, fechas: List[str], alerts: List[Alert]) -> N
     if not dias:
         return
     temps = [t for c in dias.values() if (t := _finito(c.get("temp_media"))) is not None]
-    lluvias = [v for c in dias.values() if (v := _finito(c.get("lluvia_mm"))) is not None]
+    fiables = {f: c for f, c in dias.items() if c.get("calidad_lluvia") == "suficiente"}
+    lluvias = [v for c in fiables.values() if (v := _finito(c.get("frac_lluvia"))) is not None]
+    periodos_lluvia = sum(int(c.get("lluvia_periodos") or 0) for c in fiables.values()) if lluvias else None
+    periodos_conocidos = sum(int(c.get("periodos_conocidos") or 0) for c in fiables.values()) if lluvias else None
+    lluvia_frac_semana = (periodos_lluvia / periodos_conocidos) if periodos_conocidos else None
     if not temps and not lluvias:
         return
 
@@ -374,14 +382,13 @@ def _alertas_clima(ctx: RunContext, fechas: List[str], alerts: List[Alert]) -> N
         if f in semana or not isinstance(c, dict):
             continue
         t = _finito(c.get("temp_media"))
-        v = _finito(c.get("lluvia_mm"))
+        v = _finito(c.get("frac_lluvia")) if c.get("calidad_lluvia") == "suficiente" else None
         if t is not None:
             hist_temps.append(t)
         if v is not None:
             hist_lluvias.append(v)
 
     temp_media = sum(temps) / len(temps) if temps else None
-    lluvia_total = sum(lluvias) if lluvias else None
     lluvia_max = max(lluvias) if lluvias else None
     p90_lluvia = float(np.percentile(hist_lluvias, 90)) if hist_lluvias else None
     temp_hist = float(np.mean(hist_temps)) if hist_temps else None
@@ -396,17 +403,18 @@ def _alertas_clima(ctx: RunContext, fechas: List[str], alerts: List[Alert]) -> N
     partes = []
     if temp_media is not None:
         partes.append(f"temperatura media {temp_media:.1f} °C")
-    if lluvia_total is not None:
-        partes.append(f"lluvia {lluvia_total:.1f} mm")
+    if lluvia_max is not None:
+        partes.append(f"{periodos_lluvia} periodos con lluvia ({(lluvia_frac_semana or 0.0) * 100:.0f} %)")
     alerts.append(Alert(
         nivel, "CLIMA_OBSERVADO",
         "Clima observado de la semana: " + ", ".join(partes),
         list(dias),
         detalle={
             "temp_media": temp_media,
-            "lluvia_mm": lluvia_total,
-            "lluvia_max_diaria_mm": lluvia_max,
-            "p90_lluvia_mm": p90_lluvia,
+            "lluvia_periodos": periodos_lluvia,
+            "lluvia_frac_semana": lluvia_frac_semana,
+            "lluvia_frac_max_diaria": lluvia_max,
+            "p90_lluvia_frac": p90_lluvia,
             "temp_media_historica": temp_hist,
             "sigma_temp": sigma_temp,
             "dias": {f: dict(c) for f, c in dias.items()},

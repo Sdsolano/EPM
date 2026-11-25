@@ -215,6 +215,21 @@ Request y response exactamente como el "Contrato de análogos" de `PLAN_NOCHE.md
 distancia_festivo, tipo_festivo, semana_santa, temporada_escolar, clima, anio_min, anio_max,
 anios_excluidos, limite}` → `descriptor_objetivo`, `filtros_aplicados`, `candidatos[]`, `resumen`).
 
+### Clima / lluvia (cambio 2026-11-24, fase_clima C1)
+`p_i` es un CODIGO de condicion del tiempo (no mm). Regla en `src/adjustments/clima.py`: periodo con lluvia si
+`200<=p_i<600` (legado AccuWeather `1<=p_i<200`: lluvia si p_i en {12-18, 39-42}); `p_i` 0/NaN = dato faltante; dia
+"con lluvia" si >=3 periodos con lluvia y >=12 periodos conocidos.
+- Alerta `CLIMA_OBSERVADO` (`detalle`): SE ELIMINAN `lluvia_mm`, `lluvia_max_diaria_mm`, `p90_lluvia_mm`. NUEVAS:
+  `lluvia_periodos` (suma semanal de periodos con lluvia, dias fiables), `lluvia_frac_semana`,
+  `lluvia_frac_max_diaria` (0..1), `p90_lluvia_frac` (p90 historico de la fraccion diaria, solo dias con calidad
+  suficiente). Mensaje: "... N periodos con lluvia (x %)". `detalle.dias[f]` trae por dia `temp_media`, `humedad_media`,
+  `lluvia_periodos`, `periodos_conocidos`, `frac_lluvia`, `con_lluvia` (bool|null), `calidad_lluvia`
+  (`suficiente|insuficiente|sin_dato`).
+- `POST analogos`: `candidatos[].clima` pasa de `{temp_media, lluvia_mm}` a `{temp_media, frac_lluvia, con_lluvia}`
+  (`frac_lluvia` 0..1|null, `con_lluvia` bool|null; null = lluvia desconocida). El filtro `filtros.clima.lluvia`
+  (bool) conserva su semantica: true = dias con `con_lluvia` true, false = `con_lluvia` false; dias desconocidos se
+  excluyen. La razon "con lluvia" solo aparece si objetivo y candidato tienen `con_lluvia` true.
+
 ## Pendientes conocidos del lado EPM / backend
 - EPM no tiene "listar corridas por (ucp, semana)": el front recuerda el id (URL `?corrida=` y
   localStorage). Recomendado: `GET /adjustments?ucp=&semana_inicio=` → borradores y aprobada.
