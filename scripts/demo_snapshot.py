@@ -83,15 +83,16 @@ PREFIJOS_OVERLAY = ("data/raw/", "data/features/", "models/", "reports/ajustes/c
 
 
 def _archivos_overlay(overlay: Path, ucps: Tuple[str, ...]) -> List[Path]:
-    """Rutas relativas del overlay admitidas (solo data/raw|features|models de las UCP del snapshot y modelos globales)."""
+    """Rutas relativas del overlay admitidas (data/raw|features|models de las UCP del snapshot, retro/<ucp>.json y modelos globales)."""
     permitidos = tuple(f"{pre}{ucp}/" for ucp in ucps for pre in ("data/raw/", "data/features/", "models/"))
+    retro_ok = {f"retro/{ucp}.json" for ucp in ucps}  # P1 "Lo que aprendió": GET /adjustments/aprendizaje/error
     rels = []
     for p in sorted(overlay.rglob("*")):
         if not p.is_file() or p.name == ".DS_Store":
             continue
         rel = p.relative_to(overlay)
         r = rel.as_posix()
-        if r.startswith(permitidos) or r in MODELOS_GLOBALES or (r.startswith(PREFIJOS_OVERLAY[3]) and r.endswith(".csv")):
+        if r.startswith(permitidos) or r in retro_ok or r in MODELOS_GLOBALES or (r.startswith(PREFIJOS_OVERLAY[3]) and r.endswith(".csv")):
             rels.append(rel)
     return rels
 
@@ -111,7 +112,7 @@ def construir(dest: Path, src_root: Path = ROOT, ucps: Tuple[str, ...] = UCPS, o
     if overlay is not None:
         ov = _archivos_overlay(overlay, ucps)
         if not ov:
-            raise ValueError(f"el overlay {overlay} no trae archivos admitidos (data/raw|features|models/<ucp>/...)")
+            raise ValueError(f"el overlay {overlay} no trae archivos admitidos (data/raw|features|models/<ucp>/..., retro/<ucp>.json)")
         for rel in ov:
             del_overlay[rel] = overlay / rel
             if rel not in rels:

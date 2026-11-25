@@ -57,4 +57,4 @@ DEMO_DATA_OVERLAY=reports/ajustes/jamer/demo_datos SPHERE_DIR=../Sphere bash scr
 ```
 (o `python scripts/demo_snapshot.py --overlay <dir>`). Los archivos del overlay sobrescriben/agregan los del repo SOLO dentro de `demo_snapshot/`;
 el manifiesto marca `"origen": "overlay"` y se verifica con hashes como siempre. Sin la variable el comportamiento no cambia.
-Solo se admiten rutas `data/raw|features|models/<ucp>/` de las UCP del snapshot y los modelos globales. El overlay contiene datos reales: NO a git.
+Solo se admiten rutas `data/raw|features|models/<ucp>/` de las UCP del snapshot, `retro/<ucp>.json` (P1 "Lo que aprendió": lo sirve `GET /adjustments/aprendizaje/error`; llega a `demo_snapshot/retro/` y en el contenedor a `/app/retro/`) y los modelos globales. El overlay contiene datos reales: NO a git.

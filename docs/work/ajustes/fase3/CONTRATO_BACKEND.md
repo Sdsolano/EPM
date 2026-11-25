@@ -193,6 +193,15 @@ Response `data`:
 `alerta` es null o un `Alert` (`ACUMULADO_ANUAL_FUERA_RANGO`). Sin `banda_pct`: `estado="apagado"` y conteos en 0.
 Con banda y sin `cupo`: `sin_cupo` (cuenta, no alerta). "25 días" NO es un valor oficial (pendiente de confirmar con Jamer).
 
+### POST/GET `aprendizaje/error` (P1 "Lo que aprendió"; informativo, NO modifica curvas)
+EPM (solo lectura, sin store, hereda `X-Service-Token`; registrada antes de `/{run_id}`):
+- `POST /adjustments/aprendizaje/error` body `{ucp, semanas?=12 (4..26), hasta?, min_casos?=8, festivos?:[ISO], emisiones:[{semana_inicio(lunes), version?, curvas:{ISO:[24]}}], reales:{ISO:[24]}}`.
+  422 con detalle claro si la entrada es inválida (fecha, curva != 24, NaN/negativos, semana_inicio no lunes, semanas fuera de 4..26).
+- `GET /adjustments/aprendizaje/error?ucp=&semanas=` (demo): lee `retro/{ucp}.json` del snapshot (misma forma sin ucp/semanas). UCP válida sin archivo: 200 `sin_datos` (no 404); 422 ucp/semanas inválidas o archivo corrupto.
+Respuesta 200: `{"estado":"ok",...}` o `{"estado":"sin_datos","ucp","motivo","avisos":[{"codigo":"RETRO_SIN_HISTORIAL",...}]}`. Forma completa en `replica_jamer/fase_retro_p1/CONTRATO.md`.
+Campos: `sesgo_global = {pct, wape_pct, n}` (el campo es `pct`, NO `sesgo_pct`; `ventanas[]`, `por_tipo[]` y `por_bloque[]` sí usan `sesgo_pct`). `ventanas` con `semanas` > las pedidas vienen con `sesgo_pct/wape_pct` null y `n` 0. `hasta` muy posterior a los datos (> 7*semanas días) devuelve `sin_datos`. `hoy` (aviso de rezago) = fecha de America/Bogota. `ema.h112` usa todo el historial recibido: si el proxy recorta a `semanas` (12), queda limitada a esa ventana.
+Signo: `(reportado - real)/real*100`. El backend Sphere lo expone como `GET ajustes/aprendizaje-error?ucp=&semanas=` (ver ese contrato).
+
 ### POST `corridas/{id}/aprobar`
 Request: `{ "version_esperada": 3, "motivo": "texto", "excepciones_justificadas": ["TENDENCIA_FUERA_BANDA"] }`
 (el backend añade `usuario`, obligatorio en EPM). Response `data` = `RunOut` aprobada.

@@ -14,6 +14,8 @@
 - `POST  /adjustments/{id}/approve`           aprueba (exige `version_esperada`; 422 si hay bloqueos). La
                                               aprobada anterior de la misma (ucp, semana) pasa a `reemplazada`.
                                               `excepciones_justificadas` debe referirse a warnings vigentes (422).
+- `POST  /adjustments/aprendizaje/error`      P1 "lo que aprendió": error reportado vs real (stateless, solo lectura; 422 si la entrada es inválida).
+- `GET   /adjustments/aprendizaje/error?ucp=&semanas=`  demo: lo mismo leyendo `retro/{ucp}.json` del snapshot (UCP válida sin archivo: 200 `sin_datos`; UCP inválida: 422).
 - `POST  /adjustments/analogos`               días análogos a una fecha (R3; solo lectura, sin base ni modelo).
 - `GET   /adjustments/acumulado-anual?ucp=&anio=&banda_pct=&cupo=&hasta=`
                                               días del año con error de la aprobada vs el real fuera de banda
@@ -64,6 +66,7 @@ from __future__ import annotations
 import asyncio
 import hmac
 import inspect
+import json
 import logging
 import os
 import re
@@ -77,7 +80,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field, field_validator
 
-from src.adjustments import acumulado, analogos, aprendizaje, automatico, data, eventos, perfiles
+from src.adjustments import acumulado, analogos, aprendizaje, automatico, data, eventos, perfiles, retro
 from src.adjustments import pipeline as pl
 from src.adjustments.steps import base as base_step
 from src.adjustments.steps._params import FECHA_MAX, FECHA_MIN
@@ -932,6 +935,63 @@ async def get_aprendizaje(
     runs = await run_in_threadpool(store.list_runs, ucp, desde, hasta, limite)
     resumen = await run_in_threadpool(aprendizaje.resumir, runs, min_casos=min_casos)
     return await run_in_threadpool(aprendizaje.a_dict, resumen)
+
+
+class AprendizajeErrorRequest(BaseModel):
+    """Entrada de `POST /aprendizaje/error` (validación fina en `retro.validar_entrada`)."""
+    ucp: str
+    semanas: int = 12
+    hasta: Optional[str] = None
+    min_casos: int = 8
+    festivos: Optional[List[str]] = None
+    emisiones: List[Dict[str, Any]]
+    reales: Dict[str, Any]
+
+
+def _resumen_retro(ucp: str, emisiones: Any, reales: Any, festivos: Any, semanas: int,
+                   hasta: Any = None, min_casos: int = 8) -> Dict[str, Any]:
+    try:
+        return retro.resumen_aprendizaje(ucp, emisiones, reales, festivos=festivos, semanas=semanas,
+                                         hasta=hasta, min_casos=min_casos)
+    except ValueError as e:
+        raise HTTPException(HTTP_422, detail=str(e))
+
+
+@router.post("/aprendizaje/error")
+async def post_aprendizaje_error(req: AprendizajeErrorRequest) -> Dict[str, Any]:
+    """P1 "Lo que aprendió": error reportado vs real. Solo lectura, sin store; no modifica curvas ni corridas."""
+    return await run_in_threadpool(_resumen_retro, req.ucp, req.emisiones, req.reales, req.festivos,
+                                   req.semanas, req.hasta, req.min_casos)
+
+
+def _retro_dir() -> Path:
+    """Carpeta `retro/` del snapshot de demo (raíz del repo/contenedor, como /api/demo/*)."""
+    return Path(data.RAW_DATA_DIR).resolve().parents[1] / "retro"
+
+
+def _leer_retro(ucp: str, semanas: int) -> Dict[str, Any]:
+    base = _retro_dir().resolve()
+    ruta = (base / f"{ucp}.json").resolve()
+    if not ruta.is_relative_to(base) or not ruta.is_file():
+        return {"estado": "sin_datos", "ucp": ucp, "motivo": f"No hay datos de aprendizaje para la UCP '{ucp}'.",
+                "avisos": [{"codigo": "RETRO_SIN_HISTORIAL", "nivel": "info",
+                            "mensaje": f"No hay datos de aprendizaje para la UCP '{ucp}'."}]}
+    try:
+        d = json.loads(ruta.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raise HTTPException(HTTP_422, detail=f"El archivo de aprendizaje de '{ucp}' es inválido")
+    if not isinstance(d, dict):
+        raise HTTPException(HTTP_422, detail=f"El archivo de aprendizaje de '{ucp}' es inválido")
+    return _resumen_retro(ucp, d.get("emisiones", []), d.get("reales", {}), d.get("festivos"), semanas)
+
+
+@router.get("/aprendizaje/error")
+async def get_aprendizaje_error(
+    ucp: str = Query(..., pattern=UCP_PATTERN),
+    semanas: int = Query(12, ge=retro.SEMANAS_MIN, le=retro.SEMANAS_MAX),
+) -> Dict[str, Any]:
+    """Demo: lo mismo que el POST, leyendo `retro/{ucp}.json` del snapshot. UCP válida sin snapshot: 200 `sin_datos`."""
+    return await run_in_threadpool(_leer_retro, ucp, semanas)
 
 
 @router.get("/{run_id}", response_model=RunOut)
