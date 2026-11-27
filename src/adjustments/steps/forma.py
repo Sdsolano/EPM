@@ -48,6 +48,9 @@ Réplica de Jamer (E3, opt-in; con los defaults todo queda como antes):
   (`seleccionar_recientes`). Festivo fijo o de Semana Santa con el factor aplicado → forma normalizada del
   homólogo H (hasta 3 años atrás, mismo tipo de día; fuente `festivo_homologo_tipo`), con la misma mecánica
   de delta plano. nivel y forma deben recibir los mismos valores de estos flags.
+- `post_festivo_factor` / `post_festivo_fuente` (default off/"combinado"): se pasan a la selección de R1. Post-festivo
+  con el factor aplicado → forma de los días NORMALES de R1 (fuente `reciente_clase`, delta plano como siempre); el
+  factor F_pf lo aplica nivel. Diagnóstico: `RecientesDia.diag_post_festivo()`.
 - `tramos="modelo_anual"` (experimental, apagado): quita del gancho (g_h = 0) los
   tramos donde el modelo se desvía de R1 en el mismo sentido que el cambio anual
   (R2 − R3); ver `_tramos_sin_gancho`.
@@ -233,7 +236,8 @@ def _forma_reciente_clase(
     atrás, mismo tipo de día; fuente `festivo_homologo_tipo`); la energía (y el factor F) la pone nivel.
     """
     rec = seleccionar_recientes(d, curvas, ctx.fecha_corte, festivos, n, saltar_puente=saltar_puente, **(r1 or {}))
-    extra = {"clase": rec.clase, "saltados": [dict(x) for x in rec.saltados], **rec.diag_festivo()}
+    extra = {"clase": rec.clase, "saltados": [dict(x) for x in rec.saltados], **rec.diag_festivo(),
+             **rec.diag_post_festivo()}
     if rec.factor_festivo is not None:
         # la selección solo da factor con E(H) > 0 y curva válida → la forma de H siempre existe (nunca se mezcla la
         # forma de los días normales R1 con el factor F que aplica nivel)

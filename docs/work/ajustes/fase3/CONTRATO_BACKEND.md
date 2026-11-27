@@ -137,7 +137,7 @@ persisten en `steps[i].params` si difieren de su default (el front no debe asumi
   `tramos` (`off` default | `modelo_anual`; exige `delta="plano"`, experimental, no recomendado), `umbral_tramo_mw` (20),
   `min_periodos_tramo` (3), `suavizado_borde` (0), `saltar_puente` (false).
 - Selección de R1 (nivel `modo="reciente"` y forma `fuente="reciente_clase"`). **nivel y forma deben recibir los
-  mismos valores** de estos tres flags (el perfil `jamer` expande `festivo_por_tipo=true` en ambos pasos —activado tras el backtest de festivos_r1—; `r1_limpia` y `r1_umbral_atipico` no se expanden: si el cliente los envía, en nivel y en forma; si difieren, la energía y la forma de un
+  mismos valores** de estos flags (el perfil `jamer` expande `festivo_por_tipo=true` en ambos pasos —activado tras el backtest de festivos_r1—; `r1_limpia` y `r1_umbral_atipico` no se expanden: si el cliente los envía, en nivel y en forma; si difieren, la energía y la forma de un
   festivo salen de referencias distintas).
   - `festivo_por_tipo` (bool, false). Tipo de festivo (`data.tipo_festivo`): `lunes` (cae lunes, incluido uno
     trasladado a lunes dentro de Semana Santa, p. ej. San José 2024-03-25), `semana_santa` (solo Jueves y Viernes
@@ -157,6 +157,23 @@ persisten en `steps[i].params` si difieren de su default (el front no debe asumi
   - Diagnóstico por día con `festivo_por_tipo` (nivel y forma): `tipo_festivo`, `homologo`, `normal_homologo`,
     `factor_festivo` (null si no se aplicó), `homologo_anios_probados:[{anio, homologo, descarte}]` (`descarte`:
     `sin_festivo` | `sin_datos` | `otro_tipo_dia` | `lunes_puente` | null = el usado).
+  - `post_festivo_factor` (bool, false; ningún perfil lo expande) y `post_festivo_fuente` (`homologo` | `recientes` |
+    `combinado`, default `combinado`). Para un día de clase `post_festivo` (lun–vie no festivo con el día anterior
+    festivo): **R1 = día NORMAL** reciente del mismo día de semana (la búsqueda de un día normal, con la limpieza si
+    `r1_limpia`) y nivel usa E_obj = ΣR1·(1+g)·F_pf (g con el lag d − R1). F_pf = **mediana** de E(pf)/E(N) con pf =
+    post-festivos del **mismo día de semana** que el objetivo, con curva válida y <= corte: `homologo` = el día
+    siguiente al homólogo (`find_homologous_holiday_date`) del festivo previo (d − 1) en cada uno de los **3 años
+    anteriores** (si es post-festivo y cae en el mismo día de semana); `recientes` = los **4** post-festivos más
+    recientes (hasta 104 semanas atrás); `combinado` = la unión sin fechas repetidas. N = día normal de referencia
+    (clase normal, fuera de Semana Santa y 24/dic–6/ene) a −7, −14, +7 o +14 días de pf (en ese orden, <= corte).
+    Mínimo **3** ratios (3 / 4 / 3 son constantes fijas, no params); si no, selección de siempre + alerta
+    `POST_FESTIVO_SIN_FACTOR`. forma usa la forma de los días normales R1 (fuente `reciente_clase`, delta plano como
+    siempre): solo cambia el nivel.
+  - Diagnóstico por día con `post_festivo_factor` y objetivo post-festivo (nivel y forma): `post_festivo_fuente`,
+    `post_festivo_pares:[{post_festivo, normal, origen, E_post_festivo, E_normal, ratio}]` (`origen`: `homologo` |
+    `reciente` | `homologo+reciente`), `post_festivo_ratios:[número]`, `factor_post_festivo` (null si no se aplicó),
+    `post_festivo_descartados:[{fecha, origen, anio, descarte}]` (`descarte`: `sin_festivo` | `sin_datos` |
+    `otro_dia_semana` | `no_post_festivo` | `sin_normal`).
 - `control`: `banda_pp` (>0, 1.0), `top_dias` (1..7, 3), `banda_referencia_pp` (2.0). Alertas Jamer (todas informativas,
   apagadas con `null`): `banda_salto_mw` (null), `periodos_valle` ([3,4,5]), `banda_crecimiento_pp` (null),
   `crecimiento_ventana_dias` (28), `crecimiento_min_pares` (14), `cupo_dias_anuales` (null), `banda_error_pct` (5.0).
@@ -177,10 +194,11 @@ ganan clave a clave). El resultado expandido queda en `meta.params_iniciales` y 
 `nivel.diagnostics` (con `modo="reciente"`):
 - `modo`, `alpha` (= 1 − peso_modelo), `peso_modelo`, `semana_ref_inicio`, `desfase_dias`, `anios_excluidos`.
 - `dias[YYYY-MM-DD]`: `modo`, `E_base` (Σ curva del modelo), `E_obj` (= `E_objetivo`, ΣR1·(1+g); con el factor festivo
-  aplicado ΣR1·(1+g)·F), `E` (= `E_final`, energía del día
+  aplicado ΣR1·(1+g)·F; con el factor post-festivo ΣR1·(1+g)·F_pf), `E` (= `E_final`, energía del día
   resultante), `clase` (`normal|festivo|post_festivo|puente`), `saltados:[{fecha,motivo}]`, `peso_modelo`, `r1:{fecha,energia}|null`,
   `r1_extra:[{fecha,energia}]` (2.º histórico), `lag_dias`, `g_raw`, `g_usado`, `acotado`, `g_fuente`, `regla`
-  (`reciente|reciente_factor_festivo|sin_evidencia`; `reciente_factor_festivo` = festivo por tipo con F aplicado), y por compatibilidad `ratio`, `alpha`, `ancla` (fecha R1), `ancla_ref` (R3), `dia_ref` (R2).
+  (`reciente|reciente_factor_festivo|reciente_factor_post_festivo|sin_evidencia`; `reciente_factor_festivo` = festivo
+  por tipo con F aplicado; `reciente_factor_post_festivo` = post-festivo con F_pf aplicado), y por compatibilidad `ratio`, `alpha`, `ancla` (fecha R1), `ancla_ref` (R3), `dia_ref` (R2).
 - `crecimiento`: `{Y, ventana:[desde,hasta], n_pares, fallback, fuente_g}`.
 - `referencias[YYYY-MM-DD]`: `{r1:{fecha,curva[24]}|null, r1_extra:[{fecha,curva[24]}], r2:{fecha,curva[24]}|null, r3:{fecha,curva[24]}|null}`
   (R1 = último día real de la misma clase; R2 = día − 364 d o festivo homólogo; R3 = R1 − 364 d).
@@ -203,7 +221,10 @@ ganan clave a clave). El resultado expandido queda en `meta.params_iniciales` y 
 mismo tipo de día), `homologo_lunes_puente` (los homólogos con datos del mismo tipo de día son lunes de puente y el
 objetivo no es lunes), `sin_normal_homologo` (sin N_H), `sin_normal_reciente` (sin R1 normal); el texto legible va
 solo en `mensaje`. `detalle` trae también `tipo_festivo`, `homologo`, `normal_homologo`, `anios_probados`), `R1_SIN_LIMPIA` (con `r1_limpia`: ningún candidato limpio, se usa la R1 de siempre;
-`detalle.descartados`) — ambas como `R1_SIN_MISMA_CLASE`: las emite nivel y forma solo los días que nivel no reportó,
+`detalle.descartados`), `POST_FESTIVO_SIN_FACTOR` (con `post_festivo_factor`; se usa la referencia de siempre, el
+post-festivo reciente. `detalle.motivo` es un código: `pocos_ratios` (menos de 3 pares pf/N) o `sin_normal_reciente`
+(sin R1 normal); `detalle` trae también `fuente`, `n_ratios`, `minimo_ratios`, `pares`, `descartados`; el texto
+legible solo en `mensaje`) — las tres como `R1_SIN_MISMA_CLASE`: las emite nivel y forma solo los días que nivel no reportó,
 `FORMA_SIN_ENERGIA_BASE`, `FORMA_SIN_GANCHO` (forma). En nivel `modo=reciente` también `SIN_EVIDENCIA_NIVEL` y `CURVA_BASE_NULA` (warning).
 Las alertas por día se unen por código: `fechas` = días afectados y `detalle.por_fecha[fecha]` trae el detalle y el `mensaje` de cada día (si los mensajes difieren, el `mensaje` unido es genérico).
 

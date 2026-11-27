@@ -12,6 +12,9 @@ Opt-in (default off, ver `seleccionar_recientes`):
   ser un festivo lunes de puente) frente a un día normal N_H junto a él.
 - `r1_limpia`: un objetivo no festivo salta candidatos atípicos, y los de Semana Santa / 24/dic–6/ene cuando el
   objetivo está fuera de ese periodo.
+- `post_festivo_factor`: un post-festivo usa R1 = día normal reciente y el factor F_pf = mediana de E(pf)/E(N) de
+  post-festivos pf del mismo día de semana (homólogos de los 3 años anteriores y/o los 4 más recientes) frente a un
+  día normal N junto a cada uno.
 
 Funciones puras: no leen disco ni red. `curvas_reales` = {fecha_iso: array(24)}
 (ver `data.curvas_reales`).
@@ -28,6 +31,7 @@ import numpy as np
 from src.adjustments.data import (
     CLASE_FESTIVO,
     CLASE_NORMAL,
+    CLASE_POST_FESTIVO,
     LAG_ANIO,
     TIPO_FESTIVO_FIJO,
     TIPO_FESTIVO_SEMANA_SANTA,
@@ -45,6 +49,7 @@ from src.prediction.holiday_homology import find_homologous_holiday_date
 ALERTA_SIN_MISMA_CLASE = "R1_SIN_MISMA_CLASE"
 ALERTA_FESTIVO_SIN_HOMOLOGO = "FESTIVO_SIN_HOMOLOGO"
 ALERTA_R1_SIN_LIMPIA = "R1_SIN_LIMPIA"
+ALERTA_POST_FESTIVO_SIN_FACTOR = "POST_FESTIVO_SIN_FACTOR"
 MAX_SEMANAS_DEFAULT = 12
 
 # R1 limpia: un candidato es atípico si |E(c)/mediana(E de los N previos normales del mismo día de semana) − 1|
@@ -82,18 +87,60 @@ DESCARTE_SIN_DATOS = "sin_datos"
 DESCARTE_OTRO_TIPO_DIA = "otro_tipo_dia"
 DESCARTE_LUNES_PUENTE = "lunes_puente"
 
+# Factor post-festivo (`post_festivo_factor`): F_pf = mediana de E(pf)/E(N) con pf = post-festivos del mismo día de
+# semana que el objetivo, tomados de una fuente fija (`post_festivo_fuente`): "homologo" (el día siguiente al homólogo
+# del festivo previo en cada uno de los ANIOS_POST_FESTIVO años anteriores), "recientes" (los RECIENTES_POST_FESTIVO
+# post-festivos más recientes <= corte, hasta MAX_SEMANAS_POST_FESTIVO semanas atrás) o "combinado" (unión sin fechas
+# repetidas). N = día normal junto a pf (DESPLAZAMIENTOS_NORMAL_HOMOLOGO, `_energia_normal_referencia`). Con menos de
+# MIN_RATIOS_POST_FESTIVO ratios no hay factor. Constantes fijas: no se calibran.
+FUENTE_PF_HOMOLOGO = "homologo"
+FUENTE_PF_RECIENTES = "recientes"
+FUENTE_PF_COMBINADO = "combinado"
+FUENTES_POST_FESTIVO = (FUENTE_PF_HOMOLOGO, FUENTE_PF_RECIENTES, FUENTE_PF_COMBINADO)
+ANIOS_POST_FESTIVO = 3
+RECIENTES_POST_FESTIVO = 4
+MIN_RATIOS_POST_FESTIVO = 3
+MAX_SEMANAS_POST_FESTIVO = 104
+ORIGEN_PF_HOMOLOGO = "homologo"
+ORIGEN_PF_RECIENTE = "reciente"
+# Códigos de `detalle.motivo` de POST_FESTIVO_SIN_FACTOR (snake_case; el texto legible solo va en el mensaje).
+MOTIVO_PF_POCOS_RATIOS = "pocos_ratios"
+MOTIVO_PF_SIN_NORMAL_RECIENTE = MOTIVO_SIN_NORMAL_RECIENTE
+TEXTO_MOTIVO_POST_FESTIVO: Dict[str, str] = {
+    MOTIVO_PF_POCOS_RATIOS: (
+        f"al menos {MIN_RATIOS_POST_FESTIVO} post-festivos del mismo día de semana con un día normal vecino"
+    ),
+    MOTIVO_PF_SIN_NORMAL_RECIENTE: "día normal reciente del mismo día de semana",
+}
+# Descarte de un candidato pf en `descartados` (además de DESCARTE_SIN_FESTIVO / DESCARTE_SIN_DATOS).
+DESCARTE_NO_POST_FESTIVO = "no_post_festivo"
+DESCARTE_OTRO_DIA_SEMANA = "otro_dia_semana"
+DESCARTE_SIN_NORMAL = "sin_normal"
+
 # Params de la selección de R1 que comparten nivel (modo reciente) y forma (fuente reciente_clase); default =
 # comportamiento de siempre.
-DEFAULTS_R1: Dict[str, Any] = {"festivo_por_tipo": False, "r1_limpia": False, "r1_umbral_atipico": UMBRAL_ATIPICO}
+DEFAULTS_R1: Dict[str, Any] = {
+    "festivo_por_tipo": False,
+    "r1_limpia": False,
+    "r1_umbral_atipico": UMBRAL_ATIPICO,
+    "post_festivo_factor": False,
+    "post_festivo_fuente": FUENTE_PF_COMBINADO,
+}
 
 
 def validar_params_r1(p: Dict[str, Any], paso: str) -> Dict[str, Any]:
-    """festivo_por_tipo y r1_limpia: bool; r1_umbral_atipico: número en (0, 0.5]. `p` trae las claves de DEFAULTS_R1."""
+    """
+    festivo_por_tipo, r1_limpia y post_festivo_factor: bool; r1_umbral_atipico: número en (0, 0.5];
+    post_festivo_fuente: una de FUENTES_POST_FESTIVO. `p` trae las claves de DEFAULTS_R1.
+    """
     return {
         "festivo_por_tipo": _params.booleano(paso, "festivo_por_tipo", p["festivo_por_tipo"]),
         "r1_limpia": _params.booleano(paso, "r1_limpia", p["r1_limpia"]),
         "r1_umbral_atipico": _params.numero(paso, "r1_umbral_atipico", p["r1_umbral_atipico"],
                                             minimo=0.0, maximo=0.5, minimo_exclusivo=True),
+        "post_festivo_factor": _params.booleano(paso, "post_festivo_factor", p["post_festivo_factor"]),
+        "post_festivo_fuente": _params.opcion(paso, "post_festivo_fuente", p["post_festivo_fuente"],
+                                              FUENTES_POST_FESTIVO),
     }
 
 
@@ -101,7 +148,8 @@ def kwargs_r1(p: Dict[str, Any]) -> Dict[str, Any]:
     """Kwargs de `seleccionar_recientes` desde params validados (las claves que falten → default)."""
     q = {**DEFAULTS_R1, **{k: p[k] for k in DEFAULTS_R1 if k in p}}
     return {"festivo_por_tipo": q["festivo_por_tipo"], "r1_limpia": q["r1_limpia"],
-            "umbral_atipico": q["r1_umbral_atipico"]}
+            "umbral_atipico": q["r1_umbral_atipico"], "post_festivo_factor": q["post_festivo_factor"],
+            "post_festivo_fuente": q["post_festivo_fuente"]}
 
 
 @dataclass
@@ -114,6 +162,24 @@ class RecientesDia:
     # E_homologo, E_normal_homologo, factor (None si el factor no se aplica y `fechas` es la selección de siempre) y
     # anios_probados ([{anio, homologo, descarte}] de cada año en que se buscó el homólogo; descarte None = usado).
     festivo: Optional[Dict[str, Any]] = None
+    # Solo con `post_festivo_factor` y objetivo post_festivo (`info_post_festivo`): fuente, pares [{post_festivo,
+    # normal, origen, E_post_festivo, E_normal, ratio}], descartados [{fecha, origen, anio, descarte}] y factor
+    # (mediana de los ratios; None si no se aplica y `fechas` es la selección de siempre).
+    post_festivo: Optional[Dict[str, Any]] = None
+
+    @property
+    def factor_post_festivo(self) -> Optional[float]:
+        """F_pf (mediana de E(pf)/E(N)) si se aplica el factor post-festivo (`fechas` son días normales); si no, None."""
+        return None if self.post_festivo is None else self.post_festivo.get("factor")
+
+    def diag_post_festivo(self) -> Dict[str, Any]:
+        """Claves del factor post-festivo en el diagnóstico por día (definición única para nivel y forma); {} sin él."""
+        if self.post_festivo is None:
+            return {}
+        pf = self.post_festivo
+        return {"post_festivo_fuente": pf["fuente"], "post_festivo_pares": [dict(x) for x in pf["pares"]],
+                "post_festivo_ratios": [x["ratio"] for x in pf["pares"]], "factor_post_festivo": pf["factor"],
+                "post_festivo_descartados": [dict(x) for x in pf["descartados"]]}
 
     @property
     def factor_festivo(self) -> Optional[float]:
@@ -137,6 +203,9 @@ class RecientesDia:
         }
         if self.festivo is not None:
             out["festivo"] = {**self.festivo, "anios_probados": [dict(x) for x in self.festivo["anios_probados"]]}
+        if self.post_festivo is not None:
+            out["post_festivo"] = {**self.post_festivo, "pares": [dict(x) for x in self.post_festivo["pares"]],
+                                   "descartados": [dict(x) for x in self.post_festivo["descartados"]]}
         return out
 
 
@@ -439,6 +508,127 @@ def _alerta_sin_homologo(d: date, info: Dict[str, Any], motivo: str) -> Alert:
     )
 
 
+def info_post_festivo(fuente: str) -> Dict[str, Any]:
+    """Dict `RecientesDia.post_festivo` vacío (definición ÚNICA de sus claves) para la fuente `fuente`."""
+    return {"fuente": fuente, "pares": [], "descartados": [], "factor": None}
+
+
+def _energia_valida(curvas_reales: Mapping[str, Any], x: date, corte: date) -> Optional[float]:
+    """E(x) si x <= corte y su curva es válida con energía > 0; si no, None."""
+    if x > corte:
+        return None
+    e = energia_curva(curvas_reales.get(x.isoformat()))
+    return e if e is not None and e > 0 else None
+
+
+def _pf_homologos(
+    d: date, curvas_reales: Mapping[str, Any], corte: date, festivos: set, descartados: List[Dict[str, Any]]
+) -> List[date]:
+    """
+    Post-festivos homólogos de `d`: para cada año d.year−1 .. d.year−ANIOS_POST_FESTIVO, el homólogo del festivo previo
+    (d−1: `clase_dia` define post_festivo como lun–vie con d−1 festivo) con `find_homologous_holiday_date`, + 1 día. Se
+    usa si cae en el mismo día de semana que `d`, es post_festivo y tiene curva válida <= corte; si no, va a
+    `descartados` con su motivo (DESCARTE_*).
+    """
+    festivo_previo = d - timedelta(days=1)
+    out: List[date] = []
+    for anio in range(d.year - 1, d.year - 1 - ANIOS_POST_FESTIVO, -1):
+        iso_h = find_homologous_holiday_date(festivo_previo, anio, festivos)
+        if not iso_h:
+            descartados.append({"fecha": None, "origen": ORIGEN_PF_HOMOLOGO, "anio": anio,
+                                "descarte": DESCARTE_SIN_FESTIVO})
+            continue
+        pf = date.fromisoformat(iso_h) + timedelta(days=1)
+        descarte = None
+        if pf.weekday() != d.weekday():
+            descarte = DESCARTE_OTRO_DIA_SEMANA
+        elif clase_dia(pf, festivos) != CLASE_POST_FESTIVO:
+            descarte = DESCARTE_NO_POST_FESTIVO
+        elif _energia_valida(curvas_reales, pf, corte) is None:
+            descarte = DESCARTE_SIN_DATOS
+        if descarte is not None:
+            descartados.append({"fecha": pf.isoformat(), "origen": ORIGEN_PF_HOMOLOGO, "anio": anio,
+                                "descarte": descarte})
+            continue
+        out.append(pf)
+    return out
+
+
+def _pf_recientes(d: date, curvas_reales: Mapping[str, Any], corte: date, festivos: set) -> List[date]:
+    """
+    Los RECIENTES_POST_FESTIVO post-festivos más recientes con el mismo día de semana que `d`, curva válida y <= corte
+    (de 7 en 7 desde `ancla_mismo_dow(d, corte)`, hasta MAX_SEMANAS_POST_FESTIVO semanas).
+    """
+    ancla = ancla_mismo_dow(d, corte)
+    out: List[date] = []
+    for i in range(MAX_SEMANAS_POST_FESTIVO):
+        cand = ancla - timedelta(days=7 * i)
+        if clase_dia(cand, festivos) == CLASE_POST_FESTIVO and _energia_valida(curvas_reales, cand, corte) is not None:
+            out.append(cand)
+            if len(out) >= RECIENTES_POST_FESTIVO:
+                break
+    return out
+
+
+def _factor_post_festivo(
+    d: date, curvas_reales: Mapping[str, Any], corte: date, festivos: set, puente: bool, info: Dict[str, Any]
+) -> Optional[str]:
+    """
+    Completa en `info` (`info_post_festivo`) los pares (pf, N) y F_pf = mediana de E(pf)/E(N) → None si hay factor, o
+    `pocos_ratios` si quedan menos de MIN_RATIOS_POST_FESTIVO pares. Candidatos pf según `info["fuente"]`
+    (`_pf_homologos`, `_pf_recientes` o la unión de ambos sin fechas repetidas; `origen` "homologo+reciente" si una
+    fecha sale de las dos), del más reciente al más antiguo. N = mismo día de semana que pf a −7, −14, +7, +14 días
+    (el primero <= corte que sea día normal de referencia, `_energia_normal_referencia`); un pf sin N va a
+    `descartados` (`sin_normal`).
+    """
+    fuente = info["fuente"]
+    origenes: Dict[date, List[str]] = {}
+    if fuente in (FUENTE_PF_HOMOLOGO, FUENTE_PF_COMBINADO):
+        for pf in _pf_homologos(d, curvas_reales, corte, festivos, info["descartados"]):
+            origenes.setdefault(pf, []).append(ORIGEN_PF_HOMOLOGO)
+    if fuente in (FUENTE_PF_RECIENTES, FUENTE_PF_COMBINADO):
+        for pf in _pf_recientes(d, curvas_reales, corte, festivos):
+            origenes.setdefault(pf, []).append(ORIGEN_PF_RECIENTE)
+    for pf in sorted(origenes, reverse=True):
+        origen = "+".join(origenes[pf])
+        e_pf = _energia_valida(curvas_reales, pf, corte)
+        par = None
+        for desp in DESPLAZAMIENTOS_NORMAL_HOMOLOGO:
+            x = pf + timedelta(days=desp)
+            if x > corte:
+                continue
+            e_x = _energia_normal_referencia(x, curvas_reales, festivos, puente)
+            if e_x is not None:
+                par = {"post_festivo": pf.isoformat(), "normal": x.isoformat(), "origen": origen,
+                       "E_post_festivo": e_pf, "E_normal": e_x, "ratio": e_pf / e_x}
+                break
+        if par is None:
+            info["descartados"].append({"fecha": pf.isoformat(), "origen": origen, "anio": None,
+                                        "descarte": DESCARTE_SIN_NORMAL})
+        else:
+            info["pares"].append(par)
+    if len(info["pares"]) < MIN_RATIOS_POST_FESTIVO:
+        return MOTIVO_PF_POCOS_RATIOS
+    info["factor"] = float(np.median([x["ratio"] for x in info["pares"]]))
+    return None
+
+
+def _alerta_post_festivo_sin_factor(d: date, info: Dict[str, Any], motivo: str) -> Alert:
+    """Alerta info POST_FESTIVO_SIN_FACTOR: `detalle.motivo` = código; el texto legible solo en el mensaje."""
+    return Alert(
+        nivel="info",
+        codigo=ALERTA_POST_FESTIVO_SIN_FACTOR,
+        mensaje=(
+            f"Post-festivo sin {TEXTO_MOTIVO_POST_FESTIVO[motivo]}: se usa la referencia de siempre "
+            "(post-festivo reciente del mismo día de semana)."
+        ),
+        fechas=[d.isoformat()],
+        detalle={"motivo": motivo, "fuente": info["fuente"], "n_ratios": len(info["pares"]),
+                 "minimo_ratios": MIN_RATIOS_POST_FESTIVO, "pares": [dict(x) for x in info["pares"]],
+                 "descartados": [dict(x) for x in info["descartados"]]},
+    )
+
+
 def seleccionar_recientes(
     d,
     curvas_reales: Mapping[str, Any],
@@ -451,6 +641,8 @@ def seleccionar_recientes(
     festivo_por_tipo: bool = False,
     r1_limpia: bool = False,
     umbral_atipico: float = UMBRAL_ATIPICO,
+    post_festivo_factor: bool = False,
+    post_festivo_fuente: str = FUENTE_PF_COMBINADO,
 ) -> RecientesDia:
     """
     Los `n` días reales más recientes (de más reciente a más antiguo) con mismo
@@ -473,6 +665,12 @@ def seleccionar_recientes(
       `umbral_atipico`) y, si el objetivo está fuera de ese periodo, los de Semana Santa ("semana_santa") o
       24/dic–6/ene ("temporada"). Si no queda ninguno limpio → selección de siempre + alerta info
       `R1_SIN_LIMPIA`. El día objetivo en sí no cambia de clase.
+    - `post_festivo_factor` (fuente `post_festivo_fuente`): objetivo post_festivo → `fechas` = días NORMALES
+      recientes del mismo día de semana (búsqueda de un objetivo normal, con la limpieza si `r1_limpia`) y
+      `post_festivo["factor"]` = F_pf (`_factor_post_festivo`). Quien usa la selección aplica E = E(R1)·(1+g)·F_pf
+      (nivel) y la forma de esos días normales (forma). Con menos de MIN_RATIOS_POST_FESTIVO ratios o sin R1 normal
+      → selección de siempre + alerta info `POST_FESTIVO_SIN_FACTOR` (detalle.motivo = código MOTIVO_PF_*). Con el
+      flag, `post_festivo` trae pares y descartes para todo objetivo post_festivo.
     """
     if n < 1:
         raise ValueError("n debe ser >= 1")
@@ -501,6 +699,23 @@ def seleccionar_recientes(
                                         alertas=alertas_limpia, festivo=festivo)
                 festivo["factor"] = None
                 alertas.append(_alerta_sin_homologo(d, festivo, MOTIVO_SIN_NORMAL_RECIENTE))
+
+    post_festivo: Optional[Dict[str, Any]] = None
+    if post_festivo_factor and clase == CLASE_POST_FESTIVO:
+        post_festivo = info_post_festivo(post_festivo_fuente)
+        motivo = _factor_post_festivo(d, curvas_reales, corte, festivos_set, saltar_puente, post_festivo)
+        if motivo is not None:
+            alertas.append(_alerta_post_festivo_sin_factor(d, post_festivo, motivo))
+        else:
+            fechas, saltados, _, alertas_limpia = _buscar_con_limpieza(
+                d, ancla, CLASE_NORMAL, curvas_reales, festivos_set, n, saltar_puente, max_semanas,
+                r1_limpia, umbral_atipico,
+            )
+            if fechas:
+                return RecientesDia(fechas=fechas, clase=clase, saltados=saltados,
+                                    alertas=alertas_limpia, post_festivo=post_festivo)
+            post_festivo["factor"] = None
+            alertas.append(_alerta_post_festivo_sin_factor(d, post_festivo, MOTIVO_PF_SIN_NORMAL_RECIENTE))
 
     fechas, saltados, ultimo_normal, alertas_limpia = _buscar_con_limpieza(
         d, ancla, clase, curvas_reales, festivos_set, n, saltar_puente, max_semanas,
@@ -531,4 +746,5 @@ def seleccionar_recientes(
                     detalle={"clase": clase, "referencia": ultimo_normal.isoformat()},
                 )
             )
-    return RecientesDia(fechas=fechas, clase=clase, saltados=saltados, alertas=alertas, festivo=festivo)
+    return RecientesDia(fechas=fechas, clase=clase, saltados=saltados, alertas=alertas, festivo=festivo,
+                        post_festivo=post_festivo)

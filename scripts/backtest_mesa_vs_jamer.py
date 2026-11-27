@@ -1,6 +1,11 @@
 """
 Backtest reproducible de la Mesa de ajustes (perfil `jamer` y variantes) contra los envíos de Jamer y contra
-la demanda real (fase festivos_r1, ver `docs/work/ajustes/festivos_r1/PLAN.md`, sección C).
+la demanda real. Dos conjuntos de configs (`--conjunto`):
+  * `post_festivo` (default; fase `docs/work/ajustes/post_festivo/PLAN.md`): base `jamer` = perfil actual (ya trae
+    `festivo_por_tipo`) y las variantes `jamer+pf_homologo`, `jamer+pf_recientes`, `jamer+pf_combinado`
+    (`post_festivo_factor` con cada `post_festivo_fuente`, en nivel y forma);
+  * `festivos_r1` (fase `docs/work/ajustes/festivos_r1/PLAN.md`, sección C): reproduce esa fase con la base sin
+    `festivo_por_tipo` (el perfil de entonces).
 
 Parte 1 - vs Jamer. Cada semana objetivo (lunes L) desde `--desde` (default 2026-04-06: las 33 semanas del PLAN,
 60/40 = 20 de calibración / 13 de prueba) con un envío de Jamer con fecha <= domingo:
@@ -18,13 +23,19 @@ Parte 1 - vs Jamer. Cada semana objetivo (lunes L) desde `--desde` (default 2026
 
 Parte 2 - evaluación ampliada contra real (sin Jamer), desde `--desde-ampliada` (2022-01-01) hasta el último dato:
   semanas con (a) algún festivo, (b) Semana Santa o algún día cuya R1 de producción cambia al activar
-  `r1_limpia`, y (c) una muestra aleatoria (con semilla) de semanas normales de control.
+  `r1_limpia` o `saltar_puente`, (c) algún día `post_festivo` y (d) una muestra aleatoria (con semilla) de semanas
+  normales de control.
   Corte = lunes - 6 (martes; emisión miércoles).
 
 Segmento "R1 saltada" de una config con `r1_limpia`: los días cuya R1 de nivel (diagnostics["dias"][f]["r1"])
 en la corrida de esa config difiere de la de `jamer` (sin copia propia de la regla).
 Segmento "festivos por tipo": festivos de tipo `fijo` o `semana_santa` (`data.tipo_festivo`; los `lunes` no
 cambian con `festivo_por_tipo`).
+Segmento "post_festivo": días de clase `post_festivo` (`data.clase_dia` con los festivos de producción).
+
+Variantes en competencia (`Config.grupo`, p. ej. las 3 fuentes del factor post-festivo): se elige UNA, la de menor
+MAPE h medio en su segmento en la parte 2 con fecha objetivo 2022-2024 (calibración; `elegir_variante`); solo ella
+recibe veredicto y las otras se reportan como informativas (no se elige mirando la prueba).
 
 Criterio de aceptación (PLAN + Enmienda 2026-11-27), por regla:
   1. mejora el MAPE h (diferencia < 0) de su segmento objetivo:
@@ -33,16 +44,18 @@ Criterio de aceptación (PLAN + Enmienda 2026-11-27), por regla:
      - R1 saltada / R1 cambia: en la parte 2 completa Y en las semanas de prueba de la parte 1 (VF);
      - `jamer+ambas`: las dos mitades anteriores (festivos por tipo; días con R1 distinta que no son de ese
        segmento) deben pasar;
+     - post-festivo (variante elegida): parte 2 por fecha objetivo, 2022-2024 Y 2025-2026; los post-festivos de las
+       semanas de prueba de la parte 1 (VF) se reportan solo como información;
   2. MAPE h global (parte 1, VF, todas las semanas del PLAN) no empeora, lectura estricta: diferencia pareada
      media <= 0 Y el IC95 no es enteramente positivo;
   3. ningún tipo de día (laboral/sabado/domingo/festivo; parte 1, VF) empeora > 0,1 pp.
 
-Las configs se definen como datos (`CONFIGS`). Si un paso rechaza una clave nueva (ValueError "params
+Las configs se definen como datos (`CONJUNTOS`; `CONFIGS` = el conjunto default). Si un paso rechaza una clave nueva (ValueError "params
 desconocidos"), esa config se salta con aviso.
 
 Uso (desde la raíz del repo; los CSV viven FUERA del repo, nada de credenciales):
     python scripts/backtest_mesa_vs_jamer.py --historico <historico.csv> --festivos <festivos.csv> \
-        --envios <envios.csv> [--desde 2026-04-06] [--muestra-informativa] [--partes 1,2] [--seed 7]
+        --envios <envios.csv> [--conjunto post_festivo] [--desde 2026-04-06] [--muestra-informativa] [--partes 1,2] [--seed 7]
 
 Entradas: historico (FECHA,P1..P24), festivos (fecha[,nombre]), envios (sesion,envio,version,fecha,P1..P24).
 Salida: reports/ajustes/backtest_mesa_vs_jamer_<YYYYMMDD>.md (solo agregados, versionable con `git add -f`) y
@@ -91,12 +104,16 @@ DESDE_PLAN = "2026-04-06"  # muestra del PLAN: 33 semanas (20 calibración / 13 
 DESDE_INFORMATIVA = "2025-12-01"  # muestra ampliada con VF (48 semanas): solo informativa
 TOLERANCIA_TIPO_DIA_PP = 0.1
 N_BOOT = 4000
-CASOS_CLAVE = ("2026-04-13", "2026-04-18", "2026-05-01", "2026-08-07")
+CASOS_CLAVE = ("2026-04-13", "2026-04-18", "2026-05-01", "2026-08-07", "2026-11-03")
 # Enmienda 2026-11-27: la regla 1 del segmento de festivos por tipo usa un corte temporal de la parte 2 por año de
 # la fecha objetivo (las 13 semanas de prueba de la parte 1 solo tienen festivos lunes, que la regla no cambia).
 TIPOS_FESTIVO_SEGMENTO = (data.TIPO_FESTIVO_FIJO, data.TIPO_FESTIVO_SEMANA_SANTA)
 ANIOS_CAL_FESTIVOS = (2022, 2024)
 ANIOS_PRUEBA_FESTIVOS = (2025, 2026)
+# Factor post-festivo: el mismo corte temporal de la parte 2 (la calibración elige la variante; la prueba confirma).
+SEGMENTO_POST_FESTIVO = "post_festivo"
+ANIOS_CAL_POST_FESTIVO = ANIOS_CAL_FESTIVOS
+ANIOS_PRUEBA_POST_FESTIVO = ANIOS_PRUEBA_FESTIVOS
 
 
 def _ambos(extra: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
@@ -110,18 +127,43 @@ class Config:
     extra: Dict[str, Dict[str, Any]]
     segmento: Optional[str]  # segmento objetivo del criterio; None = informativa (sin veredicto)
     perfil: str = "jamer"
+    # variantes en competencia: solo la elegida del grupo (`elegir_variante`, calibración) recibe veredicto
+    grupo: Optional[str] = None
 
 
-CONFIGS: Tuple[Config, ...] = (
-    Config(CONFIG_BASE, {}, None),
-    Config("jamer+festivo_por_tipo", _ambos({"festivo_por_tipo": True}), "festivo_tipo"),
-    Config(CONFIG_R1_LIMPIA, _ambos({"r1_limpia": True}), "r1_saltada"),
-    Config("jamer+saltar_puente", _ambos({"saltar_puente": True}), "r1_cambia"),
-    Config("jamer+ambas", _ambos({"festivo_por_tipo": True, "r1_limpia": True}), "festivo_tipo|r1_saltada"),
+def _sin_fpt(extra: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """`_ambos` con `festivo_por_tipo=False` salvo que `extra` lo fije (perfil `jamer` anterior a festivos_r1)."""
+    return _ambos({"festivo_por_tipo": False, **extra})
+
+
+# Fase festivos_r1: la base es el perfil de entonces (sin `festivo_por_tipo`, que hoy trae el perfil `jamer`).
+CONFIGS_FESTIVOS_R1: Tuple[Config, ...] = (
+    Config(CONFIG_BASE, _sin_fpt({}), None),
+    Config("jamer+festivo_por_tipo", _sin_fpt({"festivo_por_tipo": True}), "festivo_tipo"),
+    Config(CONFIG_R1_LIMPIA, _sin_fpt({"r1_limpia": True}), "r1_saltada"),
+    Config("jamer+saltar_puente", _sin_fpt({"saltar_puente": True}), "r1_cambia"),
+    Config("jamer+ambas", _sin_fpt({"festivo_por_tipo": True, "r1_limpia": True}), "festivo_tipo|r1_saltada"),
     # sensibilidad del umbral de atípico (solo información, sin veredicto)
-    Config("jamer+r1_limpia_u04", _ambos({"r1_limpia": True, "r1_umbral_atipico": 0.04}), None),
-    Config("jamer+r1_limpia_u08", _ambos({"r1_limpia": True, "r1_umbral_atipico": 0.08}), None),
+    Config("jamer+r1_limpia_u04", _sin_fpt({"r1_limpia": True, "r1_umbral_atipico": 0.04}), None),
+    Config("jamer+r1_limpia_u08", _sin_fpt({"r1_limpia": True, "r1_umbral_atipico": 0.08}), None),
 )
+
+
+def _pf(fuente: str) -> Dict[str, Dict[str, Any]]:
+    """Factor post-festivo con la fuente `fuente`, en nivel y forma."""
+    return _ambos({"post_festivo_factor": True, "post_festivo_fuente": fuente})
+
+
+# Fase post_festivo: base = perfil `jamer` actual (con `festivo_por_tipo`); 3 variantes en competencia.
+GRUPO_POST_FESTIVO = "post_festivo"
+CONFIGS_POST_FESTIVO: Tuple[Config, ...] = (
+    Config(CONFIG_BASE, {}, None),
+    *(Config(f"jamer+pf_{fuente}", _pf(fuente), SEGMENTO_POST_FESTIVO, grupo=GRUPO_POST_FESTIVO)
+      for fuente in ("homologo", "recientes", "combinado")),
+)
+CONJUNTOS: Dict[str, Tuple[Config, ...]] = {"post_festivo": CONFIGS_POST_FESTIVO, "festivos_r1": CONFIGS_FESTIVOS_R1}
+CONJUNTO_DEFAULT = "post_festivo"
+CONFIGS: Tuple[Config, ...] = CONJUNTOS[CONJUNTO_DEFAULT]
 
 SEGMENTO_DESC = {
     "festivo": "días festivos",
@@ -129,6 +171,7 @@ SEGMENTO_DESC = {
     "r1_saltada": "días cuya R1 de nivel (corrida de la config) difiere de la de `jamer` (R1 saltada)",
     "r1_cambia": "días cuya R1 de nivel difiere de la de `jamer`",
     "festivo_tipo|r1_saltada": "festivos fijo/semana_santa + (aparte) días fuera de ese segmento con R1 de nivel distinta",
+    SEGMENTO_POST_FESTIVO: "días post_festivo",
 }
 
 
@@ -368,6 +411,8 @@ def mascara_segmento(df: pd.DataFrame, segmento: str, config: str) -> pd.Series:
         return _r1_distinta(df, config) & ~es_festivo_tipo(df)
     if segmento == "festivo_tipo|r1_saltada":
         return es_festivo_tipo(df) | _r1_distinta(df, config)
+    if segmento == SEGMENTO_POST_FESTIVO:
+        return df["post_festivo"].fillna(False).astype(bool)
     raise ValueError(f"segmento desconocido {segmento!r}")
 
 
@@ -549,15 +594,17 @@ def correr_parte1(corredor: Corredor, envios: pd.DataFrame, reales: Mapping[str,
 # Parte 2 - ampliada contra real
 # ---------------------------------------------------------------------------
 
-COLUMNAS_SEMANAS_P2 = ["lunes", "festivo", "semana_santa", "r1_saltada", "r1_puente", "control"]
+COLUMNAS_SEMANAS_P2 = ["lunes", "festivo", "semana_santa", "r1_saltada", "r1_puente", "post_festivo", "control"]
+_BANDERAS_P2 = ("festivo", "semana_santa", "r1_saltada", "r1_puente", "post_festivo")
 
 
 def semanas_ampliadas(reales: Mapping[str, np.ndarray], festivos: Iterable[str], desde: date,
                       n_control: int, semilla: int) -> pd.DataFrame:
     """
     Semanas de la parte 2 con sus banderas: festivo, semana_santa, r1_saltada (algún día no festivo cuya R1 de
-    producción cambia al activar `r1_limpia`, `r1_cambia_con_limpia`), r1_puente (ídem con `saltar_puente`), control (muestra con semilla de las semanas
-    sin ninguna de las anteriores). Sin semanas: DataFrame vacío con esas columnas.
+    producción cambia al activar `r1_limpia`, `r1_cambia_con_limpia`), r1_puente (ídem con `saltar_puente`),
+    post_festivo (algún día con real de clase `post_festivo`), control (muestra con semilla de las semanas sin ninguna
+    de las anteriores). Sin semanas: DataFrame vacío con esas columnas.
     """
     fset = festivos if isinstance(festivos, (set, frozenset)) else set(festivos)
     vacio = pd.DataFrame(columns=COLUMNAS_SEMANAS_P2)
@@ -576,17 +623,19 @@ def semanas_ampliadas(reales: Mapping[str, np.ndarray], festivos: Iterable[str],
             r1_pte = any(r1_cambia_con_puente(d, reales, corte, fset) for d in no_fest)
             filas.append({"lunes": lunes, "festivo": any(d.isoformat() in fset for d in dias),
                           "semana_santa": any(es_semana_santa(d) for d in dias), "r1_saltada": r1_salt,
-                          "r1_puente": r1_pte})
+                          "r1_puente": r1_pte,
+                          "post_festivo": any(data.clase_dia(d, fset) == data.CLASE_POST_FESTIVO for d in con_real)})
         lunes += timedelta(days=7)
     if not filas:
         return vacio
     df = pd.DataFrame(filas)
-    normales = df[~(df["festivo"] | df["semana_santa"] | df["r1_saltada"] | df["r1_puente"])]["lunes"].tolist()
+    marcada = df[list(_BANDERAS_P2)].any(axis=1)
+    normales = df[~marcada]["lunes"].tolist()
     rng = np.random.default_rng(semilla)
     k = min(n_control, len(normales))
     control = set(rng.choice(np.array(normales, dtype=object), size=k, replace=False).tolist()) if k else set()
     df["control"] = df["lunes"].isin(control)
-    return df[df["festivo"] | df["semana_santa"] | df["r1_saltada"] | df["r1_puente"] | df["control"]].reset_index(drop=True)
+    return df[marcada | df["control"]][COLUMNAS_SEMANAS_P2].reset_index(drop=True)
 
 
 def correr_parte2(corredor: Corredor, reales: Mapping[str, np.ndarray], semanas: pd.DataFrame,
@@ -606,7 +655,7 @@ def correr_parte2(corredor: Corredor, reales: Mapping[str, np.ndarray], semanas:
         base = {"parte": 2, "lunes": lunes.isoformat(), "momento": "martes", "envio": None,
                 "corte": corte_ef.isoformat(), "sem_festivo": bool(s["festivo"]),
                 "sem_semana_santa": bool(s["semana_santa"]), "sem_r1_saltada": bool(s["r1_saltada"]),
-                "sem_control": bool(s["control"])}
+                "sem_post_festivo": bool(s.get("post_festivo", False)), "sem_control": bool(s["control"])}
         for d in evaluar:
             for f in _filas_dia(base, d, curvas, r1s, reales, fset):
                 f["lead"] = (date.fromisoformat(d) - corte_ef).days
@@ -625,6 +674,13 @@ SEGMENTOS_P2: Tuple[Tuple[str, Callable[[pd.DataFrame], pd.Series]], ...] = (
     ("festivo fijo+semana_santa {}-{} (prueba)".format(*ANIOS_PRUEBA_FESTIVOS),
      lambda d: es_festivo_tipo(d) & d.index.isin(en_anios(d, ANIOS_PRUEBA_FESTIVOS).index)),
     ("festivos (todos)", lambda d: d["tipo_dia"] == "festivo"),
+    ("post-festivos", lambda d: mascara_segmento(d, SEGMENTO_POST_FESTIVO, CONFIG_BASE)),
+    ("post-festivos {}-{} (calibración)".format(*ANIOS_CAL_POST_FESTIVO),
+     lambda d: mascara_segmento(d, SEGMENTO_POST_FESTIVO, CONFIG_BASE)
+     & d.index.isin(en_anios(d, ANIOS_CAL_POST_FESTIVO).index)),
+    ("post-festivos {}-{} (prueba)".format(*ANIOS_PRUEBA_POST_FESTIVO),
+     lambda d: mascara_segmento(d, SEGMENTO_POST_FESTIVO, CONFIG_BASE)
+     & d.index.isin(en_anios(d, ANIOS_PRUEBA_POST_FESTIVO).index)),
     ("semanas de Semana Santa", lambda d: d["sem_semana_santa"]),
     ("días con R1 saltada (R1 de jamer+r1_limpia != jamer)", lambda d: d["r1_saltada"].fillna(False).astype(bool)),
     ("control (semanas normales)", lambda d: d["sem_control"]),
@@ -666,7 +722,8 @@ def partes_regla1(cfg: Config, p2: pd.DataFrame, vf_prueba: pd.DataFrame) -> Lis
     - `festivo_tipo` (Enmienda 2026-11-27): parte 2 con fecha objetivo 2022-2024 (calibración) y 2025-2026 (prueba);
     - `r1_saltada` / `r1_cambia`: parte 2 completa y semanas de prueba de la parte 1 (VF);
     - `festivo_tipo|r1_saltada` (`jamer+ambas`): las 2 de festivos + las 2 de R1 sobre los días con R1 distinta que no
-      son festivos fijo/semana_santa.
+      son festivos fijo/semana_santa;
+    - `post_festivo`: parte 2 con fecha objetivo 2022-2024 (calibración) y 2025-2026 (prueba).
     """
     def festivos() -> List[Tuple[str, Dict[str, Any]]]:
         return [("festivos {}-{} (ampliada, calibración)".format(*ANIOS_CAL_FESTIVOS),
@@ -684,7 +741,42 @@ def partes_regla1(cfg: Config, p2: pd.DataFrame, vf_prueba: pd.DataFrame) -> Lis
         return r1(cfg.segmento)
     if cfg.segmento == "festivo_tipo|r1_saltada":
         return festivos() + r1("r1_saltada_no_festivo_tipo", "R1 distinta ")
+    if cfg.segmento == SEGMENTO_POST_FESTIVO:
+        return [("post-festivos {}-{} (ampliada, calibración)".format(*ANIOS_CAL_POST_FESTIVO),
+                 _seg(en_anios(p2, ANIOS_CAL_POST_FESTIVO), SEGMENTO_POST_FESTIVO, cfg.nombre)),
+                ("post-festivos {}-{} (ampliada, prueba)".format(*ANIOS_PRUEBA_POST_FESTIVO),
+                 _seg(en_anios(p2, ANIOS_PRUEBA_POST_FESTIVO), SEGMENTO_POST_FESTIVO, cfg.nombre))]
     raise ValueError(f"segmento sin regla 1 definida: {cfg.segmento!r}")
+
+
+def info_regla1(cfg: Config, vf_prueba: pd.DataFrame) -> List[Tuple[str, Dict[str, Any]]]:
+    """Partes informativas (no deciden) junto a la regla 1: post-festivos de las semanas de prueba de la parte 1 (VF)."""
+    if cfg.segmento == SEGMENTO_POST_FESTIVO:
+        return [("post-festivos prueba parte 1 (VF, informativo)", _seg(vf_prueba, SEGMENTO_POST_FESTIVO, cfg.nombre))]
+    return []
+
+
+def elegir_variante(p2: pd.DataFrame, configs: Sequence[Config]) -> Tuple[Optional[str], Dict[str, Dict[str, Any]]]:
+    """
+    Variante elegida de un grupo (`configs`, mismo segmento): la de menor MAPE h medio en su segmento en la parte 2
+    con fecha objetivo en ANIOS_CAL_POST_FESTIVO (calibración), sobre los días que tienen todas las variantes. Empate:
+    la primera en el orden de `configs`. → (nombre o None si no hay datos, {nombre: {"dias", "mape_h"}}).
+    """
+    nombres = [c.nombre for c in configs]
+    vacio = {n: {"dias": 0, "mape_h": float("nan")} for n in nombres}
+    if p2 is None or p2.empty or not configs:
+        return None, vacio
+    cal = en_anios(p2, ANIOS_CAL_POST_FESTIVO)
+    sub = cal[mascara_segmento(cal, configs[0].segmento, configs[0].nombre) & cal["serie"].isin(nombres)]
+    piv = sub.pivot_table(index=["parte", "lunes", "momento", "fecha"], columns="serie", values="mape_h")
+    if piv.empty or any(n not in piv for n in nombres):
+        return None, vacio
+    piv = piv[nombres].dropna()
+    if piv.empty:
+        return None, vacio
+    medias = {n: {"dias": int(len(piv)), "mape_h": float(piv[n].mean())} for n in nombres}
+    elegida = min(nombres, key=lambda n: (medias[n]["mape_h"], nombres.index(n)))
+    return elegida, medias
 
 
 def nota_festivos_prueba(vf_prueba: Optional[pd.DataFrame]) -> Optional[str]:
@@ -707,18 +799,41 @@ def nota_festivos_prueba(vf_prueba: Optional[pd.DataFrame]) -> Optional[str]:
 def evaluar_criterios(p1: pd.DataFrame, p2: pd.DataFrame, configs: Sequence[Config], semilla: int) -> Dict[str, Any]:
     vf = p1[p1["momento"] == "VF"] if not p1.empty else p1
     vf_prueba = vf[vf["tramo"] == "prueba"] if not vf.empty else vf
+
+    def presente(cfg: Config) -> bool:
+        return (not vf.empty and cfg.nombre in set(vf["serie"])) or (not p2.empty and cfg.nombre in set(p2["serie"]))
+
+    # variantes en competencia: se elige una por grupo con la calibración de la parte 2 (antes de mirar la prueba)
+    grupos: Dict[str, List[Config]] = {}
+    for cfg in configs:
+        if cfg.grupo is not None and cfg.segmento is not None and presente(cfg):
+            grupos.setdefault(cfg.grupo, []).append(cfg)
+    eleccion = {g: elegir_variante(p2, cs) for g, cs in grupos.items()}
+
     out = {}
     for cfg in configs:
-        if cfg.segmento is None:
-            continue
-        presente = (not vf.empty and cfg.nombre in set(vf["serie"])) or (not p2.empty and cfg.nombre in set(p2["serie"]))
-        if not presente:
+        if cfg.segmento is None or not presente(cfg):
             continue
         partes = partes_regla1(cfg, p2, vf_prueba)
         par = pareado(vf, cfg.nombre, CONFIG_BASE, semilla) if not vf.empty else {"semanas": 0}
         tipos = dif_por_tipo_dia(vf, cfg.nombre) if not vf.empty else {}
-        out[cfg.nombre] = {**veredicto_reglas(partes, par, tipos), "segmento": cfg.segmento, "partes_regla1": partes}
+        res = {**veredicto_reglas(partes, par, tipos), "segmento": cfg.segmento, "partes_regla1": partes,
+               "info_regla1": info_regla1(cfg, vf_prueba), "grupo": cfg.grupo, "informativa": False}
+        if cfg.grupo is not None:
+            elegida, medias = eleccion[cfg.grupo]
+            res["eleccion"] = {"elegida": elegida, "mape_calibracion": medias}
+            if cfg.nombre != elegida:
+                # no elegida (o sin datos para elegir): solo información, sin veredicto
+                res.update(informativa=True, pasa=None)
+        out[cfg.nombre] = res
     return out
+
+
+def veredicto_txt(c: Dict[str, Any]) -> str:
+    """Veredicto global de una config del criterio ("PASA" / "NO PASA" / informativa sin veredicto)."""
+    if c.get("informativa"):
+        return "informativa (variante no elegida, sin veredicto)"
+    return pasa_txt(c["pasa"])
 
 
 def md_parte1(p1: pd.DataFrame, configs: Sequence[Config], semilla: int,
@@ -777,7 +892,9 @@ def md_parte2(p2: pd.DataFrame, semanas: pd.DataFrame, configs: Sequence[Config]
     series = _orden_series(p2["serie"].unique(), configs)
     out.append(f"Desde {desde.isoformat()}; corte = martes anterior (lunes - 6). Semanas: {len(semanas)} "
                f"(festivo {int(semanas['festivo'].sum())}, Semana Santa {int(semanas['semana_santa'].sum())}, "
-               f"con R1 saltada {int(semanas['r1_saltada'].sum())}, control {int(semanas['control'].sum())}; "
+               f"con R1 saltada {int(semanas['r1_saltada'].sum())}, "
+               f"con post-festivo {int(semanas['post_festivo'].sum()) if 'post_festivo' in semanas else 0}, "
+               f"control {int(semanas['control'].sum())}; "
                "una semana puede estar en varios grupos). R1 saltada = la R1 de nivel de "
                f"`{CONFIG_R1_LIMPIA}` difiere de la de `{CONFIG_BASE}`.\n")
     filas = []
@@ -820,21 +937,53 @@ def md_criterios(crit: Dict[str, Any], saltadas: Dict[str, str], nota_prueba: Op
            "<= 0 Y IC95 no enteramente > 0. "
            f"Regla 3: ningún tipo de día empeora > {TOLERANCIA_TIPO_DIA_PP} pp (parte 1, VF). "
            "Sin datos para una regla: NO PASA.\n"]
+    if any(c.get("segmento") == SEGMENTO_POST_FESTIVO for c in crit.values()):
+        out.append("Factor post-festivo (segmento = días `post_festivo`): de las variantes `jamer+pf_*` se elige UNA, "
+                   "la de menor MAPE h medio en post-festivos de la parte 2 con fecha objetivo {}-{} (calibración); "
+                   "solo ella recibe veredicto y las otras son informativas. Regla 1: parte 2 {}-{} y {}-{} (por "
+                   "fecha objetivo); los post-festivos de las semanas de prueba de la parte 1 (VF) se reportan como "
+                   "información. Base = perfil `jamer` actual (con `festivo_por_tipo`).\n".format(
+                       *ANIOS_CAL_POST_FESTIVO, *ANIOS_CAL_POST_FESTIVO, *ANIOS_PRUEBA_POST_FESTIVO))
+        out.append(md_eleccion(crit))
     if nota_prueba:
         out.append(nota_prueba + "\n")
     filas = []
     for n, c in crit.items():
+        info = c.get("informativa")
         for r in c["reglas"]:
+            v = pasa_txt(r["pasa"])
             filas.append({"config": n, "segmento": SEGMENTO_DESC.get(c["segmento"], c["segmento"]),
-                          "regla": r["regla"], "valor": r["valor"], "veredicto": pasa_txt(r["pasa"])})
+                          "regla": r["regla"], "valor": r["valor"], "veredicto": f"({v}, informativo)" if info else v})
+        for etiqueta, seg in c.get("info_regla1") or []:
+            filas.append({"config": n, "segmento": "", "regla": "informativo (no decide)",
+                          "valor": f"{etiqueta} {_fmt(seg.get('dif_pp'))} pp ({seg.get('dias', 0)} d)",
+                          "veredicto": "—"})
         filas.append({"config": n, "segmento": "", "regla": "**global**", "valor": "",
-                      "veredicto": f"**{pasa_txt(c['pasa'])}**"})
+                      "veredicto": f"**{veredicto_txt(c)}**"})
     out.append(_tabla(pd.DataFrame(filas)))
     if saltadas:
         out.append("Configs no evaluadas (el código actual rechaza sus params):\n")
         out += [f"- `{n}`: {m.replace('|', '/')}" for n, m in saltadas.items()]
         out.append("")
     return out
+
+
+def md_eleccion(crit: Dict[str, Any]) -> str:
+    """Tabla de la elección de variante por grupo: MAPE h de calibración de cada variante y cuál se eligió."""
+    filas = []
+    for n, c in crit.items():
+        el = c.get("eleccion")
+        if not el:
+            continue
+        m = el["mape_calibracion"].get(n, {})
+        filas.append({"grupo": c.get("grupo"), "variante": n, "dias_calibracion": m.get("dias", 0),
+                      "mape_h_calibracion": m.get("mape_h", float("nan")),
+                      "elegida": "**sí**" if n == el["elegida"] else "no"})
+    if not filas:
+        return ""
+    sin = [f["grupo"] for f in filas if not any(g["elegida"] == "**sí**" for g in filas if g["grupo"] == f["grupo"])]
+    nota = f"Sin datos de calibración para elegir variante en: {sorted(set(sin))} (todas informativas).\n" if sin else ""
+    return "### Elección de variante (calibración, parte 2)\n\n" + _tabla(pd.DataFrame(filas), 3) + nota
 
 
 def escribir_reporte(path: Path, meta: Dict[str, Any], p1: Optional[pd.DataFrame], p2: Optional[pd.DataFrame],
@@ -844,9 +993,13 @@ def escribir_reporte(path: Path, meta: Dict[str, Any], p1: Optional[pd.DataFrame
     vf_prueba = None
     if p1 is not None and not p1.empty:
         vf_prueba = p1[(p1["momento"] == "VF") & (p1["tramo"] == "prueba")]
-    nota_prueba = nota_festivos_prueba(vf_prueba)
+    # la nota solo aplica a las configs de festivos por tipo (fase festivos_r1)
+    hay_festivo_tipo = any("festivo_tipo" in (c.segmento or "") for c in configs)
+    nota_prueba = nota_festivos_prueba(vf_prueba) if hay_festivo_tipo else None
+    conjunto = meta.get("conjunto", CONJUNTO_DEFAULT)
     out = [f"# Backtest Mesa (perfil jamer + variantes) vs Jamer y vs real — {meta['fecha']}\n",
-           "Generado por `scripts/backtest_mesa_vs_jamer.py` (fase `docs/work/ajustes/festivos_r1/`). Solo agregados "
+           f"Generado por `scripts/backtest_mesa_vs_jamer.py --conjunto {conjunto}` (fase "
+           f"`docs/work/ajustes/{conjunto}/`). Solo agregados "
            "(errores %, no curvas ni demanda real). El detalle por día está en un CSV ignorado por git.\n",
            f"Entradas: `{meta['historico']}`, `{meta['festivos']}`, `{meta['envios']}` (fuera del repo). "
            f"Semilla {meta['seed']}. Duración {meta['duracion_s']:.0f} s. Configs evaluadas: "
@@ -886,6 +1039,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--historico", required=True, help="CSV FECHA,P1..P24 (demanda real)")
     ap.add_argument("--festivos", required=True, help="CSV fecha[,nombre] (festivos usados en producción)")
     ap.add_argument("--envios", help="CSV sesion,envio,version,fecha,P1..P24 (envíos de Jamer; requerido para la parte 1)")
+    ap.add_argument("--conjunto", default=CONJUNTO_DEFAULT, choices=sorted(CONJUNTOS),
+                    help=f"conjunto de configs (default {CONJUNTO_DEFAULT}; festivos_r1 reproduce esa fase)")
     ap.add_argument("--desde", default=DESDE_PLAN,
                     help=f"lunes mínimo de la parte 1 (YYYY-MM-DD; default {DESDE_PLAN}: muestra del PLAN, decide)")
     ap.add_argument("--muestra-informativa", action="store_true",
@@ -912,7 +1067,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     hist = cargar_historico(Path(args.historico))
     festivos = cargar_festivos(Path(args.festivos))
     reales = data.curvas_reales(hist)
-    corredor = Corredor(hist, festivos, CONFIGS)
+    configs = CONJUNTOS[args.conjunto]
+    corredor = Corredor(hist, festivos, configs)
 
     desde = _fecha(args.desde)
     desde_info = _fecha(args.desde_informativa) if args.muestra_informativa else None
@@ -936,7 +1092,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     vacio = pd.DataFrame(columns=["serie", "momento", "tramo"])
     crit = evaluar_criterios(p1 if p1 is not None else vacio, p2 if p2 is not None else vacio,
-                             CONFIGS, args.seed)
+                             configs, args.seed)
     dur = time.time() - t0
 
     stamp = args.fecha or date.today().strftime("%Y%m%d")
@@ -958,17 +1114,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     md = salida / f"backtest_mesa_vs_jamer_{stamp}.md"
     meta = {"fecha": stamp, "historico": Path(args.historico).name, "festivos": Path(args.festivos).name,
             "envios": Path(args.envios).name if args.envios else "—", "seed": args.seed, "duracion_s": dur,
-            "desde_ampliada": desde2, "desde_informativa": args.desde_informativa}
-    escribir_reporte(md, meta, p1, p2, semanas2, crit, CONFIGS, corredor.saltadas, p1_info=p1_info,
+            "desde_ampliada": desde2, "desde_informativa": args.desde_informativa, "conjunto": args.conjunto}
+    escribir_reporte(md, meta, p1, p2, semanas2, crit, configs, corredor.saltadas, p1_info=p1_info,
                      descartes_vf=descartes_vf)
 
     print("\n=== Criterio de aceptación (muestra del PLAN) ===")
     if not crit:
         print("(ninguna config con regla evaluable: todas las variantes fueron saltadas)")
     for n, c in crit.items():
-        print(f"{n}: {pasa_txt(c['pasa'])}")
+        el = c.get("eleccion")
+        sufijo = f" [elegida en calibración: {el['elegida']}]" if el else ""
+        print(f"{n}: {veredicto_txt(c)}{sufijo}")
         for r in c["reglas"]:
-            print(f"   [{pasa_txt(r['pasa'])}] {r['regla']}: {r['valor']}")
+            print(f"   [{pasa_txt(r['pasa'])}{', informativo' if c.get('informativa') else ''}] {r['regla']}: {r['valor']}")
+        for etiqueta, seg in c.get("info_regla1") or []:
+            print(f"   [informativo] {etiqueta}: {_fmt(seg.get('dif_pp'))} pp ({seg.get('dias', 0)} d)")
     for n, m in corredor.saltadas.items():
         print(f"SALTADA {n}: {m}")
     print(f"Días VF descartados (fecha <= corte): {sum(descartes_vf.values())}")

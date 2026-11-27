@@ -395,7 +395,8 @@ def test_main_sintetico(tmp_path, hist):
                               **{p: float(x) for p, x in zip(PER, curva)}})
     pd.DataFrame(filas).to_csv(tmp_path / "env.csv", index=False)
     rc = bmj.main(["--historico", str(tmp_path / "hist.csv"), "--festivos", str(tmp_path / "fest.csv"),
-                   "--envios", str(tmp_path / "env.csv"), "--desde", "2025-11-17", "--muestra-informativa",
+                   "--envios", str(tmp_path / "env.csv"), "--conjunto", "festivos_r1",
+                   "--desde", "2025-11-17", "--muestra-informativa",
                    "--desde-informativa", "2025-11-03", "--desde-ampliada", "2025-10-01", "--n-control", "1",
                    "--fecha", "20990101", "--salida", str(tmp_path), "--salida-detalle", str(tmp_path / "det")])
     assert rc == 0
@@ -415,3 +416,117 @@ def test_main_sintetico(tmp_path, hist):
     assert {"jamer_envio", "jamer"} <= set(p1["serie"])
     # jamer_envio en VF = real * 1.02 → error de energía del día ≈ +2 %
     assert p1[(p1["serie"] == "jamer_envio") & (p1["momento"] == "VF")]["err_dia"].mean() == pytest.approx(2.0, abs=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# factor post-festivo: conjuntos, segmento, elección de variante
+# ---------------------------------------------------------------------------
+
+def test_conjuntos_de_configs():
+    assert bmj.CONFIGS is bmj.CONJUNTOS["post_festivo"]
+    pf = {c.nombre: c for c in bmj.CONJUNTOS["post_festivo"]}
+    assert set(pf) == {"jamer", "jamer+pf_homologo", "jamer+pf_recientes", "jamer+pf_combinado"}
+    assert pf["jamer"].extra == {}  # base = perfil jamer actual (trae festivo_por_tipo)
+    for fuente in ("homologo", "recientes", "combinado"):
+        c = pf[f"jamer+pf_{fuente}"]
+        assert c.segmento == "post_festivo" and c.grupo == "post_festivo"
+        esperado = {"post_festivo_factor": True, "post_festivo_fuente": fuente}
+        assert c.extra == {"nivel": esperado, "forma": esperado}
+    # festivos_r1 reproduce esa fase: la base y todas sus configs sin festivo_por_tipo salvo las que lo prueban
+    fr = {c.nombre: c for c in bmj.CONJUNTOS["festivos_r1"]}
+    assert fr["jamer"].extra["nivel"] == {"festivo_por_tipo": False} == fr["jamer"].extra["forma"]
+    assert fr["jamer+r1_limpia"].extra["nivel"] == {"festivo_por_tipo": False, "r1_limpia": True}
+    assert fr["jamer+festivo_por_tipo"].extra["forma"]["festivo_por_tipo"] is True
+
+
+def _df_post_festivo():
+    """Parte 2 sintética con post-festivos en 2023 y 2025 para jamer y las 3 variantes (+ un día normal)."""
+    mape = {  # serie -> (2023-11-07, 2024-11-05, 2025-11-04, normal 2023-11-14)
+        "jamer": (5.0, 5.0, 5.0, 2.0),
+        "jamer+pf_homologo": (4.0, 4.4, 4.5, 9.0),
+        "jamer+pf_recientes": (4.5, 4.5, 3.0, 9.0),
+        "jamer+pf_combinado": (4.2, 4.2, 5.5, 9.0),
+    }
+    filas = []
+    for serie, vals in mape.items():
+        for (fecha, pf), v in zip((("2023-11-07", True), ("2024-11-05", True), ("2025-11-04", True),
+                                   ("2023-11-14", False)), vals):
+            filas.append({"parte": 2, "lunes": fecha, "momento": "martes", "fecha": fecha, "tipo_dia": "laboral",
+                          "tipo_festivo": None, "post_festivo": pf, "serie": serie, "mape_h": v,
+                          "r1": "x", "r1_jamer": "x"})
+    return pd.DataFrame(filas)
+
+
+def test_segmento_post_festivo_y_partes_regla1():
+    df = _df_post_festivo()
+    seg = bmj.comparar_segmento(df, "post_festivo", "jamer+pf_homologo")
+    assert seg["dias"] == 3 and seg["dif_pp"] == pytest.approx((4.0 + 4.4 + 4.5) / 3 - 5.0)
+    cfg = next(c for c in bmj.CONFIGS if c.nombre == "jamer+pf_homologo")
+    partes = bmj.partes_regla1(cfg, df, pd.DataFrame())
+    assert [e for e, _ in partes] == ["post-festivos 2022-2024 (ampliada, calibración)",
+                                      "post-festivos 2025-2026 (ampliada, prueba)"]
+    (_, cal), (_, pru) = partes
+    assert cal["dias"] == 2 and cal["dif_pp"] == pytest.approx(-0.8)  # el día normal no cuenta
+    assert pru["dias"] == 1 and pru["dif_pp"] == pytest.approx(-0.5)
+    info = bmj.info_regla1(cfg, pd.DataFrame())
+    assert info[0][0] == "post-festivos prueba parte 1 (VF, informativo)" and info[0][1]["dias"] == 0
+
+
+def test_elegir_variante_solo_con_calibracion():
+    df = _df_post_festivo()
+    variantes = [c for c in bmj.CONFIGS if c.grupo == "post_festivo"]
+    elegida, medias = bmj.elegir_variante(df, variantes)
+    # calibración 2023-2024: homologo 4.2, recientes 4.5, combinado 4.2 → empate, gana la primera (homologo);
+    # recientes es la mejor en 2025 (prueba) pero la prueba no elige
+    assert elegida == "jamer+pf_homologo"
+    assert medias["jamer+pf_recientes"] == {"dias": 2, "mape_h": pytest.approx(4.5)}
+    assert bmj.elegir_variante(df[pd.to_datetime(df["fecha"]).dt.year == 2025], variantes)[0] is None
+    assert bmj.elegir_variante(pd.DataFrame(), variantes)[0] is None
+
+
+def test_evaluar_criterios_solo_la_elegida_tiene_veredicto():
+    p2 = _df_post_festivo()
+    crit = bmj.evaluar_criterios(pd.DataFrame(columns=["serie", "momento", "tramo"]), p2, bmj.CONFIGS, 7)
+    assert set(crit) == {"jamer+pf_homologo", "jamer+pf_recientes", "jamer+pf_combinado"}
+    assert crit["jamer+pf_homologo"]["informativa"] is False and crit["jamer+pf_homologo"]["pasa"] is False
+    for n in ("jamer+pf_recientes", "jamer+pf_combinado"):
+        assert crit[n]["informativa"] is True and crit[n]["pasa"] is None
+        assert "informativa" in bmj.veredicto_txt(crit[n])
+    assert {c["eleccion"]["elegida"] for c in crit.values()} == {"jamer+pf_homologo"}
+    md = "".join(bmj.md_criterios(crit, {}))
+    assert "Elección de variante" in md and "**sí**" in md and "informativo (no decide)" in md
+    assert "Factor post-festivo" in md
+    # sin datos de calibración: ninguna variante recibe veredicto
+    sin_cal = bmj.evaluar_criterios(pd.DataFrame(columns=["serie", "momento", "tramo"]),
+                                    p2[pd.to_datetime(p2["fecha"]).dt.year == 2025], bmj.CONFIGS, 7)
+    assert all(c["informativa"] and c["pasa"] is None for c in sin_cal.values())
+    assert "Sin datos de calibración" in "".join(bmj.md_criterios(sin_cal, {}))
+
+
+def test_semanas_ampliadas_incluye_semanas_con_post_festivo(reales, festivos):
+    a = bmj.semanas_ampliadas(reales, festivos, date(2025, 1, 1), n_control=5, semilla=3)
+    idx = a.set_index("lunes")
+    # dom 20/jul/2025 festivo → lun 21/jul post-festivo: semana sin festivos que entra solo por la bandera
+    assert idx.loc[date(2025, 7, 21), "post_festivo"] and not idx.loc[date(2025, 7, 21), "festivo"]
+    assert idx.loc[date(2025, 11, 3), "post_festivo"]
+    assert not (a["control"] & a["post_festivo"]).any()
+
+
+def test_main_sintetico_post_festivo(tmp_path, hist):
+    h = hist.copy()
+    h["FECHA"] = h["fecha"].dt.strftime("%Y-%m-%d")
+    h[["FECHA", *PER]].to_csv(tmp_path / "hist.csv", index=False)
+    pd.DataFrame({"fecha": data.festivos_colombia(range(2023, 2027)), "nombre": ""}).to_csv(
+        tmp_path / "fest.csv", index=False)
+    rc = bmj.main(["--historico", str(tmp_path / "hist.csv"), "--festivos", str(tmp_path / "fest.csv"),
+                   "--partes", "2", "--desde-ampliada", "2025-10-27", "--n-control", "0", "--fecha", "20990102",
+                   "--salida", str(tmp_path), "--salida-detalle", str(tmp_path / "det")])
+    assert rc == 0
+    md = (tmp_path / "backtest_mesa_vs_jamer_20990102.md").read_text(encoding="utf-8")
+    assert "--conjunto post_festivo" in md and "Factor post-festivo" in md
+    assert "`jamer+pf_combinado`" in md and "post-festivos" in md
+    assert "solo contienen festivos lunes" not in md
+    det = pd.read_csv(tmp_path / "det" / "backtest_mesa_vs_jamer_20990102_detalle.csv")
+    assert {"jamer", "jamer+pf_homologo", "jamer+pf_recientes", "jamer+pf_combinado"} == set(det["serie"])
+    assert det.loc[det["fecha"] == "2025-11-04", "post_festivo"].all()
+    assert det["sem_post_festivo"].any()

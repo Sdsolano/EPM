@@ -182,7 +182,8 @@ def test_festivo_lunes_no_busca_homologo():
 
 
 def test_motivos_son_codigos_con_texto_completo():
-    codigos = {v for k, v in vars(rr).items() if k.startswith("MOTIVO_")}
+    # los MOTIVO_PF_* son de POST_FESTIVO_SIN_FACTOR (tests/test_adjustments_post_festivo.py)
+    codigos = {v for k, v in vars(rr).items() if k.startswith("MOTIVO_") and not k.startswith("MOTIVO_PF_")}
     assert codigos == set(rr.TEXTO_MOTIVO_SIN_HOMOLOGO)
     assert all(re.fullmatch(r"[a-z_]+", c) for c in codigos)
     assert set(rr.info_festivo("fijo")) == {"tipo_festivo", "homologo", "normal_homologo", "E_homologo",

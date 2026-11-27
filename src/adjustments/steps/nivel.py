@@ -59,6 +59,10 @@ Modo "reciente" (réplica de Jamer, PLAN_IMPL §2.2; opt-in, default `modo="alph
   festivo por tipo aplicado, E_obj(d) = ΣR1·(1+g)·F (R1 normal, F = E(H)/E(N_H)) y `dias[f]` suma
   `RecientesDia.diag_festivo()` (tipo_festivo, homologo, normal_homologo, factor_festivo, homologo_anios_probados;
   regla `reciente_factor_festivo`).
+- `post_festivo_factor` / `post_festivo_fuente` (default off/"combinado"; ver `seleccionar_recientes`): con el factor
+  post-festivo aplicado, E_obj(d) = ΣR1·(1+g)·F_pf (R1 normal, F_pf = mediana de E(pf)/E(N)) y `dias[f]` suma
+  `RecientesDia.diag_post_festivo()` (post_festivo_fuente, post_festivo_pares, post_festivo_ratios,
+  factor_post_festivo, post_festivo_descartados; regla `reciente_factor_post_festivo`).
 - Diagnósticos: `dias[f]` (claves viejas + `r1`, `r1_extra`, `saltados`, `clase`, `g_raw`,
   `g_usado`, `acotado`, `E_obj`, `E`), `crecimiento` (Y, ventana, n_pares, fuente_g, fallback)
   y `referencias[f]` (R1, R1 extra, R2 = d−desfase, R3 = R1−364, con curvas de 24).
@@ -374,7 +378,8 @@ def _step_reciente(ctx: RunContext, prev: Curves, p: Dict[str, Any]) -> StepResu
             g_max=pr["g_max"], s_sem=s_sem, fecha=f,
         )
         alertas_dia.extend(rg.alertas)
-        factor = sel.factor_festivo  # festivo por tipo: R1 es un día normal y F lleva la relación festivo/normal
+        # festivo por tipo / post-festivo: R1 es un día normal y F lleva la relación festivo (o post-festivo)/normal
+        factor = sel.factor_festivo if sel.factor_festivo is not None else sel.factor_post_festivo
         e_obj = e_r1 * (1.0 + rg.g_usado) * (factor if factor is not None else 1.0)
         e_final = (1.0 - w) * e_obj + w * e_base
         if e_base > 0:
@@ -400,6 +405,10 @@ def _step_reciente(ctx: RunContext, prev: Curves, p: Dict[str, Any]) -> StepResu
             por_dia[f].update(sel.diag_festivo())
             if factor is not None:
                 por_dia[f]["regla"] = "reciente_factor_festivo"
+        if sel.post_festivo is not None:
+            por_dia[f].update(sel.diag_post_festivo())
+            if sel.factor_post_festivo is not None:
+                por_dia[f]["regla"] = "reciente_factor_post_festivo"
         referencias[f] = {
             "r1": {"fecha": iso(r1), "curva": _curva_lista(curvas, r1)},
             "r1_extra": [{"fecha": iso(x), "curva": _curva_lista(curvas, x)} for x in sel.fechas[1:]],
