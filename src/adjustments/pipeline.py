@@ -33,6 +33,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Union
 import pandas as pd
 
 from src.adjustments import automatico, data
+from src.adjustments.referencia_reciente import ALERTA_SIN_MISMA_CLASE, unir_alertas
 from src.adjustments.steps import _params, base, control, especiales, forma, nivel, referencia
 from src.adjustments.types import (
     Alert,
@@ -277,12 +278,22 @@ def _calcular(
             energia_esperada=_energia_esperada(previos),
             energia_nivel=energia_nivel,
             nivel_dias=_nivel_dias(previos),
+            referencias=_nivel_diag(previos, "referencias"),
         )
         result.diagnostics["semana_inicio"] = data.iso(ctx.semana_inicio)
         result.diagnostics["origen_energia_nivel"] = origen
         return result
     if paso == "especiales":
         return especiales.step(ctx, prev, p, fechas_editadas=_fechas_editadas_previas(previos))
+    if paso == "forma":
+        dias_nivel = _nivel_dias(previos) or {}
+        energia_base = {
+            f: float(info["E_base"]) for f, info in dias_nivel.items()
+            if isinstance(info, dict) and info.get("E_base") is not None
+        }
+        result = forma.step(ctx, prev, p, energia_base=energia_base or None)
+        _sin_alertas_ya_emitidas_por_nivel(result, previos)
+        return result
     return _MODULOS[paso].step(ctx, prev, p)
 
 
@@ -362,16 +373,55 @@ def _aplicar_referencia(ctx: RunContext, diagnostics: Optional[Dict[str, Any]]) 
         ctx.extras.pop("anios_excluidos", None)
 
 
+_ALERTAS_R1_COMPARTIDAS = (ALERTA_SIN_MISMA_CLASE,)
+
+
+def _sin_alertas_ya_emitidas_por_nivel(result: StepResult, previos: List[StepRecord]) -> None:
+    """
+    Nivel y forma eligen R1 con la misma regla y emiten la misma alerta (`R1_SIN_MISMA_CLASE`): se muestra
+    una vez (la de nivel); forma solo conserva los días que nivel no reportó.
+    """
+    nivel_rec = {r.paso: r for r in previos}.get("nivel")
+    if nivel_rec is None or nivel_rec.estado == StepState.OMITIDO:
+        return
+    ya = {(a.codigo, str(f)[:10]) for a in nivel_rec.result.alerts for f in a.fechas}
+    nuevas: List[Alert] = []
+    for a in result.alerts:
+        if a.codigo not in _ALERTAS_R1_COMPARTIDAS:
+            nuevas.append(a)
+            continue
+        fechas = [f for f in a.fechas if (a.codigo, str(f)[:10]) not in ya]
+        if not fechas:
+            continue
+        por_fecha = (a.detalle or {}).get("por_fecha")
+        if isinstance(por_fecha, dict) and all(isinstance(por_fecha.get(f), dict) for f in fechas):
+            # se re-unen solo los días que quedan: el mensaje (y su conteo) refleja lo que se muestra
+            por_dia = [
+                Alert(a.nivel, a.codigo, por_fecha[f].get("mensaje", a.mensaje), [f],
+                      {k: v for k, v in por_fecha[f].items() if k != "mensaje"})
+                for f in fechas
+            ]
+            nuevas.extend(unir_alertas(por_dia))
+        else:
+            nuevas.append(replace(a, fechas=fechas))
+    result.alerts = nuevas
+
+
+def _nivel_diag(previos: List[StepRecord], clave: str) -> Any:
+    """Entrada `clave` de los diagnostics del paso nivel; None si nivel no corrió o se omitió."""
+    por_paso = {r.paso: r for r in previos}
+    record = por_paso.get("nivel")
+    if record is None or record.estado == StepState.OMITIDO:
+        return None
+    return record.result.diagnostics.get(clave)
+
+
 def _nivel_dias(previos: List[StepRecord]) -> Optional[Dict[str, Dict[str, Any]]]:
     """
     E*(d) y E_base(d) por día que calculó el paso nivel (para la tendencia
     esperada del control). None si nivel se omitió: el control recalcula E*.
     """
-    por_paso = {r.paso: r for r in previos}
-    record = por_paso.get("nivel")
-    if record is None or record.estado == StepState.OMITIDO:
-        return None
-    return record.result.diagnostics.get("dias")
+    return _nivel_diag(previos, "dias")
 
 
 def _energia_calculada(record: StepRecord) -> Dict[str, float]:

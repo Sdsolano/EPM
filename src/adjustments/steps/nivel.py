@@ -47,23 +47,39 @@ Ancla por días análogos (Fase 2b, R3; lógica en `steps/_analogos.py`):
   `ancla="actual"` se aceptan (validados) pero no cambian nada; con su default
   no se guardan en los params del record. `evidencias(ctx)` (la que usa el
   control si nivel se omite) no cambia.
+
+Modo "reciente" (réplica de Jamer, PLAN_IMPL §2.2; opt-in, default `modo="alpha"` = todo lo anterior):
+- R1(d) = último día real <= corte con mismo día de semana y misma clase de día
+  (`referencia_reciente.seleccionar_recientes`); lag = d − R1.
+- g = clip(g_k · g_raw, g_min, g_max), con g_raw dinámico a partir del crecimiento interanual
+  reciente Y (`crecimiento.calcular_g`) o fijo.
+- E_obj(d) = ΣR1 · (1+g); E(d) = (1−w)·E_obj + w·E_base con w = `peso_modelo`
+  (w=0 réplica pura). La curva previa se escala a E(d) (la forma/delta plano es de `forma`).
+- Diagnósticos: `dias[f]` (claves viejas + `r1`, `r1_extra`, `saltados`, `clase`, `g_raw`,
+  `g_usado`, `acotado`, `E_obj`, `E`), `crecimiento` (Y, ventana, n_pares, fuente_g, fallback)
+  y `referencias[f]` (R1, R1 extra, R2 = d−desfase, R3 = R1−364, con curvas de 24).
 """
 
 from __future__ import annotations
 
+import math
 from datetime import date, timedelta
 from typing import Any, Dict, List, Optional, Set
 
 import numpy as np
 
+from src.adjustments import crecimiento as _crec
+from src.adjustments import referencia_reciente as _rr
 from src.adjustments.data import (
     ANIOS_EXCLUIDOS_DEFAULT,
     ancla_mismo_dow,
+    curvas_reales,
     dias_semana,
     TIPO_DOMINGO,
     TIPO_FESTIVO,
     TIPO_LABORAL,
     TIPO_SABADO,
+    energia_curva,
     energia_diaria,
     iso,
     tipo_dia,
@@ -73,6 +89,14 @@ from src.adjustments.types import Alert, Curves, RunContext, StepResult, validar
 from src.prediction.holiday_homology import find_homologous_holiday_date
 
 DEFAULTS: Dict[str, Any] = {"alpha": 0.25}
+MODOS = ("alpha", "reciente")
+# Params del modo reciente: NO van en DEFAULTS (si valen su default no se persisten).
+DEFAULTS_RECIENTE: Dict[str, Any] = {
+    "modo": "alpha",
+    "peso_modelo": 0.0,
+    "saltar_puente": False,
+    **_crec.DEFAULTS_G,
+}
 MAX_SEMANAS_EXTRA_ANCLA = 6
 DESPLAZAMIENTOS_REF = (0, -7, 7, -14, 14)
 
@@ -91,13 +115,36 @@ def validar_params(params: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     por_tipo = params.get("alpha_por_tipo") if isinstance(params, dict) else None
     if isinstance(params, dict) and "alpha_por_tipo" in params:
         params = {k: v for k, v in params.items() if k != "alpha_por_tipo"}
+    params, extra_reciente = _separar_reciente(params)
     params, extra_analogos = _analogos.separar("nivel", params, _analogos.DEFAULTS_NIVEL)
     p = _params.completar("nivel", DEFAULTS, params)
     p["alpha"] = _params.numero("nivel", "alpha", p["alpha"], minimo=0.0, maximo=1.0)
     p.update(extra_analogos)
+    p.update(extra_reciente)
     if por_tipo is not None:
         p["alpha_por_tipo"] = _validar_alpha_por_tipo(por_tipo)
     return p
+
+
+def _separar_reciente(params: Any):
+    """
+    Separa y valida los params del modo reciente → (resto, validados). Con `modo="alpha"` solo se devuelven los
+    que difieren del default (comportamiento de siempre). Con `modo="reciente"` se devuelven TODOS: así los
+    valores efectivos (g_k, g_min, g_max, g_fijo, ventana, peso...) quedan en `steps[].params` y recalcular
+    (PATCH) no cambia si después se recalibran los defaults del código.
+    """
+    if not isinstance(params, dict):
+        return params, {}
+    resto = {k: v for k, v in params.items() if k not in DEFAULTS_RECIENTE}
+    p = {**DEFAULTS_RECIENTE, **{k: v for k, v in params.items() if k in DEFAULTS_RECIENTE}}
+    out: Dict[str, Any] = {}
+    out["modo"] = _params.opcion("nivel", "modo", p["modo"], MODOS)
+    out["peso_modelo"] = _params.numero("nivel", "peso_modelo", p["peso_modelo"], minimo=0.0, maximo=1.0)
+    out["saltar_puente"] = _params.booleano("nivel", "saltar_puente", p["saltar_puente"])
+    out.update(_crec.validar_params_g({k: p[k] for k in _crec.DEFAULTS_G}, "nivel"))
+    if out["modo"] == "reciente":
+        return resto, out
+    return resto, {k: v for k, v in out.items() if v != DEFAULTS_RECIENTE[k]}
 
 
 def _validar_alpha_por_tipo(v: Any) -> Dict[str, float]:
@@ -204,8 +251,201 @@ def evidencias(ctx: RunContext) -> Dict[str, Optional[Dict[str, Any]]]:
     }
 
 
+def _curva_lista(curvas: Dict[str, Any], d: Optional[date]) -> Optional[List[float]]:
+    if d is None or iso(d) not in curvas:
+        return None
+    return [float(x) for x in np.asarray(curvas[iso(d)], dtype=float)]
+
+
+def _e(curvas: Dict[str, Any], d: Optional[date]) -> Optional[float]:
+    """Energía de la curva real del día `d` (None si no hay o no es válida)."""
+    return None if d is None else energia_curva(curvas.get(iso(d)))
+
+
+def _ref2(d: date, ctx: RunContext, festivos: Set[str], curvas: Dict[str, Any]) -> Optional[date]:
+    """R2 (`referencia_reciente.fecha_r2`; sin semana de referencia, d − 364) si tiene curva real."""
+    r2 = _rr.fecha_r2(d, ctx.semana_inicio, ctx.semana_ref_inicio, festivos, anual_si_falta=True)
+    return r2 if iso(r2) in curvas else None
+
+
+VENTANA_G_CORTO = 14
+
+
+def _ventana_g(fuente: str, g_ventana_dias: int, g_min_pares: int) -> tuple:
+    """
+    (ventana, mínimo de pares) con que se calcula Y. `interanual_corto` usa una ventana fija de 14 días y
+    escala el mínimo de pares en proporción (con los defaults, 14 pares de 28 días → 7 de 14); si no, la
+    ventana corta casi nunca reuniría los pares y caería siempre a g fijo.
+    """
+    if fuente != "interanual_corto":
+        return g_ventana_dias, g_min_pares
+    return VENTANA_G_CORTO, max(1, math.ceil(g_min_pares * VENTANA_G_CORTO / g_ventana_dias))
+
+
+def _step_reciente(ctx: RunContext, prev: Curves, p: Dict[str, Any]) -> StepResult:
+    pr = {**DEFAULTS_RECIENTE, **p}
+    w = pr["peso_modelo"]
+    festivos = set(ctx.festivos)
+    curvas = curvas_reales(ctx.historico)
+    fuente = pr["g_fuente"]
+    ventana, min_pares = _ventana_g(fuente, pr["g_ventana_dias"], pr["g_min_pares"])
+    crec = _crec.crecimiento_interanual(
+        curvas, ctx.fecha_corte, festivos, ventana_dias=ventana, min_pares=min_pares
+    )
+    # desfase de R2, calculado una sola vez con la misma definición que `fecha_r2` (sin referencia o 0 → 364)
+    desfase = _rr.desfase_r2(ctx.semana_inicio, ctx.semana_ref_inicio, anual_si_falta=True)
+
+    curves: Curves = {f: list(v) for f, v in prev.items()}
+    por_dia: Dict[str, Any] = {}
+    referencias: Dict[str, Any] = {}
+    sin_evidencia: List[str] = []
+    base_nula: List[str] = []
+    alertas_dia: List[Alert] = []
+    dias = dias_semana(ctx.semana_inicio)
+    r2_por_dia = {iso(d): _ref2(d, ctx, festivos, curvas) for d in dias}
+    seleccion: Dict[str, Any] = {}  # R1 por día, calculado una sola vez (estacional + bucle principal)
+
+    def _sel(d: date):
+        f_ = iso(d)
+        if f_ not in seleccion:
+            seleccion[f_] = _rr.seleccionar_recientes(
+                d, curvas, ctx.fecha_corte, festivos, n=2, saltar_puente=pr["saltar_puente"]
+            )
+        return seleccion[f_]
+
+    s_sem = None
+    if fuente == "interanual_estacional":
+        # factor estacional de la semana: ΣE(R2) / ΣE(R3) (R3 = R1 − 364), solo si están los 7 días
+        e2 = e3 = 0.0
+        for dd in dias:
+            sd = _sel(dd).fechas
+            a = _e(curvas, r2_por_dia[iso(dd)])
+            b = _e(curvas, _rr.fecha_r3(sd[0])) if sd else None
+            if a is None or not b:
+                e2 = e3 = 0.0
+                break
+            e2 += a
+            e3 += b
+        s_sem = e2 / e3 if e3 > 0 else None
+
+    for d in dias:
+        f = iso(d)
+        if f not in prev or validar_curva(prev[f]) is not None:
+            continue
+        curva = np.asarray(prev[f], dtype=float)
+        e_base = float(curva.sum())
+        sel = _sel(d)
+        alertas_dia.extend(sel.alertas)
+        r2 = r2_por_dia[f]
+        base_dia = {
+            "modo": "reciente",
+            "E_base": e_base,
+            "clase": sel.clase,
+            "saltados": sel.saltados,
+            "peso_modelo": w,
+        }
+        if not sel.fechas:
+            sin_evidencia.append(f)
+            por_dia[f] = {
+                **base_dia, "E_objetivo": None, "E_obj": None, "E_final": e_base, "E": e_base,
+                "ratio": None, "alpha": 0.0, "ancla": None, "ancla_ref": None,
+                "dia_ref": iso(r2) if r2 else None, "lag_dias": None, "regla": "sin_evidencia",
+                "r1": None, "r1_extra": [], "g_raw": None, "g_usado": None, "acotado": False,
+            }
+            referencias[f] = {"r1": None, "r1_extra": [], "r2": None, "r3": None}
+            continue
+
+        r1 = sel.fechas[0]
+        lag = (d - r1).days
+        e_r1 = _e(curvas, r1)
+        r3 = _rr.fecha_r3(r1)
+        r3 = r3 if iso(r3) in curvas else None
+        efectiva = fuente
+        if fuente == "interanual_estacional" and s_sem is None:
+            efectiva = "interanual"
+        rg = _crec.calcular_g(
+            crec.Y, lag, fuente=efectiva, g_fijo=pr["g_fijo"], g_k=pr["g_k"], g_min=pr["g_min"],
+            g_max=pr["g_max"], s_sem=s_sem, fecha=f,
+        )
+        alertas_dia.extend(rg.alertas)
+        e_obj = e_r1 * (1.0 + rg.g_usado)
+        e_final = (1.0 - w) * e_obj + w * e_base
+        if e_base > 0:
+            curves[f] = (curva * (e_final / e_base)).tolist()
+        else:
+            base_nula.append(f)
+            e_final = e_base
+
+        e2d, e3d = _e(curvas, r2), _e(curvas, r3)
+        por_dia[f] = {
+            **base_dia,
+            "E_objetivo": e_obj, "E_obj": e_obj, "E_final": e_final, "E": e_final,
+            "ratio": (e2d / e3d) if e2d is not None and e3d else None,
+            "alpha": 1.0 - w,
+            "ancla": iso(r1), "ancla_ref": iso(r3) if r3 else None,
+            "dia_ref": iso(r2) if r2 else None, "lag_dias": lag, "regla": "reciente",
+            "r1": {"fecha": iso(r1), "energia": e_r1},
+            "r1_extra": [{"fecha": iso(x), "energia": _e(curvas, x)} for x in sel.fechas[1:]],
+            "g_raw": rg.g_raw, "g_usado": rg.g_usado, "acotado": rg.acotado,
+            "g_fuente": efectiva,
+        }
+        referencias[f] = {
+            "r1": {"fecha": iso(r1), "curva": _curva_lista(curvas, r1)},
+            "r1_extra": [{"fecha": iso(x), "curva": _curva_lista(curvas, x)} for x in sel.fechas[1:]],
+            "r2": {"fecha": iso(r2), "curva": _curva_lista(curvas, r2)} if r2 else None,
+            "r3": {"fecha": iso(r3), "curva": _curva_lista(curvas, r3)} if r3 else None,
+        }
+
+    alerts: List[Alert] = []
+    if sin_evidencia:
+        alerts.append(
+            Alert(
+                nivel="warning",
+                codigo="SIN_EVIDENCIA_NIVEL",
+                mensaje="Sin día real reciente de referencia; se conserva la energía del paso anterior",
+                fechas=sin_evidencia,
+                detalle={"modo": "reciente"},
+            )
+        )
+    if base_nula:
+        alerts.append(
+            Alert(
+                nivel="warning",
+                codigo="CURVA_BASE_NULA",
+                mensaje="La curva previa suma 0; no se puede escalar al nuevo nivel",
+                fechas=base_nula,
+            )
+        )
+    alerts.extend(_rr.unir_alertas(alertas_dia))
+    if p.get("ancla", "actual") != "actual":
+        alerts.append(
+            Alert(
+                nivel="info",
+                codigo="ANCLA_IGNORADA_MODO_RECIENTE",
+                mensaje="El modo reciente no usa ancla por días análogos: el param `ancla` se ignora.",
+                fechas=[],
+                detalle={"ancla": p["ancla"]},
+            )
+        )
+
+    diagnostics = {
+        "modo": "reciente",
+        "alpha": 1.0 - w,
+        "peso_modelo": w,
+        "semana_ref_inicio": iso(ctx.semana_ref_inicio) if ctx.semana_ref_inicio else None,
+        "desfase_dias": desfase,
+        "anios_excluidos": sorted(anios_excluidos(ctx)),
+        "dias": por_dia,
+        "crecimiento": {**crec.to_dict(), "fuente_g": fuente},
+        "referencias": referencias,
+    }
+    return StepResult(curves=curves, diagnostics=diagnostics, alerts=alerts)
+
+
 def step(ctx: RunContext, prev: Curves, params: Dict[str, Any]) -> StepResult:
     p = validar_params(params)
+    if p.get("modo", "alpha") == "reciente":
+        return _step_reciente(ctx, prev, p)
     alpha = p["alpha"]
     alpha_por_tipo = p.get("alpha_por_tipo")
     festivos_set = set(ctx.festivos) if alpha_por_tipo is not None else set()

@@ -321,9 +321,11 @@ def _clima_semana(fechas, **cambios):
     clima = {}
     for i in range(120):
         f = iso(base + timedelta(days=i))
-        clima[f] = {"temp_media": 20.0, "lluvia_mm": 0.0, "humedad_media": 70.0}
+        clima[f] = {"temp_media": 20.0, "lluvia_periodos": 0, "periodos_conocidos": 24, "frac_lluvia": 0.0,
+                    "con_lluvia": False, "calidad_lluvia": "suficiente", "humedad_media": 70.0}
     for f in fechas:
-        clima[f] = {"temp_media": 20.0, "lluvia_mm": 0.0, "humedad_media": 70.0}
+        clima[f] = {"temp_media": 20.0, "lluvia_periodos": 0, "periodos_conocidos": 24, "frac_lluvia": 0.0,
+                    "con_lluvia": False, "calidad_lluvia": "suficiente", "humedad_media": 70.0}
     clima.update(cambios)
     return clima
 
@@ -338,21 +340,26 @@ def test_control_clima_observado_info(monkeypatch):
     alerta = next(a for a in res.alerts if a.codigo == "CLIMA_OBSERVADO")
     assert alerta.nivel == "info"
     assert alerta.detalle["temp_media"] == 20.0
-    assert alerta.detalle["lluvia_mm"] == 0.0
+    assert alerta.detalle["lluvia_periodos"] == 0
+    assert "lluvia_mm" not in alerta.detalle and "0 periodos con lluvia" in alerta.mensaje
 
 
 def test_control_clima_extremo_es_warning(monkeypatch):
     ctx = _ctx()
     prev = _curvas(ctx)
     fechas = [iso(d) for d in dias_semana(ctx.semana_inicio)]
-    clima = _clima_semana(fechas, **{fechas[2]: {"temp_media": 20.0, "lluvia_mm": 50.0,
+    clima = _clima_semana(fechas, **{fechas[2]: {"temp_media": 20.0, "lluvia_periodos": 20,
+                                                "periodos_conocidos": 24, "frac_lluvia": 20 / 24,
+                                                "con_lluvia": True, "calidad_lluvia": "suficiente",
                                                 "humedad_media": 70.0}})
     monkeypatch.setattr(analogos, "cargar_clima", lambda ucp, *a, **k: clima)
 
     res = control.step(ctx, prev, {"banda_referencia_pp": None}, energia_nivel=_energia(prev))
     alerta = next(a for a in res.alerts if a.codigo == "CLIMA_OBSERVADO")
     assert alerta.nivel == "warning"
-    assert alerta.detalle["lluvia_max_diaria_mm"] == 50.0
+    assert alerta.detalle["lluvia_frac_max_diaria"] == pytest.approx(20 / 24)
+    assert alerta.detalle["lluvia_periodos"] == 20 and alerta.detalle["p90_lluvia_frac"] == 0.0
+    assert " mm" not in alerta.mensaje
     assert res.curves == prev
 
 

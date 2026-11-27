@@ -94,12 +94,6 @@ _RE_ELECCIONES = re.compile(
 )
 
 
-def _booleano(paso: str, clave: str, v: Any) -> bool:
-    if not isinstance(v, (bool, np.bool_)):
-        raise ValueError(f"{paso}.{clave} debe ser true o false, llegó {_params._corto(v)}")
-    return bool(v)
-
-
 def validar_params(params: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """
     aplicar: bool. alpha: número finito en [0, 1]. ancla: "actual" | "analogos".
@@ -108,7 +102,7 @@ def validar_params(params: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """
     resto, extra_analogos = _analogos.separar("especiales", params, _DEFAULTS_ANALOGOS)
     p = _params.completar("especiales", DEFAULTS, resto)
-    p["aplicar"] = _booleano("especiales", "aplicar", p["aplicar"])
+    p["aplicar"] = _params.booleano("especiales", "aplicar", p["aplicar"])
     p["alpha"] = _params.numero("especiales", "alpha", p["alpha"], minimo=0.0, maximo=1.0)
     p.update(extra_analogos)
     return p

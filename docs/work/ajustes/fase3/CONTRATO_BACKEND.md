@@ -42,9 +42,10 @@ análogos: contrato fijo en `docs/work/ajustes/PLAN_NOCHE.md`). Copia de este do
 | PATCH | `corridas/{id}/pasos/{paso}` | `PATCH /adjustments/{id}/steps/{paso}` | pone `usuario` |
 | POST | `corridas/{id}/aprobar` | `POST /adjustments/{id}/approve` | pone `usuario` |
 | POST | `analogos` | `POST /adjustments/analogos` | contrato PLAN_NOCHE |
+| GET | `acumulado-anual?ucp=&anio=&banda_pct=&cupo=&hasta=` | `GET /adjustments/acumulado-anual` | solo lectura; 503 sin persistencia |
 
 `{id}` es el UUID de la corrida (validar formato antes de reenviar). `{paso}` ∈
-`base | referencia | nivel | forma | control` (validar antes de reenviar; si no, 422 local).
+`base | referencia | nivel | forma | especiales | control` (6 pasos; validar antes de reenviar; si no, 422 local).
 
 ### GET `ucps`
 Response `data`: `[{ "ucp": "Antioquia", "nombre": "Antioquia" }, { "ucp": "Atlantico", "nombre": "Atlántico" }]`.
@@ -71,8 +72,10 @@ Request (= `RunRequest` de EPM sin `usuario`):
 ```json
 { "ucp": "Antioquia", "semana_inicio": "2026-11-16",
   "params": { "nivel": { "alpha": 0.25 } },
+  "perfil": null,
   "base_curvas": null, "base_ref": null, "fecha_emision": null, "modelo_version": null }
 ```
+- `perfil` (opcional): `"jamer"` | `"jamer_modelo"`; cualquier otro valor → 422. Ver "Perfiles" abajo.
 - `semana_inicio` lunes; `params` por nombre de paso (opcional). Con `base_curvas` no se refresca ni se
   llama al modelo. `fecha_emision`/`modelo_version` solo junto con `base_curvas` (si no, 422).
 Response `data` (= `RunOut`):
@@ -81,7 +84,7 @@ Response `data` (= `RunOut`):
   "meta": { "ucp": "...", "semana_inicio": "...", "fecha_corte": "...", "fecha_emision": "...",
             "modelo_version": "...", "params_iniciales": {}, "estado": "borrador|aprobada|reemplazada|preview",
             "creado_por": "...", "extras": { "fuente_base": "modelo|externa", "fuente_festivos": "api|libreria",
-            "ultimo_dato_real": "...", "base_ref": "..." } },
+            "ultimo_dato_real": "...", "base_ref": "...", "perfil": "jamer" } },
   "steps": [ { "orden": 0, "paso": "base", "estado": "aplicado|omitido|editado", "params": {},
                "curves": {"YYYY-MM-DD": [24]}, "curvas_calculadas": {}, "diagnostics": {},
                "alerts": [ { "nivel": "info|warning|bloqueo", "codigo": "...", "mensaje": "...",
@@ -91,7 +94,8 @@ Response `data` (= `RunOut`):
   "eventos": [ { "usuario": "...", "accion": "crear|aplicar_paso|omitir_paso|editar_paso|aprobar|aprobacion_rechazada",
                  "paso": "...", "motivo": "...", "detalle": {}, "version": 2, "ts": "ISO-8601" } ] }
 ```
-(El `meta` persistido trae además `id`, `estado`, `version`, `created_at`, `approved_at`, `approved_by`,
+(`meta.extras.perfil` solo existe si la corrida se creó con `perfil`. `meta.params_iniciales` guarda los params ya
+expandidos con el perfil. El `meta` persistido trae además `id`, `estado`, `version`, `created_at`, `approved_at`, `approved_by`,
 `reemplazada_por`, `reemplazada_at`. En preview `id` es null, `version` null y `meta.estado = "preview"`.)
 Errores EPM: 404 UCP desconocida o sin histórico; 409 sin modelo entrenado; 422 entrada inválida, semana ya
 observada, `base_curvas` incompleta; 502 refresco/modelo falló; 503 sin persistencia (`run`).
@@ -121,12 +125,82 @@ Response `data` = `RunOut` con la nueva `version`.
 Errores: 409 `{"mensaje","version_esperada","version_actual"}` si la versión cambió o la corrida no es
 borrador (el front recarga `corridas/{id}`); 422 params/curvas inválidos (texto de EPM en `detail`).
 
-Params por paso (EPM, `src/adjustments/steps/*.py`; claves desconocidas → 422):
+Params por paso (EPM, `src/adjustments/steps/*.py`; claves desconocidas → 422). Las claves "Jamer" solo se
+persisten en `steps[i].params` si difieren de su default (el front no debe asumir que vienen siempre):
 - `referencia`: `semana_ref_inicio` (YYYY-MM-DD o null), `max_anios_atras` (1..), `anios_excluidos` (lista años).
-- `nivel`: `alpha` (0..1, default 0.25). Con análogos (Fase 2b): `ancla: "analogos"`, `analogos: {fecha: [fechas]}`.
-- `forma`: `fuente` (`promedio_n` default | `reciente` | `referencia` | `analogos` en 2b), `n` (1..60, default 4),
-  `beta` (0..1, default 1). Con análogos: `analogos: {fecha: [fechas]}`.
-- `control`: `banda_pp` (>0, default 1.0), `top_dias` (1..7, default 3), `banda_referencia_pp` (default 2.0).
+- `nivel`: `alpha` (0..1, default 0.25). Análogos: `ancla: "analogos"`, `analogos: {fecha: [fechas]}`.
+  Modo réplica: `modo` (`alpha` default | `reciente`), `peso_modelo` (0..1, 0), `saltar_puente` (bool, false),
+  `g_fuente` (`interanual` default | `interanual_corto` | `interanual_estacional` | `fijo`), `g_fijo` (0.005),
+  `g_ventana_dias` (28), `g_k` (1.0), `g_min` (-0.01), `g_max` (0.02), `g_min_pares` (14).
+- `forma`: `fuente` (`promedio_n` default | `reciente` | `referencia` | `analogos` | `reciente_clase`), `n` (1..60, 4),
+  `beta` (0..1, 1). Análogos: `analogos: {fecha: [fechas]}`. Réplica: `delta` (`proporcional` default | `plano`),
+  `tramos` (`off` default | `modelo_anual`; exige `delta="plano"`, experimental, no recomendado), `umbral_tramo_mw` (20),
+  `min_periodos_tramo` (3), `suavizado_borde` (0), `saltar_puente` (false).
+- `control`: `banda_pp` (>0, 1.0), `top_dias` (1..7, 3), `banda_referencia_pp` (2.0). Alertas Jamer (todas informativas,
+  apagadas con `null`): `banda_salto_mw` (null), `periodos_valle` ([3,4,5]), `banda_crecimiento_pp` (null),
+  `crecimiento_ventana_dias` (28), `crecimiento_min_pares` (14), `cupo_dias_anuales` (null), `banda_error_pct` (5.0).
+
+## Perfiles (`RunRequest.perfil`)
+Atajo que se expande en `src/adjustments/perfiles.py` y se mezcla con `params` (los params explícitos del usuario
+ganan clave a clave). El resultado expandido queda en `meta.params_iniciales` y el nombre en `meta.extras.perfil`
+(la clave solo aparece con perfil). Sin `perfil` el comportamiento es idéntico al anterior.
+
+| Perfil | nivel | forma | control |
+|---|---|---|---|
+| `jamer` (réplica pura) | `{modo:"reciente", g_fuente:"interanual", peso_modelo:0}` | `{fuente:"reciente_clase", n:1, delta:"plano", tramos:"off"}` | `{banda_salto_mw:40}` |
+| `jamer_modelo` | igual con `peso_modelo:0.3` (provisional) | igual | igual |
+
+`banda_salto_mw=40` y `peso_modelo=0.3` son provisionales (los fija la calibración). Crecimiento y acumulado quedan apagados.
+
+## Diagnósticos nuevos (aditivos; el front viejo los ignora)
+`nivel.diagnostics` (con `modo="reciente"`):
+- `modo`, `alpha` (= 1 − peso_modelo), `peso_modelo`, `semana_ref_inicio`, `desfase_dias`, `anios_excluidos`.
+- `dias[YYYY-MM-DD]`: `modo`, `E_base` (Σ curva del modelo), `E_obj` (= `E_objetivo`, ΣR1·(1+g)), `E` (= `E_final`, energía del día
+  resultante), `clase` (`normal|festivo|post_festivo|puente`), `saltados:[{fecha,motivo}]`, `peso_modelo`, `r1:{fecha,energia}|null`,
+  `r1_extra:[{fecha,energia}]` (2.º histórico), `lag_dias`, `g_raw`, `g_usado`, `acotado`, `g_fuente`, `regla`
+  (`reciente|sin_evidencia`), y por compatibilidad `ratio`, `alpha`, `ancla` (fecha R1), `ancla_ref` (R3), `dia_ref` (R2).
+- `crecimiento`: `{Y, ventana:[desde,hasta], n_pares, fallback, fuente_g}`.
+- `referencias[YYYY-MM-DD]`: `{r1:{fecha,curva[24]}|null, r1_extra:[{fecha,curva[24]}], r2:{fecha,curva[24]}|null, r3:{fecha,curva[24]}|null}`
+  (R1 = último día real de la misma clase; R2 = día − 364 d o festivo homólogo; R3 = R1 − 364 d).
+
+`forma.diagnostics`: `fuente`, `n`, `beta`, `dias`, y con réplica `delta`, `tramos` (modo). `dias[f]` añade: `energia_base`,
+`delta_plano_mw`, `periodos_con_gancho`, `tramos_retenidos:[{desde,hasta,desv_mw,desv_mw_10}]`, `clase`, `saltados`, `tramos_motivo`.
+
+`control.diagnostics`:
+- `saltos`: `{banda_mw, periodos_valle, pares:[{de,a,delta_final,delta_ref,dif_mw}], motivo}` (siempre presente; `pares` vacío sin banda o sin referencia).
+- `crecimiento`: indicador `(P/R−1)` por día y semana vs `Y` reciente (se publica siempre, con o sin banda; ver `fase_e4a`).
+- `acumulado_anual`: `null` si `cupo_dias_anuales` es null; `{estado:"sin_datos", motivo}` si hay cupo pero ninguna aprobada del año
+  (o sin store); si no, el cuerpo de `GET acumulado-anual` sin `alerta` (la alerta va en `alerts`). Las aprobadas del año las lee EPM del
+  store (curvas finales de las corridas aprobadas vigentes, solo los 7 días de su semana) únicamente cuando hay cupo.
+
+## Alertas nuevas (nivel `info` salvo indicación; no bloquean)
+`SALTO_ENTRE_DIAS` (control, con `banda_salto_mw`), `CRECIMIENTO_FUERA_DE_TENDENCIA` (control, con `banda_crecimiento_pp`),
+`ACUMULADO_ANUAL_FUERA_RANGO` (control, con `cupo_dias_anuales`), `G_ACOTADO`, `G_SIN_EVIDENCIA`, `R1_SIN_MISMA_CLASE` (nivel; forma solo si nivel no la reportó para ese día),
+`FORMA_SIN_ENERGIA_BASE`, `FORMA_SIN_GANCHO` (forma). En nivel `modo=reciente` también `SIN_EVIDENCIA_NIVEL` y `CURVA_BASE_NULA` (warning).
+Las alertas por día se unen por código: `fechas` = días afectados y `detalle.por_fecha[fecha]` trae el detalle y el `mensaje` de cada día (si los mensajes difieren, el `mensaje` unido es genérico).
+
+### GET `acumulado-anual?ucp=&anio=&banda_pct=&cupo=&hasta=`
+Solo lectura; EPM `GET /adjustments/acumulado-anual`. Store con esquema sin migrar o base inaccesible: 503 (no 500). `ucp` y `anio` obligatorios; `banda_pct` (≥0) y `cupo` (0..366) opcionales y
+**apagados por defecto**; `hasta` (YYYY-MM-DD) tope inclusive. Compara la energía diaria de las aprobadas vigentes del año contra el real.
+Errores: 503 sin persistencia, 404 UCP desconocida o sin histórico, 422 parámetros inválidos.
+Response `data`:
+```json
+{ "ucp": "Antioquia", "estado": "apagado|sin_cupo|dentro|cerca|excedido", "anio": 2026, "banda_pct": 5.0,
+  "cupo_dias": 25, "dias_fuera": 3, "dias_evaluados": 300, "dias_no_evaluables": 0,
+  "fechas_fuera": [ { "fecha": "2026-03-04", "error_pct": 5.8 } ], "restantes": 22,
+  "alerta": null, "dias_aprobados": 301 }
+```
+`alerta` es null o un `Alert` (`ACUMULADO_ANUAL_FUERA_RANGO`). Sin `banda_pct`: `estado="apagado"` y conteos en 0.
+Con banda y sin `cupo`: `sin_cupo` (cuenta, no alerta). "25 días" NO es un valor oficial (pendiente de confirmar con Jamer).
+
+### POST/GET `aprendizaje/error` (P1 "Lo que aprendió"; informativo, NO modifica curvas)
+EPM (solo lectura, sin store, hereda `X-Service-Token`; registrada antes de `/{run_id}`):
+- `POST /adjustments/aprendizaje/error` body `{ucp, semanas?=12 (4..26), hasta?, min_casos?=8, festivos?:[ISO], emisiones:[{semana_inicio(lunes), version?, curvas:{ISO:[24]}}], reales:{ISO:[24]}}`.
+  422 con detalle claro si la entrada es inválida (fecha, curva != 24, NaN/negativos, semana_inicio no lunes, semanas fuera de 4..26).
+- `GET /adjustments/aprendizaje/error?ucp=&semanas=` (demo): lee `retro/{ucp}.json` del snapshot (misma forma sin ucp/semanas). UCP válida sin archivo: 200 `sin_datos` (no 404); 422 ucp/semanas inválidas o archivo corrupto.
+Respuesta 200: `{"estado":"ok",...}` o `{"estado":"sin_datos","ucp","motivo","avisos":[{"codigo":"RETRO_SIN_HISTORIAL",...}]}`. Forma completa en `replica_jamer/fase_retro_p1/CONTRATO.md`.
+Campos: `sesgo_global = {pct, wape_pct, n}` (el campo es `pct`, NO `sesgo_pct`; `ventanas[]`, `por_tipo[]` y `por_bloque[]` sí usan `sesgo_pct`). `ventanas` con `semanas` > las pedidas vienen con `sesgo_pct/wape_pct` null y `n` 0. `hasta` muy posterior a los datos (> 7*semanas días) devuelve `sin_datos`. `hoy` (aviso de rezago) = fecha de America/Bogota. `ema.h112` usa todo el historial recibido: si el proxy recorta a `semanas` (12), queda limitada a esa ventana.
+Signo: `(reportado - real)/real*100`. El backend Sphere lo expone como `GET ajustes/aprendizaje-error?ucp=&semanas=` (ver ese contrato).
 
 ### POST `corridas/{id}/aprobar`
 Request: `{ "version_esperada": 3, "motivo": "texto", "excepciones_justificadas": ["TENDENCIA_FUERA_BANDA"] }`
@@ -140,6 +214,21 @@ Request y response exactamente como el "Contrato de análogos" de `PLAN_NOCHE.md
 (`ucp`, `fecha`, `fecha_corte?`, `filtros{dia_semana, meses, temporada_dias, relacion_festivo,
 distancia_festivo, tipo_festivo, semana_santa, temporada_escolar, clima, anio_min, anio_max,
 anios_excluidos, limite}` → `descriptor_objetivo`, `filtros_aplicados`, `candidatos[]`, `resumen`).
+
+### Clima / lluvia (cambio 2026-11-24, fase_clima C1)
+`p_i` es un CODIGO de condicion del tiempo (no mm). Regla en `src/adjustments/clima.py`: periodo con lluvia si
+`200<=p_i<600` (legado AccuWeather `1<=p_i<200`: lluvia si p_i en {12-18, 39-42}); `p_i` 0/NaN = dato faltante; dia
+"con lluvia" si >=3 periodos con lluvia y >=12 periodos conocidos.
+- Alerta `CLIMA_OBSERVADO` (`detalle`): SE ELIMINAN `lluvia_mm`, `lluvia_max_diaria_mm`, `p90_lluvia_mm`. NUEVAS:
+  `lluvia_periodos` (suma semanal de periodos con lluvia, dias fiables), `lluvia_frac_semana`,
+  `lluvia_frac_max_diaria` (0..1), `p90_lluvia_frac` (p90 historico de la fraccion diaria, solo dias con calidad
+  suficiente). Mensaje: "... N periodos con lluvia (x %)". `detalle.dias[f]` trae por dia `temp_media`, `humedad_media`,
+  `lluvia_periodos`, `periodos_conocidos`, `frac_lluvia`, `con_lluvia` (bool|null), `calidad_lluvia`
+  (`suficiente|insuficiente|sin_dato`).
+- `POST analogos`: `candidatos[].clima` pasa de `{temp_media, lluvia_mm}` a `{temp_media, frac_lluvia, con_lluvia}`
+  (`frac_lluvia` 0..1|null, `con_lluvia` bool|null; null = lluvia desconocida). El filtro `filtros.clima.lluvia`
+  (bool) conserva su semantica: true = dias con `con_lluvia` true, false = `con_lluvia` false; dias desconocidos se
+  excluyen. La razon "con lluvia" solo aparece si objetivo y candidato tienen `con_lluvia` true.
 
 ## Pendientes conocidos del lado EPM / backend
 - EPM no tiene "listar corridas por (ucp, semana)": el front recuerda el id (URL `?corrida=` y

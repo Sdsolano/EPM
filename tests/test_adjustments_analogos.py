@@ -101,7 +101,7 @@ def test_descriptor_festivo_ucp_sin_nombre():
 
 
 def test_descriptor_con_clima():
-    clima = {"2025-03-25": {"temp_media": 24.0, "lluvia_mm": 2.0, "humedad_media": 70.0}}
+    clima = {"2025-03-25": {"temp_media": 24.0, "frac_lluvia": 0.2, "con_lluvia": True, "humedad_media": 70.0}}
     assert an.descriptor_dia(_d("2025-03-25"), FESTIVOS, clima)["clima"]["temp_media"] == 24.0
 
 
@@ -294,24 +294,27 @@ def _clima_sintetico():
     d = date(2024, 1, 1)
     while d <= CORTE:
         k = d.toordinal()
-        clima[d.isoformat()] = {"temp_media": 22.0 + (k % 7), "lluvia_mm": float(k % 3), "humedad_media": 70.0}
+        clima[d.isoformat()] = {"temp_media": 22.0 + (k % 7), "frac_lluvia": (k % 3) / 4, "con_lluvia": (k % 3) > 0,
+                                "calidad_lluvia": "suficiente", "humedad_media": 70.0}
         d += timedelta(days=1)
     return clima
 
 
 def test_clima_diario_tal_cual():
-    filas = [{"fecha": "2025-01-01", "periodo": p, "p_t": 20.0 + p % 2, "p_h": 80.0, "p_v": 1.0, "p_i": 0.5}
+    filas = [{"fecha": "2025-01-01", "periodo": p, "p_t": 20.0 + p % 2, "p_h": 80.0, "p_v": 1.0, "p_i": 500 if p <= 6 else 804}
              for p in range(1, 25)]
-    filas += [{"fecha": "2025-01-01", "periodo": 1, "p_t": 23.0, "p_h": 80.0, "p_v": 1.0, "p_i": 0.5}]  # repetido
-    filas += [{"fecha": "2025-01-02", "periodo": p, "p_t": 25.0, "p_h": 60.0, "p_v": 1.0, "p_i": 800.0}
+    filas += [{"fecha": "2025-01-01", "periodo": 1, "p_t": 23.0, "p_h": 80.0, "p_v": 1.0, "p_i": 500}]  # repetido
+    filas += [{"fecha": "2025-01-02", "periodo": p, "p_t": 25.0, "p_h": 60.0, "p_v": 1.0, "p_i": 804}
               for p in range(1, 25)]
     filas += [{"fecha": "2025-01-03", "periodo": p, "p_t": 25.0 if p > 6 else float("nan"), "p_h": 60.0,
                "p_v": 1.0, "p_i": 0.0} for p in range(1, 25)]  # 18 periodos finitos → sin clima
     c = an.clima_diario(pd.DataFrame(filas))
     assert set(c) == {"2025-01-01", "2025-01-02"}
-    assert c["2025-01-01"]["lluvia_mm"] == pytest.approx(12.0)
+    assert c["2025-01-01"]["lluvia_periodos"] == 6 and c["2025-01-01"]["periodos_conocidos"] == 24
+    assert c["2025-01-01"]["con_lluvia"] is True and c["2025-01-01"]["frac_lluvia"] == pytest.approx(0.25)
     assert c["2025-01-01"]["temp_media"] == pytest.approx((22.0 + 11 * 21.0 + 12 * 20.0) / 24)  # P1 promediado
-    assert c["2025-01-02"]["lluvia_mm"] == pytest.approx(800.0 * 24)  # valores raros: tal cual
+    assert c["2025-01-02"]["con_lluvia"] is False and c["2025-01-02"]["frac_lluvia"] == 0.0
+    assert "lluvia_mm" not in c["2025-01-02"]
     assert an.clima_diario(pd.DataFrame()) == {}
 
 
@@ -338,11 +341,11 @@ def test_filtro_clima_temperatura_y_lluvia():
     for c in r["candidatos"]:
         assert c["fecha"] >= "2024-01-01"  # sin clima → descartado
         assert abs(c["clima"]["temp_media"] - t_obj) <= 1.0
-        assert c["clima"]["lluvia_mm"] >= an.LLUVIA_UMBRAL_MM
+        assert c["clima"]["con_lluvia"] is True
         assert "clima" in c["componentes"] and "con lluvia" in c["razones"]
     r2 = an.buscar_analogos(HIST, FESTIVOS, objetivo, "2025-06-09",
                             {"clima": {"lluvia": False}, "limite": 366}, clima=clima)
-    assert r2["candidatos"] and all(c["clima"]["lluvia_mm"] < an.LLUVIA_UMBRAL_MM for c in r2["candidatos"])
+    assert r2["candidatos"] and all(c["clima"]["con_lluvia"] is False for c in r2["candidatos"])
 
 
 def test_objetivo_sin_clima_nota_y_temp_pronosticada():
@@ -465,7 +468,7 @@ def test_endpoint_200_contrato(client):
     assert j["candidatos"] and all(set(c) == CLAVES_CANDIDATO for c in j["candidatos"])
     c0 = j["candidatos"][0]
     assert set(c0["pico"]) == {"mw", "hora"}
-    assert c0["clima"] is None or set(c0["clima"]) == {"temp_media", "lluvia_mm"}
+    assert c0["clima"] is None or set(c0["clima"]) == {"temp_media", "frac_lluvia", "con_lluvia"}
     assert {"n_candidatos", "curva_promedio_normalizada", "energia_promedio"} <= set(j["resumen"])
     assert client.llamadas["clima"] == 1
 

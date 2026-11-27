@@ -100,7 +100,8 @@ class Store(Protocol):
     def list_versions(self, run_id: str) -> Optional[List[Dict[str, Any]]]: ...
     def get_version(self, run_id: str, version: int) -> Optional[Dict[str, Any]]: ...
     def list_runs(self, ucp: Optional[str] = None, desde: Optional[date] = None,
-                  hasta: Optional[date] = None, limite: int = 200) -> List[Dict[str, Any]]: ...
+                  hasta: Optional[date] = None, limite: int = 200,
+                  estado: Optional[str] = None) -> List[Dict[str, Any]]: ...
 
 
 # ---------------------------------------------------------------------------
@@ -366,8 +367,9 @@ class InMemoryStore:
         return None
 
     def list_runs(self, ucp: Optional[str] = None, desde: Optional[date] = None,
-                  hasta: Optional[date] = None, limite: int = 200) -> List[Dict[str, Any]]:
-        """Corridas filtradas por ucp/semana, más reciente primero (solo lectura).
+                  hasta: Optional[date] = None, limite: int = 200,
+                  estado: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Corridas filtradas por ucp/semana/estado, más reciente primero (solo lectura).
 
         `limite` se acota a 1..500. Los records van como copia superficial
         (`_records_solo_lectura`): tratarlos como inmutables.
@@ -378,6 +380,8 @@ class InMemoryStore:
             for run in self._runs.values():
                 m = run["meta"]
                 if ucp is not None and m.get("ucp") != ucp:
+                    continue
+                if estado is not None and m.get("estado") != estado:
                     continue
                 semana = _fecha_o_none(m.get("semana_inicio"))
                 if d_ini is not None and (semana is None or semana < d_ini):
@@ -696,8 +700,9 @@ class PostgresStore:
             }
 
     def list_runs(self, ucp: Optional[str] = None, desde: Optional[date] = None,
-                  hasta: Optional[date] = None, limite: int = 200) -> List[Dict[str, Any]]:
-        """Corridas filtradas por ucp/semana, más reciente primero (solo lectura).
+                  hasta: Optional[date] = None, limite: int = 200,
+                  estado: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Corridas filtradas por ucp/semana/estado, más reciente primero (solo lectura).
 
         Dos queries: (1) corridas con filtros/orden/límite y (2) todos sus pasos
         con `corrida_id = ANY(...)` agrupados en Python. No lee `corrida_evento`.
@@ -714,6 +719,9 @@ class PostgresStore:
         if d_fin is not None:
             clauses.append("semana_inicio <= %s")
             args.append(d_fin)
+        if estado is not None:
+            clauses.append("estado = %s")
+            args.append(estado)
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
         with self._tx() as conn, conn.cursor() as cur:
             cur.execute(

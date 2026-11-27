@@ -47,3 +47,14 @@ DEMO_PASSWORD=algo docker compose up --build      # http://localhost:8000
 
 ## 5. Aviso (aprendido en el primer despliegue)
 `railway up --no-gitignore` desde la raiz de EPM falla con 413 (sube `.venv`). Despliega un contexto minimo; ver `ESTADO_DESPLIEGUE.md`.
+
+## 6. Snapshot con datos/modelo extendidos (overlay)
+Para una demo con datos mas recientes que `data/raw` del repo sin tocar lo versionado: arma un directorio ignorado por git con el mismo
+layout (`data/raw/<ucp>/`, `data/features/<ucp>/`, `models/<ucp>/`; ver `docs/work/ajustes/replica_jamer/fase_datos/REPORTE.md`) y construye con:
+```
+export PATH=/Users/sdsolano/.local/tools/node/bin:$PATH
+DEMO_DATA_OVERLAY=reports/ajustes/jamer/demo_datos SPHERE_DIR=../Sphere bash scripts/demo_build.sh
+```
+(o `python scripts/demo_snapshot.py --overlay <dir>`). Los archivos del overlay sobrescriben/agregan los del repo SOLO dentro de `demo_snapshot/`;
+el manifiesto marca `"origen": "overlay"` y se verifica con hashes como siempre. Sin la variable el comportamiento no cambia.
+Solo se admiten rutas `data/raw|features|models/<ucp>/` de las UCP del snapshot, `retro/<ucp>.json` (P1 "Lo que aprendió": lo sirve `GET /adjustments/aprendizaje/error`; llega a `demo_snapshot/retro/` y en el contenedor a `/app/retro/`) y los modelos globales. El overlay contiene datos reales: NO a git.

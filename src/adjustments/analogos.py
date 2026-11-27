@@ -31,18 +31,21 @@ Descriptor de un día (`descriptor_dia`)
   `vacaciones` si 1..25 de enero, Semana Santa (lunes..domingo), 15 de junio ..
   10 de julio, la semana (lunes..domingo) del lunes festivo de octubre (receso
   escolar) o diciembre completo; si no, `clases`.
-- `clima` (opcional): `{"temp_media", "lluvia_mm", "humedad_media"}` del día.
+- `clima` (opcional): `{"temp_media", "humedad_media", "lluvia_periodos", "periodos_conocidos",
+  "frac_lluvia", "con_lluvia", "calidad_lluvia"}` del día (ver `clima.py`).
 
 Clima
 -----
 `cargar_clima` lee `data/raw/{ucp}/clima_new.csv` (columnas `fecha, periodo,
-p_t, p_h, p_v, p_i`; p_t temperatura °C, p_h humedad %, p_i precipitación mm).
-El clima se usa TAL CUAL viene del archivo: solo se descartan valores no
-finitos y, si un (fecha, periodo) está repetido, se promedia. Días con < 20
-periodos válidos quedan sin clima. `temp_media` = media de p_t, `humedad_media`
-= media de p_h, `lluvia_mm` = suma de p_i de los periodos presentes. El archivo
-real trae valores raros (p_i en cientos de mm por hora al final del archivo):
-no se corrigen aquí. "Con lluvia" = `lluvia_mm >= LLUVIA_UMBRAL_MM`.
+p_t, p_h, p_v, p_i`; p_t temperatura °C, p_h humedad %, p_i CÓDIGO de condición del tiempo, NO mm).
+Se descartan p_t/p_h no finitos y, si un (fecha, periodo) está repetido, se
+promedian p_t/p_h (p_i toma el primer valor conocido). Días con < 20 periodos
+con p_t/p_h válidos quedan sin clima. `temp_media` = media de p_t,
+`humedad_media` = media de p_h. La lluvia sale de `p_i` con `clima.py`
+(`lluvia_periodos`, `periodos_conocidos`, `frac_lluvia`, `con_lluvia`,
+`calidad_lluvia`); "con lluvia" = `con_lluvia` True (>= 3 periodos con lluvia,
+>= 12 conocidos); un día de lluvia desconocida (`con_lluvia` None) no cuenta
+ni como con ni como sin lluvia.
 
 Score (0..1, explicable)
 ------------------------
@@ -92,12 +95,12 @@ from dateutil.easter import easter
 from src.adjustments import data
 from src.adjustments.steps._params import FECHA_MAX, FECHA_MIN, _corto, entero, lista_enteros, numero
 from src.adjustments.types import parse_date, to_jsonable
+from src.adjustments import clima as _lluvia
 from src.prediction.holiday_homology import colombia_holiday_map
 
 PASO = "filtros"
 MAX_DIST_FESTIVO = 3
 MIN_PERIODOS_CLIMA = 20
-LLUVIA_UMBRAL_MM = 1.0
 VENTANA_ESTACIONAL_DIAS = 60.0
 RECENCIA_ANIOS = 4.0
 CLIMA_DELTA_T = 3.0
@@ -400,7 +403,7 @@ def _clima_de(clima: Optional[dict], iso_: str) -> Optional[dict]:
 # ---------------------------------------------------------------------------
 
 def clima_diario(df_clima: pd.DataFrame) -> Dict[str, Dict[str, float]]:
-    """{"YYYY-MM-DD": {"temp_media", "lluvia_mm", "humedad_media"}} desde el clima horario (tal cual)."""
+    """{"YYYY-MM-DD": {"temp_media", "humedad_media", + lluvia (ver `clima.resumen_lluvia_dia`)}} desde el clima horario."""
     columnas = ["fecha", "periodo", "p_t", "p_h", "p_i"]
     if df_clima is None or df_clima.empty or any(c not in df_clima.columns for c in columnas):
         return {}
@@ -408,19 +411,24 @@ def clima_diario(df_clima: pd.DataFrame) -> Dict[str, Dict[str, float]]:
     df["fecha"] = pd.to_datetime(df["fecha"], errors="coerce").dt.strftime("%Y-%m-%d")
     for c in ("periodo", "p_t", "p_h", "p_i"):
         df[c] = pd.to_numeric(df[c], errors="coerce").astype(float)
-    finitos = np.isfinite(df[["periodo", "p_t", "p_h", "p_i"]].to_numpy(dtype=float)).all(axis=1)
+    finitos = np.isfinite(df[["periodo", "p_t", "p_h"]].to_numpy(dtype=float)).all(axis=1)
     df = df[finitos & df["fecha"].notna() & df["periodo"].between(1, 24)]
     if df.empty:
         return {}
-    por_periodo = df.groupby(["fecha", "periodo"], as_index=False)[["p_t", "p_h", "p_i"]].mean()
-    g = por_periodo.groupby("fecha").agg(n=("periodo", "size"), temp_media=("p_t", "mean"),
-                                         humedad_media=("p_h", "mean"), lluvia_mm=("p_i", "sum"))
-    g = g[g["n"] >= MIN_PERIODOS_CLIMA]
-    return {
-        str(f): {"temp_media": float(r.temp_media), "lluvia_mm": float(r.lluvia_mm),
-                 "humedad_media": float(r.humedad_media)}
-        for f, r in g.iterrows()
-    }
+    # p_i es un código (no se promedia): primer valor conocido del (fecha, periodo); 0/NaN = desconocido.
+    df["p_i"] = df["p_i"].where(df["p_i"] > 0)
+    por_periodo = df.groupby(["fecha", "periodo"], as_index=False).agg(
+        p_t=("p_t", "mean"), p_h=("p_h", "mean"), p_i=("p_i", "first"))
+    out: Dict[str, Dict[str, Any]] = {}
+    for f, g in por_periodo.groupby("fecha"):
+        if len(g) < MIN_PERIODOS_CLIMA:
+            continue
+        ll = _lluvia.resumen_lluvia_dia(g["p_i"].tolist())
+        out[str(f)] = {"temp_media": float(g["p_t"].mean()), "humedad_media": float(g["p_h"].mean()),
+                       "lluvia_periodos": ll["periodos_lluvia"], "periodos_conocidos": ll["periodos_conocidos"],
+                       "frac_lluvia": ll["frac_lluvia"], "con_lluvia": ll["con_lluvia"],
+                       "calidad_lluvia": ll["calidad"]}
+    return out
 
 
 # Cache de módulo del clima: `(ruta, mtime_ns, tamaño) -> clima diario` con a lo
@@ -521,10 +529,7 @@ def puntuar(obj: dict, cand: dict) -> Tuple[float, Dict[str, float], List[str]]:
         s["clima"] = float(np.maximum(0.0, 1.0 - abs(t_obj - t_cand) / CLIMA_DELTA_T))
         if s["clima"] >= 0.5:
             razones.append(f"temperatura similar ({t_cand:.1f} °C)")
-    lluvia_obj = (obj.get("clima") or {}).get("lluvia_mm")
-    lluvia_cand = (cand.get("clima") or {}).get("lluvia_mm")
-    if lluvia_obj is not None and lluvia_cand is not None and lluvia_obj >= LLUVIA_UMBRAL_MM \
-            and lluvia_cand >= LLUVIA_UMBRAL_MM:
+    if (obj.get("clima") or {}).get("con_lluvia") is True and (cand.get("clima") or {}).get("con_lluvia") is True:
         razones.append("con lluvia")
 
     total_w = sum(PESOS[k] for k in s)
@@ -677,20 +682,23 @@ def _resolver(f: Dict[str, Any], obj: Dict[str, Any], notas: List[str]) -> Dict[
     return r
 
 
-def _clima_arrays(clima: Optional[dict], cal: _Calendario) -> Tuple[np.ndarray, np.ndarray]:
+def _clima_arrays(clima: Optional[dict], cal: _Calendario) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """(temp, con_lluvia 1.0/0.0/nan, frac_lluvia) por día del calendario."""
     n = len(cal.ep)
     temp = np.full(n, np.nan)
     lluvia = np.full(n, np.nan)
+    frac = np.full(n, np.nan)
     for iso_, c in (clima or {}).items():
         try:
             pos = _ep(date.fromisoformat(str(iso_)[:10])) - cal.inicio
         except ValueError:
             continue
         if 0 <= pos < n and c:
-            t, ll = c.get("temp_media"), c.get("lluvia_mm")
+            t, ll, fr = c.get("temp_media"), c.get("con_lluvia"), c.get("frac_lluvia")
             temp[pos] = np.nan if t is None else float(t)
-            lluvia[pos] = np.nan if ll is None else float(ll)
-    return temp, lluvia
+            lluvia[pos] = np.nan if ll is None else float(bool(ll))
+            frac[pos] = np.nan if fr is None else float(fr)
+    return temp, lluvia, frac
 
 
 def _buscar(historico: pd.DataFrame, festivos: Iterable[str], fecha: Any, fecha_corte: Any,
@@ -723,7 +731,7 @@ def _buscar(historico: pd.DataFrame, festivos: Iterable[str], fecha: Any, fecha_
     obj["fecha"] = objetivo.isoformat()
     r = _resolver(f, obj, notas)
 
-    temp, lluvia = _clima_arrays(clima, cal)
+    temp, lluvia, frac = _clima_arrays(clima, cal)
     c = r["clima"]
     t_obj = _temp(obj)
     clima_aplicado = None
@@ -775,8 +783,8 @@ def _buscar(historico: pd.DataFrame, festivos: Iterable[str], fecha: Any, fecha_
                                       <= clima_aplicado["temp_tolerancia"])
             activo = True
         if clima_aplicado["lluvia"] is not None:
-            con_lluvia = np.isfinite(lluvia) & (lluvia >= LLUVIA_UMBRAL_MM)
-            sin_lluvia = np.isfinite(lluvia) & (lluvia < LLUVIA_UMBRAL_MM)
+            con_lluvia = np.isfinite(lluvia) & (lluvia >= 0.5)
+            sin_lluvia = np.isfinite(lluvia) & (lluvia < 0.5)
             m &= con_lluvia if clima_aplicado["lluvia"] else sin_lluvia
             activo = True
         if not activo:
@@ -788,7 +796,7 @@ def _buscar(historico: pd.DataFrame, festivos: Iterable[str], fecha: Any, fecha_
     r["fecha_corte_efectiva"] = corte.isoformat()
     r["notas"] = notas
     return {"obj": obj, "filtros": r, "cal": cal, "obs": obs, "idx": idx[orden], "scores": scores[orden],
-            "temp": temp, "lluvia": lluvia, "corte": corte, "corte_pedido": corte_pedido}
+            "temp": temp, "lluvia": lluvia, "frac": frac, "corte": corte, "corte_pedido": corte_pedido}
 
 
 def _scores_vec(obj: dict, cal: _Calendario, idx: np.ndarray, dist_doy: np.ndarray, temp: np.ndarray,
@@ -827,9 +835,11 @@ def _scores_vec(obj: dict, cal: _Calendario, idx: np.ndarray, dist_doy: np.ndarr
 
 def _desc_candidato(res: Dict[str, Any], i: int) -> Dict[str, Any]:
     desc = dict(res["cal"].descs[i])
-    t, ll = res["temp"][i], res["lluvia"][i]
-    desc["clima"] = None if not math.isfinite(t) else {"temp_media": float(t),
-                                                       "lluvia_mm": float(ll) if math.isfinite(ll) else None}
+    t, ll, fr = res["temp"][i], res["lluvia"][i], res["frac"][i]
+    desc["clima"] = None if not math.isfinite(t) else {
+        "temp_media": float(t),
+        "frac_lluvia": float(fr) if math.isfinite(fr) else None,
+        "con_lluvia": bool(ll >= 0.5) if math.isfinite(ll) else None}
     return desc
 
 
@@ -855,7 +865,9 @@ def _candidato(res: Dict[str, Any], i: int, clima: Optional[dict]) -> Dict[str, 
     else:
         out.update({"energia": None, "pico": None, "curva": None, "curva_normalizada": None})
     out["clima"] = (None if desc["clima"] is None else
-                    {"temp_media": desc["clima"].get("temp_media"), "lluvia_mm": desc["clima"].get("lluvia_mm")})
+                    {"temp_media": desc["clima"].get("temp_media"),
+                     "frac_lluvia": desc["clima"].get("frac_lluvia"),
+                     "con_lluvia": desc["clima"].get("con_lluvia")})
     out["descriptor"] = {k: v for k, v in desc.items() if k != "fecha"}
     out["componentes"] = componentes
     return out
