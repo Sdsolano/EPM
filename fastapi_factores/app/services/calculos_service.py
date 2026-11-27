@@ -21,6 +21,9 @@ from app.services import factores_service
 
 PRECISION_DECIMALES = 5
 PERIODOS_COLUMNAS = [f'p{i}' for i in range(1, 25)]
+# Código RPM reservado de las curvas típicas cargadas (barras nuevas / traslados de carga sin historial): CT-<id>-D suma al destino,
+# CT-<id>-O resta al origen. Lo crea el backend; ver factores_curvas.service.js.
+CODIGO_CURVA_CARGADA = r'^CT-\d+-[DO]$'
 TIPOS_DIA = ["ORDINARIO", "SABADO", "FESTIVO"]
 
 
@@ -357,7 +360,10 @@ def _procesar_medidas_con_factores(
     if ignorar_negativos and not df.empty:
         cols_p = [f'p{i}' for i in range(1, 25) if f'p{i}' in df.columns]
         if cols_p:
-            df = df[~(df[cols_p] < 0).any(axis=1)]
+            # Las curvas cargadas (códigos reservados CT-<id>-D / CT-<id>-O) RESTAN a propósito a la barra de origen
+            # (factor -1): quedar negativas es lo esperado y nunca se descartan por este filtro.
+            es_curva_cargada = df['mecodigo_rpm'].astype(str).str.match(CODIGO_CURVA_CARGADA)
+            df = df[es_curva_cargada | ~(df[cols_p] < 0).any(axis=1)]
 
     # Renombrar columnas para uniformidad
     df = df.rename(columns={'babarra': 'barra', 'mefecha': 'fecha'})
