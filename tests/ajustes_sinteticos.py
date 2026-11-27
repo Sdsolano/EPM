@@ -55,3 +55,47 @@ class ProveedorPlano:
             if f not in self.faltar:
                 out[f] = [self.mw] * 24
         return out
+
+
+# ---------------------------------------------------------------- selector de R1 (curvas planas)
+
+def curvas_planas(
+    festivos,
+    desde: date,
+    hasta: date,
+    factores=None,
+    excluir=(),
+    mw_normal: float = 100.0,
+    mw_festivo: float = 80.0,
+    mw_semana_santa=None,
+):
+    """
+    {iso: array(24)} plano: `mw_normal` MW los días no festivos, `mw_festivo` los festivos (`mw_semana_santa` los
+    festivos de Semana Santa, si se da); `factores` {iso: k} multiplica ese día; `excluir` = días sin datos.
+    """
+    from src.adjustments.data import tipo_festivo
+
+    factores = factores or {}
+    out, d = {}, desde
+    while d <= hasta:
+        f = d.isoformat()
+        if f not in excluir:
+            base = mw_normal
+            if f in festivos:
+                es_ss = mw_semana_santa is not None and tipo_festivo(f, festivos) == "semana_santa"
+                base = mw_semana_santa if es_ss else mw_festivo
+            out[f] = np.full(24, base * factores.get(f, 1.0))
+        d += timedelta(days=1)
+    return out
+
+
+def seleccionar(objetivo, corte, curvas, festivos, n: int = 1, **kw):
+    """`referencia_reciente.seleccionar_recientes` con argumentos posicionales cortos (tests del selector)."""
+    from src.adjustments.referencia_reciente import seleccionar_recientes
+
+    return seleccionar_recientes(objetivo, curvas, corte, festivos, n, **kw)
+
+
+def fechas(*isos):
+    """['2026-01-14', ...] → [date, ...]."""
+    return [date.fromisoformat(x) for x in isos]

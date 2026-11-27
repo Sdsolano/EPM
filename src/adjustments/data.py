@@ -13,11 +13,13 @@ from __future__ import annotations
 
 import math
 from datetime import date, timedelta
+from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+from dateutil.easter import easter
 
 from src.adjustments.types import Curves, parse_date, validar_curva
 from src.prediction.holiday_homology import colombia_holiday_map
@@ -192,6 +194,44 @@ def clase_dia(d, festivos: Iterable[str], *, puente: bool = False) -> str:
         if lunes.isoformat() in festivos_set:
             return CLASE_PUENTE
     return CLASE_NORMAL
+
+
+@lru_cache(maxsize=256)
+def domingos_semana_santa(anio: int) -> Tuple[date, date]:
+    """(domingo de Ramos, domingo de Pascua) del año (`dateutil.easter`). Fuente única (la usa `analogos`)."""
+    pascua = easter(int(anio))
+    return pascua - timedelta(days=7), pascua
+
+
+def es_semana_santa(d) -> bool:
+    """Semana Santa = domingo de Ramos .. domingo de Pascua (inclusive)."""
+    d = parse_date(d)
+    ramos, pascua = domingos_semana_santa(d.year)
+    return ramos <= d <= pascua
+
+
+TIPO_FESTIVO_LUNES = "lunes"
+TIPO_FESTIVO_SEMANA_SANTA = "semana_santa"
+TIPO_FESTIVO_FIJO = "fijo"
+
+
+def tipo_festivo(d, festivos: Iterable[str]) -> Optional[str]:
+    """
+    Tipo de un festivo para elegir su referencia: `lunes` (festivo que cae lunes, típicamente de puente; también
+    uno trasladado a lunes que cae dentro de Semana Santa, p. ej. San José 2024-03-25), `semana_santa` (solo
+    Jueves y Viernes Santo) o `fijo` (cualquier otro: 1/ene, 1/may, 20/jul, 7/ago, 8/dic o 25/dic si no caen
+    lunes...). None si `d` no es festivo.
+    """
+    d = parse_date(d)
+    festivos_set = festivos if isinstance(festivos, (set, frozenset)) else set(festivos)
+    if d.isoformat() not in festivos_set:
+        return None
+    if d.weekday() == 0:
+        return TIPO_FESTIVO_LUNES
+    _, pascua = domingos_semana_santa(d.year)
+    if d in (pascua - timedelta(days=3), pascua - timedelta(days=2)):
+        return TIPO_FESTIVO_SEMANA_SANTA
+    return TIPO_FESTIVO_FIJO
 
 
 def dias_semana(lunes: date) -> List[date]:

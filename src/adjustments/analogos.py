@@ -90,7 +90,6 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
-from dateutil.easter import easter
 
 from src.adjustments import data
 from src.adjustments.steps._params import FECHA_MAX, FECHA_MIN, _corto, entero, lista_enteros, numero
@@ -295,15 +294,13 @@ def _tipo_festivo(d: date) -> str:
 @lru_cache(maxsize=256)
 def _calendario_anio(anio: int) -> Tuple[date, date, Optional[date]]:
     """(domingo de Ramos, domingo de Pascua, lunes festivo de octubre o None) del año."""
-    pascua = easter(anio)
+    ramos, pascua = data.domingos_semana_santa(anio)
     octubre = sorted(date.fromisoformat(k) for k in colombia_holiday_map(anio)
                      if k[5:7] == "10" and date.fromisoformat(k).weekday() == 0)
-    return pascua - timedelta(days=7), pascua, (octubre[0] if octubre else None)
+    return ramos, pascua, (octubre[0] if octubre else None)
 
 
-def es_semana_santa(d: date) -> bool:
-    ramos, pascua, _ = _calendario_anio(d.year)
-    return ramos <= d <= pascua
+es_semana_santa = data.es_semana_santa  # definición única en `data` (también la usa la referencia R1 limpia)
 
 
 def temporada_escolar(d: date) -> str:

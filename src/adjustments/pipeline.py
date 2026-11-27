@@ -33,7 +33,12 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Union
 import pandas as pd
 
 from src.adjustments import automatico, data
-from src.adjustments.referencia_reciente import ALERTA_SIN_MISMA_CLASE, unir_alertas
+from src.adjustments.referencia_reciente import (
+    ALERTA_FESTIVO_SIN_HOMOLOGO,
+    ALERTA_R1_SIN_LIMPIA,
+    ALERTA_SIN_MISMA_CLASE,
+    unir_alertas,
+)
 from src.adjustments.steps import _params, base, control, especiales, forma, nivel, referencia
 from src.adjustments.types import (
     Alert,
@@ -373,12 +378,13 @@ def _aplicar_referencia(ctx: RunContext, diagnostics: Optional[Dict[str, Any]]) 
         ctx.extras.pop("anios_excluidos", None)
 
 
-_ALERTAS_R1_COMPARTIDAS = (ALERTA_SIN_MISMA_CLASE,)
+_ALERTAS_R1_COMPARTIDAS = (ALERTA_SIN_MISMA_CLASE, ALERTA_FESTIVO_SIN_HOMOLOGO, ALERTA_R1_SIN_LIMPIA)
 
 
 def _sin_alertas_ya_emitidas_por_nivel(result: StepResult, previos: List[StepRecord]) -> None:
     """
-    Nivel y forma eligen R1 con la misma regla y emiten la misma alerta (`R1_SIN_MISMA_CLASE`): se muestra
+    Nivel y forma eligen R1 con la misma regla y emiten las mismas alertas (`R1_SIN_MISMA_CLASE`,
+    `FESTIVO_SIN_HOMOLOGO`, `R1_SIN_LIMPIA`): se muestra
     una vez (la de nivel); forma solo conserva los días que nivel no reportó.
     """
     nivel_rec = {r.paso: r for r in previos}.get("nivel")

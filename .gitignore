@@ -119,6 +119,9 @@ after_fixes.csv
 /data/raw/Atlantico
 /models/Atlantico
 /reports
+# Detalle por dia de los backtests de ajustes (trae demanda real; repo publico). Ojo: `git add -f` ignora
+# cualquier regla: versionar los .md de reports/ajustes por ruta explicita, nunca la carpeta.
+reports/ajustes/jamer/
 /models/Atlantico
 /models
 

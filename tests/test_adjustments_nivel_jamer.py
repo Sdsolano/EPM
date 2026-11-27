@@ -41,6 +41,7 @@ def test_params_default_no_cambian_ni_se_persisten():
     p = nivel.validar_params({"modo": "reciente", "peso_modelo": 0.3, "g_fuente": "interanual"})
     # con modo="reciente" se persisten los valores efectivos (también los iguales al default): ver EA1
     assert p == {"alpha": 0.25, "modo": "reciente", "peso_modelo": 0.3, "saltar_puente": False,
+                 "festivo_por_tipo": False, "r1_limpia": False, "r1_umbral_atipico": rr.UMBRAL_ATIPICO,
                  **_crec_mod.DEFAULTS_G}
     # idempotente: re-validar lo ya validado devuelve lo mismo
     assert nivel.validar_params(p) == p

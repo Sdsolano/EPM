@@ -1174,7 +1174,7 @@ def test_perfil_jamer_preview_devuelve_referencias_y_delta_plano(client_sin_stor
     assert control["diagnostics"]["saltos"]["banda_mw"] == 40.0
     assert data["meta"]["extras"]["perfil"] == "jamer"
     assert data["meta"]["params_iniciales"]["nivel"] == {"modo": "reciente", "g_fuente": "interanual",
-                                                         "peso_modelo": 0.0}
+                                                         "peso_modelo": 0.0, "festivo_por_tipo": True}
     # Σ del día = E(d) del nivel (reconciliación intacta) y sin bloqueos
     for f in _semana_iso():
         assert sum(data["final_curves"][f]) == pytest.approx(nivel["diagnostics"]["dias"][f]["E"], abs=1e-6)

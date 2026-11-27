@@ -55,6 +55,10 @@ Modo "reciente" (réplica de Jamer, PLAN_IMPL §2.2; opt-in, default `modo="alph
   reciente Y (`crecimiento.calcular_g`) o fijo.
 - E_obj(d) = ΣR1 · (1+g); E(d) = (1−w)·E_obj + w·E_base con w = `peso_modelo`
   (w=0 réplica pura). La curva previa se escala a E(d) (la forma/delta plano es de `forma`).
+- `festivo_por_tipo` / `r1_limpia` / `r1_umbral_atipico` (default off/0.06; ver `seleccionar_recientes`): con
+  festivo por tipo aplicado, E_obj(d) = ΣR1·(1+g)·F (R1 normal, F = E(H)/E(N_H)) y `dias[f]` suma
+  `RecientesDia.diag_festivo()` (tipo_festivo, homologo, normal_homologo, factor_festivo, homologo_anios_probados;
+  regla `reciente_factor_festivo`).
 - Diagnósticos: `dias[f]` (claves viejas + `r1`, `r1_extra`, `saltados`, `clase`, `g_raw`,
   `g_usado`, `acotado`, `E_obj`, `E`), `crecimiento` (Y, ventana, n_pares, fuente_g, fallback)
   y `referencias[f]` (R1, R1 extra, R2 = d−desfase, R3 = R1−364, con curvas de 24).
@@ -95,6 +99,7 @@ DEFAULTS_RECIENTE: Dict[str, Any] = {
     "modo": "alpha",
     "peso_modelo": 0.0,
     "saltar_puente": False,
+    **_rr.DEFAULTS_R1,
     **_crec.DEFAULTS_G,
 }
 MAX_SEMANAS_EXTRA_ANCLA = 6
@@ -141,6 +146,7 @@ def _separar_reciente(params: Any):
     out["modo"] = _params.opcion("nivel", "modo", p["modo"], MODOS)
     out["peso_modelo"] = _params.numero("nivel", "peso_modelo", p["peso_modelo"], minimo=0.0, maximo=1.0)
     out["saltar_puente"] = _params.booleano("nivel", "saltar_puente", p["saltar_puente"])
+    out.update(_rr.validar_params_r1({k: p[k] for k in _rr.DEFAULTS_R1}, "nivel"))
     out.update(_crec.validar_params_g({k: p[k] for k in _crec.DEFAULTS_G}, "nivel"))
     if out["modo"] == "reciente":
         return resto, out
@@ -309,7 +315,7 @@ def _step_reciente(ctx: RunContext, prev: Curves, p: Dict[str, Any]) -> StepResu
         f_ = iso(d)
         if f_ not in seleccion:
             seleccion[f_] = _rr.seleccionar_recientes(
-                d, curvas, ctx.fecha_corte, festivos, n=2, saltar_puente=pr["saltar_puente"]
+                d, curvas, ctx.fecha_corte, festivos, n=2, saltar_puente=pr["saltar_puente"], **_rr.kwargs_r1(pr)
             )
         return seleccion[f_]
 
@@ -368,7 +374,8 @@ def _step_reciente(ctx: RunContext, prev: Curves, p: Dict[str, Any]) -> StepResu
             g_max=pr["g_max"], s_sem=s_sem, fecha=f,
         )
         alertas_dia.extend(rg.alertas)
-        e_obj = e_r1 * (1.0 + rg.g_usado)
+        factor = sel.factor_festivo  # festivo por tipo: R1 es un día normal y F lleva la relación festivo/normal
+        e_obj = e_r1 * (1.0 + rg.g_usado) * (factor if factor is not None else 1.0)
         e_final = (1.0 - w) * e_obj + w * e_base
         if e_base > 0:
             curves[f] = (curva * (e_final / e_base)).tolist()
@@ -389,6 +396,10 @@ def _step_reciente(ctx: RunContext, prev: Curves, p: Dict[str, Any]) -> StepResu
             "g_raw": rg.g_raw, "g_usado": rg.g_usado, "acotado": rg.acotado,
             "g_fuente": efectiva,
         }
+        if sel.festivo is not None:
+            por_dia[f].update(sel.diag_festivo())
+            if factor is not None:
+                por_dia[f]["regla"] = "reciente_factor_festivo"
         referencias[f] = {
             "r1": {"fecha": iso(r1), "curva": _curva_lista(curvas, r1)},
             "r1_extra": [{"fecha": iso(x), "curva": _curva_lista(curvas, x)} for x in sel.fechas[1:]],

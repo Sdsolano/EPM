@@ -16,17 +16,20 @@ def test_perfiles_conocidos():
 
 def test_jamer_expande_replica_pura():
     p = perfiles.expandir("jamer", None)
-    assert p["nivel"] == {"modo": "reciente", "g_fuente": "interanual", "peso_modelo": 0.0}
-    assert p["forma"] == {"fuente": "reciente_clase", "n": 1, "delta": "plano", "tramos": "off"}
+    assert p["nivel"] == {"modo": "reciente", "g_fuente": "interanual", "peso_modelo": 0.0, "festivo_por_tipo": True}
+    assert p["forma"] == {"fuente": "reciente_clase", "n": 1, "delta": "plano", "tramos": "off",
+                          "festivo_por_tipo": True}
     assert p["control"] == {"banda_salto_mw": 40.0, "periodos_valle": [3, 4, 5], "crecimiento_ventana_dias": 28,
                             "crecimiento_min_pares": 14, "banda_error_pct": 5.0}
     assert set(p) == {"nivel", "forma", "control"}
 
 
 def test_jamer_modelo_solo_cambia_peso_modelo():
+    # jamer_modelo difiere de jamer solo en peso_modelo y en no activar festivo_por_tipo (festivos_r1).
     a, b = perfiles.expandir("jamer", None), perfiles.expandir("jamer_modelo", None)
     assert b["nivel"]["peso_modelo"] == perfiles.PESO_MODELO_JAMER_MODELO == 0.3
     b["nivel"]["peso_modelo"] = 0.0
+    assert a["nivel"].pop("festivo_por_tipo") is True and a["forma"].pop("festivo_por_tipo") is True
     assert a == b
 
 
@@ -41,7 +44,8 @@ def test_usuario_gana_clave_a_clave_y_conserva_el_resto():
                "especiales": {"x": 1}}
     antes = copy.deepcopy(usuario)
     p = perfiles.expandir("jamer", usuario)
-    assert p["nivel"] == {"modo": "reciente", "g_fuente": "interanual", "peso_modelo": 0.5, "g_k": 1.2}
+    assert p["nivel"] == {"modo": "reciente", "g_fuente": "interanual", "peso_modelo": 0.5, "g_k": 1.2,
+                          "festivo_por_tipo": True}
     assert p["forma"]["delta"] == "proporcional" and p["forma"]["fuente"] == "reciente_clase"
     assert p["control"]["banda_salto_mw"] == 40.0 and p["control"]["periodos_valle"] == [3, 4, 5]
     assert p["especiales"] == {"x": 1}
@@ -93,8 +97,11 @@ def test_con_perfil_los_params_efectivos_quedan_en_los_pasos(perfil):
     for k, v in crecimiento.DEFAULTS_G.items():
         assert por["nivel"][k] == v
     assert por["nivel"]["modo"] == "reciente" and "peso_modelo" in por["nivel"]
+    fijados = {"delta": "plano"}  # lo fija el perfil; el resto, default
+    if perfil == perfiles.PERFIL_JAMER:
+        fijados["festivo_por_tipo"] = True  # festivos_r1: solo jamer la activa
     for k, v in forma.DEFAULTS_JAMER.items():
-        assert por["forma"][k] == ({"delta": "plano"}.get(k, v))  # delta lo fija el perfil; el resto, default
+        assert por["forma"][k] == fijados.get(k, v)
     for k in ("banda_salto_mw", "periodos_valle", "crecimiento_ventana_dias", "crecimiento_min_pares", "banda_error_pct"):
         assert k in por["control"]
     assert por["control"]["periodos_valle"] == [3, 4, 5]
@@ -140,3 +147,13 @@ def test_sin_perfil_los_params_siguen_sin_persistir_defaults():
     assert por["nivel"] == {"alpha": 0.25}
     assert "g_k" not in por["nivel"] and "umbral_tramo_mw" not in por["forma"]
     assert "periodos_valle" not in por["control"] and "banda_salto_mw" not in por["control"]
+
+
+def test_jamer_activa_festivo_por_tipo_en_nivel_y_forma():
+    # festivos_r1: la regla pasó el criterio de aceptación solo para `jamer`.
+    p = perfiles.params_perfil("jamer")
+    assert p["nivel"]["festivo_por_tipo"] is True
+    assert p["forma"]["festivo_por_tipo"] is True
+    assert "r1_limpia" not in p["nivel"] and "r1_limpia" not in p["forma"]
+    pm = perfiles.params_perfil("jamer_modelo")
+    assert "festivo_por_tipo" not in pm["nivel"] and "festivo_por_tipo" not in pm["forma"]

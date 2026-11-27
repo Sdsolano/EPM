@@ -44,6 +44,10 @@ Réplica de Jamer (E3, opt-in; con los defaults todo queda como antes):
   total del MODELO (`energia_base`, S_h = forma_h·E_base) y la diferencia con la
   energía de nivel E se reparte como un delta uniforme en MW a los periodos
   "con gancho": curva_h = S_h + g_h·δ, δ = (E − E_base)/Σg. Σ = E.
+- `festivo_por_tipo` / `r1_limpia` / `r1_umbral_atipico` (default off): se pasan a la selección de R1
+  (`seleccionar_recientes`). Festivo fijo o de Semana Santa con el factor aplicado → forma normalizada del
+  homólogo H (hasta 3 años atrás, mismo tipo de día; fuente `festivo_homologo_tipo`), con la misma mecánica
+  de delta plano. nivel y forma deben recibir los mismos valores de estos flags.
 - `tramos="modelo_anual"` (experimental, apagado): quita del gancho (g_h = 0) los
   tramos donde el modelo se desvía de R1 en el mismo sentido que el cambio anual
   (R2 − R3); ver `_tramos_sin_gancho`.
@@ -63,7 +67,15 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 from src.adjustments.data import PERIODOS, ancla_mismo_dow, curvas_reales, dias_semana, iso
-from src.adjustments.referencia_reciente import fecha_r2, fecha_r3, seleccionar_recientes, unir_alertas
+from src.adjustments.referencia_reciente import (
+    DEFAULTS_R1,
+    fecha_r2,
+    fecha_r3,
+    kwargs_r1,
+    seleccionar_recientes,
+    unir_alertas,
+    validar_params_r1,
+)
 from src.adjustments.steps import _analogos, _params
 from src.adjustments.types import N_PERIODOS, Alert, Curves, RunContext, StepResult, validar_curva
 from src.prediction.holiday_homology import average_holiday_hourly_profile
@@ -80,6 +92,7 @@ DEFAULTS_JAMER: Dict[str, Any] = {
     "min_periodos_tramo": 3,
     "suavizado_borde": 0,
     "saltar_puente": False,
+    **DEFAULTS_R1,
 }
 MAX_SEMANAS_BUSQUEDA = 12
 MAX_N = 60  # más de ~1 año de días del mismo día de semana no aporta y alarga la búsqueda
@@ -124,6 +137,7 @@ def _separar_jamer(params: Any, completo: bool = False) -> Tuple[Any, Dict[str, 
     q["suavizado_borde"] = _params.entero("forma", "suavizado_borde", q["suavizado_borde"],
                                           minimo=0, maximo=12)
     q["saltar_puente"] = _params.booleano("forma", "saltar_puente", q["saltar_puente"])
+    q.update(validar_params_r1({k: q[k] for k in DEFAULTS_R1}, "forma"))
     if q["tramos"] != "off" and q["delta"] != "plano":
         raise ValueError("forma: tramos distinto de 'off' requiere delta='plano'")
     return resto, q if completo else {k: v for k, v in q.items() if v != DEFAULTS_JAMER[k]}
@@ -210,18 +224,26 @@ def _forma_reciente_clase(
     ctx: RunContext,
     curvas: Dict[str, np.ndarray],
     festivos: set,
+    r1: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Optional[np.ndarray], str, List[str], Optional[str], Dict[str, Any], List[Alert]]:
     """
     fuente="reciente_clase": (forma, fuente usada, fechas, motivo de fallback,
-    diagnóstico extra, alertas de la selección).
+    diagnóstico extra, alertas de la selección). `r1` = kwargs de la selección (`kwargs_r1`). Con el festivo por
+    tipo aplicado (`festivo_por_tipo`, festivo fijo o de Semana Santa) la forma es la del homólogo H (hasta 3 años
+    atrás, mismo tipo de día; fuente `festivo_homologo_tipo`); la energía (y el factor F) la pone nivel.
     """
-    rec = seleccionar_recientes(d, curvas, ctx.fecha_corte, festivos, n, saltar_puente=saltar_puente)
+    rec = seleccionar_recientes(d, curvas, ctx.fecha_corte, festivos, n, saltar_puente=saltar_puente, **(r1 or {}))
+    extra = {"clase": rec.clase, "saltados": [dict(x) for x in rec.saltados], **rec.diag_festivo()}
+    if rec.factor_festivo is not None:
+        # la selección solo da factor con E(H) > 0 y curva válida → la forma de H siempre existe (nunca se mezcla la
+        # forma de los días normales R1 con el factor F que aplica nivel)
+        h = rec.festivo["homologo"]
+        return _normalizar(curvas[h]), "festivo_homologo_tipo", [h], None, extra, list(rec.alertas)
     formas = {}
     for fecha in rec.fechas:
         forma = _normalizar(curvas[fecha.isoformat()])
         if forma is not None:
             formas[fecha.isoformat()] = forma
-    extra = {"clase": rec.clase, "saltados": [dict(x) for x in rec.saltados]}
     if not formas:
         forma, usada, fechas, _ = _forma_fuente(d, "promedio_n", n, ctx, curvas, festivos)
         return forma, usada, fechas, "sin_recientes_clase", extra, list(rec.alertas)
@@ -289,7 +311,8 @@ def _g_tramos(
     sin = np.ones(N_PERIODOS)
     if iso(d) in festivos:
         return sin, [], "festivo"
-    rec = seleccionar_recientes(d, curvas, ctx.fecha_corte, festivos, 1, saltar_puente=saltar_puente)
+    rec = seleccionar_recientes(d, curvas, ctx.fecha_corte, festivos, 1, saltar_puente=saltar_puente,
+                                **kwargs_r1(p))
     if not rec.fechas:
         return sin, [], "sin_r1"
     r1_fecha = rec.fechas[0]
@@ -372,6 +395,7 @@ def step(
     plano = delta_modo == "plano"
     tramos_modo = p.get("tramos", DEFAULTS_JAMER["tramos"])
     saltar_puente = p.get("saltar_puente", DEFAULTS_JAMER["saltar_puente"])
+    r1_kwargs = kwargs_r1(p)
     alertas_sel: List[Alert] = []
     sin_energia_base: List[str] = []
     sin_gancho: List[str] = []
@@ -404,7 +428,7 @@ def step(
             )
         elif fuente == "reciente_clase":
             forma_src, usada, fechas, motivo, extra_dia, alertas = _forma_reciente_clase(
-                d, n, saltar_puente, ctx, curvas, festivos
+                d, n, saltar_puente, ctx, curvas, festivos, r1_kwargs
             )
             alertas_sel.extend(alertas)
         else:

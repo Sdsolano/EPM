@@ -33,9 +33,13 @@ def params_perfil(perfil: str) -> Dict[str, Dict[str, Any]]:
     if perfil not in PERFILES:
         raise ValueError(f"perfil desconocido: {perfil!r}; válidos: {list(PERFILES)}")
     peso = 0.0 if perfil == PERFIL_JAMER else PESO_MODELO_JAMER_MODELO
+    # `festivo_por_tipo` activo solo en `jamer`: pasó el criterio de aceptación de
+    # docs/work/ajustes/festivos_r1 (backtest 2026-11-27). Va igual en nivel y forma (misma referencia).
+    # `jamer_modelo` no se evaluó con la regla → queda apagada.
+    r1 = {"festivo_por_tipo": True} if perfil == PERFIL_JAMER else {}
     return {
-        "nivel": {"modo": "reciente", "g_fuente": "interanual", "peso_modelo": peso},
-        "forma": {"fuente": "reciente_clase", "n": 1, "delta": "plano", "tramos": "off"},
+        "nivel": {"modo": "reciente", "g_fuente": "interanual", "peso_modelo": peso, **r1},
+        "forma": {"fuente": "reciente_clase", "n": 1, "delta": "plano", "tramos": "off", **r1},
         # Los params calibrables del control van explícitos (valor vigente al expandir): quedan congelados en
         # `steps[].params` y recalibrar los defaults del código no altera corridas ya creadas.
         "control": {
